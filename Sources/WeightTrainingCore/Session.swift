@@ -5,6 +5,13 @@ import Foundation
 public struct SessionExercise: Identifiable, Hashable, Sendable {
     public var id: UUID { exercise.id }
     public let exercise: Exercise
+
+    /// The slot this lift is filling, when the day came from a template.
+    ///
+    /// Carried so a swap can replace the exercise while keeping the slot (#18)
+    /// — the job stays, only the lift doing it changes.
+    public let slot: Slot?
+
     public let prescription: Prescription
     public let lastPerformance: LastPerformance?
 
@@ -13,11 +20,13 @@ public struct SessionExercise: Identifiable, Hashable, Sendable {
 
     public init(
         exercise: Exercise,
+        slot: Slot? = nil,
         prescription: Prescription,
         lastPerformance: LastPerformance? = nil,
         loggedSets: [SetRecord] = []
     ) {
         self.exercise = exercise
+        self.slot = slot
         self.prescription = prescription
         self.lastPerformance = lastPerformance
         self.loggedSets = loggedSets

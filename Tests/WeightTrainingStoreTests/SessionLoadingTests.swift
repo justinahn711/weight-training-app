@@ -19,15 +19,41 @@ final class SessionLoadingTests: XCTestCase {
 
     private var incline: Exercise { ExerciseLibrary.push[0] }
 
-    func testPushDayLoadsThePushLifts() throws {
+    /// #16's done-when: opening push day fills every slot with a target.
+    func testPushDayFillsEverySlotFromTheTemplate() throws {
         let session = try store.startSession(kind: .push)
         XCTAssertEqual(session.kind, .push)
         XCTAssertEqual(
             session.exercises.map(\.exercise.name),
-            ExerciseLibrary.push.map(\.name),
-            "day order is the library order"
+            ["Incline DB Press", "Flat Bench", "Seated DB OHP",
+             "Lateral Raise", "Tricep Pressdown", "Chest Fly"],
+            "slot order, with the rotating slot showing the side that's due"
         )
+        XCTAssertEqual(session.exercises.count, DayTemplateLibrary.push.slots.count)
         XCTAssertEqual(session.current?.exercise.name, "Incline DB Press")
+
+        // Every filled slot carries the slot it's filling, so #18 can swap
+        // without losing the job.
+        for exercise in session.exercises {
+            XCTAssertNotNil(exercise.slot, exercise.exercise.name)
+        }
+    }
+
+    /// The other side of the rotating pair comes up next push day.
+    func testTheRotatingSlotAlternatesBetweenSessions() throws {
+        let fly = ExerciseLibrary.all.first { $0.name == "Chest Fly" }!
+        XCTAssertEqual(try store.startSession(kind: .push).exercises.last?.exercise.name,
+                       "Chest Fly")
+
+        // Log a push session so one is on the books.
+        let incline = ExerciseLibrary.all.first { $0.name == "Incline DB Press" }!
+        try store.log(SetRecord(exerciseID: incline.id, load: Load(70), reps: 10,
+                                rpe: RPE(8), performedAt: Date().addingTimeInterval(-86_400)))
+        try store.log(SetRecord(exerciseID: fly.id, load: Load(50), reps: 12,
+                                rpe: RPE(8), performedAt: Date().addingTimeInterval(-86_400)))
+
+        XCTAssertEqual(try store.startSession(kind: .push).exercises.last?.exercise.name,
+                       "Skull Crushers")
     }
 
     func testEveryDayLoads() throws {
@@ -35,7 +61,7 @@ final class SessionLoadingTests: XCTestCase {
             let session = try store.startSession(kind: kind)
             XCTAssertEqual(
                 session.exercises.count,
-                ExerciseLibrary.exercises(for: kind).count,
+                DayTemplateLibrary.template(for: kind).slots.count,
                 "\(kind.rawValue) day"
             )
         }
@@ -135,7 +161,8 @@ final class SessionLoadingTests: XCTestCase {
         try fresh.upsert(subset)
 
         let session = try fresh.startSession(kind: .push)
-        XCTAssertEqual(session.exercises.count, ExerciseLibrary.push.count - 1)
+        XCTAssertEqual(session.exercises.count, DayTemplateLibrary.push.slots.count - 1,
+                       "the incline slot has no other candidate, so it drops")
         XCTAssertFalse(session.exercises.contains { $0.exercise.id == incline.id })
     }
 }
