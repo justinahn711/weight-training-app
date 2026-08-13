@@ -7,6 +7,17 @@
 .idea/
 *.swp
 
+# Swift / SPM
+.build/
+.swiftpm/
+Package.resolved
+*.o
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
 # Environment
 .env
 .env.local
