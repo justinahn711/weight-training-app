@@ -82,4 +82,16 @@ public struct LoadIncrement: Hashable, Codable, Sendable {
         guard pounds > 0 else { return load }
         return Load((load.pounds / pounds).rounded(.down) * pounds)
     }
+
+    /// Rounds to the nearest achievable load, which may be heavier.
+    ///
+    /// Used where the proposal is a *steer* rather than a prescription: the
+    /// RPE-targeted rule computes a percentage adjustment, and rounding that
+    /// down every time would bias the lift permanently downward — a 4.5%
+    /// increase on 185 lb is 193.3, and taking 190 instead of 195 gives back a
+    /// third of the increase before the bar is even loaded.
+    public func snapToNearest(_ load: Load) -> Load {
+        guard pounds > 0 else { return load }
+        return Load((load.pounds / pounds).rounded() * pounds)
+    }
 }
