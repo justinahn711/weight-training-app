@@ -32,6 +32,10 @@ final class SessionViewModel {
     /// stays a single tap on the done button (#5).
     var pendingRPE: RPE
 
+    /// The rest currently running, or nil between exercises. Wall-clock based,
+    /// so it needs nothing running to stay correct across a backgrounding (#6).
+    private(set) var rest: RestTimer?
+
     init(store: TrainingStore, session: Session) {
         self.store = store
         self.session = session
@@ -68,9 +72,24 @@ final class SessionViewModel {
         do {
             try store.log(record)
             session.log(record)
+            // Log, start resting, and be ready for the next set — one tap does
+            // all three (#6). Warmups don't start a rest; ramping is continuous
+            // and a countdown there is just noise.
+            if !isWarmup {
+                rest = RestTimer(
+                    startedAt: record.performedAt,
+                    duration: current.exercise.restTarget,
+                    setID: record.id
+                )
+            }
         } catch {
             failure = "Couldn't save that set: \(error.localizedDescription)"
         }
+    }
+
+    /// Dismisses the rest clock without touching the logged set.
+    func skipRest() {
+        rest = nil
     }
 
     /// Removes the most recent set from both the session and disk. Backs #8.
@@ -78,6 +97,12 @@ final class SessionViewModel {
         guard let record = session.undoLastSet() else { return }
         do {
             try store.deleteSet(id: record.id)
+            // A set that never happened can't be resting from. Only the rest
+            // that *this* set started is cleared, so undoing an older mistake
+            // mid-rest doesn't cancel the rest you're actually taking (#8).
+            if rest?.setID == record.id {
+                rest = nil
+            }
         } catch {
             // Put it back rather than leaving screen and disk disagreeing.
             session.log(record)
