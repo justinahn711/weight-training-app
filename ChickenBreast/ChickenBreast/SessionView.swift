@@ -53,7 +53,10 @@ struct SessionView: View {
         // going dark mid-set (#7). Scoped to this view, so it's restored the
         // moment the session is left rather than depending on a "finish"
         // action being tapped.
-        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+        .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = true
+            model.loadSuggestionContext()
+        }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -146,6 +149,24 @@ struct SessionView: View {
 
     private func actionBar(_ exercise: SessionExercise) -> some View {
         VStack(spacing: 12) {
+            // Beside the number, never as it — chips sit directly above the
+            // stepper they're talking about, and the stepper is unaffected
+            // until one is tapped.
+            if !model.suggestions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(model.suggestions) { suggestion in
+                            SuggestionChip(
+                                suggestion: suggestion,
+                                onAccept: { withAnimation(.snappy) { model.accept(suggestion) } },
+                                onDismiss: { withAnimation(.snappy) { model.dismiss(suggestion) } }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+            }
+
             WeightStepper(
                 load: model.pendingLoad,
                 increment: exercise.exercise.increment,
@@ -237,6 +258,54 @@ private struct SetRow: View {
         .padding(.horizontal, 12)
         .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 10))
         .opacity(set.isWarmup ? 0.6 : 1)
+    }
+}
+
+/// One suggestion, stating its reason (#12).
+///
+/// Tapping the body accepts it — which only moves the number the done button
+/// already commits, so accepting is identical to having dialled it by hand. The
+/// × dismisses it for the rest of the session.
+///
+/// Styled as an outline rather than a filled control on purpose: it must not
+/// read as the primary action. The blue button below is what logs a set.
+private struct SuggestionChip: View {
+    let suggestion: Suggestion
+    let onAccept: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: onAccept) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(suggestion.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(suggestion.reason)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // A sibling of the accept button, never inside its label — a nested
+            // button never receives its own taps.
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 2)
+        .padding(.vertical, 6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(.tint.opacity(0.5), lineWidth: 1.5)
+        )
     }
 }
 
