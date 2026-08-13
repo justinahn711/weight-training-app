@@ -28,12 +28,17 @@ final class SessionViewModel {
     var pendingLoad: Load
     var pendingReps: Int
 
+    /// Pre-selected on the target so the common case — hit the target, log it —
+    /// stays a single tap on the done button (#5).
+    var pendingRPE: RPE
+
     init(store: TrainingStore, session: Session) {
         self.store = store
         self.session = session
         let prescription = session.current?.prescription
         self.pendingLoad = prescription?.load ?? Load.zero
         self.pendingReps = prescription?.reps ?? 8
+        self.pendingRPE = prescription?.rpe ?? .eight
         // Resuming a session that already has sets on it should pick up where
         // it left off, exactly as navigating back to a lift does.
         seedPendingFromCurrent()
@@ -54,9 +59,8 @@ final class SessionViewModel {
             exerciseID: current.exercise.id,
             load: pendingLoad,
             reps: pendingReps,
-            // Warmups are never scored, and the RPE chips in #5 will let this
-            // be corrected before the set is committed.
-            rpe: isWarmup ? nil : current.prescription.rpe,
+            // Warmups are never scored.
+            rpe: isWarmup ? nil : pendingRPE,
             isWarmup: isWarmup,
             performedAt: Date()
         )
@@ -127,6 +131,23 @@ final class SessionViewModel {
             pendingLoad = current.prescription.load ?? Load.zero
             pendingReps = current.prescription.reps
         }
+        // RPE always resets to the target rather than carrying the last set's
+        // value forward. Effort is the one field that genuinely differs set to
+        // set, and inheriting a 9.5 from the previous set would quietly log
+        // fatigue that hasn't happened yet.
+        pendingRPE = current.prescription.rpe
+    }
+
+    /// The rep numbers offered on the row, centred on the target.
+    ///
+    /// The window is fixed to the target rather than following the selection,
+    /// which would slide the row out from under a finger already reaching for
+    /// it. It runs well past the top of the range so a genuinely good set never
+    /// has to be rounded down to fit the UI.
+    var repChoices: [Int] {
+        guard let target = current?.prescription.reps else { return Array(1...20) }
+        let lowest = max(1, target - 5)
+        return Array(lowest...(target + 8))
     }
 
     func dismissFailure() { failure = nil }
