@@ -191,6 +191,80 @@ final class SessionViewModel {
         pendingRPE = current.prescription.rpe
     }
 
+    // MARK: - Suggestions
+
+    /// Chips dismissed during this session.
+    ///
+    /// Session-scoped and never persisted: rule three is "dismissed once,
+    /// silent for the rest of the session", not silent forever. Tomorrow's
+    /// session gets to make its case again.
+    private var dismissedSuggestions: Set<String> = []
+
+    /// Cached history per exercise, so building chips after every logged set
+    /// doesn't re-read the whole store each time.
+    private var historyCache: [UUID: [SetRecord]] = [:]
+
+    var suggestions: [Suggestion] {
+        guard let current else { return [] }
+        return SuggestionEngine.suggestions(
+            exercise: current.exercise,
+            prescription: current.prescription,
+            loggedToday: current.loggedSets,
+            state: state(for: current),
+            history: historyCache[current.id] ?? current.loggedSets,
+            pendingLoad: pendingLoad,
+            pendingReps: pendingReps
+        )
+        .filter { !dismissedSuggestions.contains($0.id) }
+    }
+
+    /// Applies a chip to the pending values — and *only* to the pending values.
+    ///
+    /// Nothing is logged and no target is written. The chip moves the number
+    /// the done button already commits, so accepting one is exactly equivalent
+    /// to having dialled that number by hand.
+    func accept(_ suggestion: Suggestion) {
+        switch suggestion.kind {
+        case .load(let load), .deload(let load):
+            pendingLoad = load
+        case .reps(let reps):
+            pendingReps = reps
+        case .swap:
+            // Needs slot candidates from #16 and the swap UI in #18.
+            break
+        }
+        dismissedSuggestions.insert(suggestion.id)
+    }
+
+    func dismiss(_ suggestion: Suggestion) {
+        dismissedSuggestions.insert(suggestion.id)
+    }
+
+    /// Reconstructs the state the chips reason about.
+    ///
+    /// The prescription already carries the session's target; stall count comes
+    /// from the state loaded with the session.
+    private func state(for exercise: SessionExercise) -> ProgressState {
+        var state = loadedStates[exercise.id] ?? ProgressState(exerciseID: exercise.id)
+        state.targetLoad = exercise.prescription.load
+        state.targetReps = exercise.prescription.reps
+        state.targetRPE = exercise.prescription.rpe
+        return state
+    }
+
+    /// Progress states as they were when the session opened.
+    private var loadedStates: [UUID: ProgressState] = [:]
+
+    /// Fills the caches the chips read from.
+    func loadSuggestionContext() {
+        for exercise in session.exercises {
+            historyCache[exercise.id] = (try? store.sets(forExercise: exercise.id)) ?? []
+            if let state = try? store.progressState(forExercise: exercise.id) {
+                loadedStates[exercise.id] = state
+            }
+        }
+    }
+
     // MARK: - Plates and warmups
 
     /// How to build the weight currently dialled in, for plate-built lifts.
