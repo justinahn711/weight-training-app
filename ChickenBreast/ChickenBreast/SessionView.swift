@@ -255,27 +255,34 @@ private struct WarmupBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.snappy) { isExpanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    Text("Warmup ramp")
-                        .font(.subheadline.weight(.semibold))
-                    Text(summary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Clear", action: onClear)
-                        .font(.subheadline)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.tint)
+            // Clear is a sibling of the disclosure button, not nested inside its
+            // label. A button inside another button's label never receives its
+            // own taps — the outer gesture wins — which would make #15's "one
+            // tap to clear" quietly toggle the block open instead.
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.snappy) { isExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                        Text("Warmup ramp")
+                            .font(.subheadline.weight(.semibold))
+                        Text(summary)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+
+                Button("Clear", action: onClear)
+                    .font(.subheadline)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
             }
-            .buttonStyle(.plain)
 
             if isExpanded {
                 ForEach(ramp) { rung in

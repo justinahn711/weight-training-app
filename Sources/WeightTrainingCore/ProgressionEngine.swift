@@ -132,7 +132,11 @@ public enum ProgressionEngine {
         // The heaviest working set is the reference. With straight sets every
         // set shares a weight anyway; taking the max means a dropped-down
         // final set can't quietly lower the target.
-        let load = working.map(\.load).max() ?? Load.zero
+        //
+        // Made safe to reuse as a target, not rewritten: an odd dumbbell weight
+        // stays as logged, while a barbell load that no set of plates can build
+        // is corrected, and neither may fall below the bar.
+        let load = exercise.achievableTarget(echoing: working.map(\.load).max() ?? Load.zero)
 
         // The *weakest* set decides, not the best one. Double progression is a
         // promise that the whole set of straight sets clears the range — using
@@ -162,7 +166,9 @@ public enum ProgressionEngine {
 
             let hits = state.consecutiveTopHits + 1
             if hits >= required {
-                let raised = Load(load.pounds + exercise.increment.pounds)
+                let raised = exercise.achievableTarget(
+                    echoing: Load(load.pounds + exercise.increment.pounds)
+                )
                 next.targetLoad = raised
                 next.targetReps = range.bottom
                 next.consecutiveTopHits = 0

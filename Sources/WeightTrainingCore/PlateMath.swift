@@ -99,10 +99,10 @@ public enum PlateMath {
         bar: Load = standardBar,
         plates: [Double] = standardPlates
     ) -> Bool {
-        if equipment.isPlateBuilt {
+        if equipment.usesOlympicBar {
             return breakdown(for: load, bar: bar, plates: plates) != nil
         }
-        guard load.pounds >= 0, increment.pounds > 0 else { return load.pounds >= 0 }
+        guard load.pounds >= 0, increment.pounds > 0 else { return false }
         let steps = load.pounds / increment.pounds
         return abs(steps - steps.rounded()) < 0.001
     }
@@ -110,13 +110,27 @@ public enum PlateMath {
 
 extension Equipment {
 
+    /// Whether loads are built on a 45 lb Olympic bar loaded in pairs.
+    ///
+    /// Narrower than `isPlateBuilt` on purpose. A chest-supported T-bar row
+    /// loads one sleeve and a hack squat pushes a sled; neither has a 45 lb bar,
+    /// so neither can honestly render "45 · 25" or claim the empty bar as its
+    /// lightest setting. They're still plate-built for the purpose of rest
+    /// length and warmup ramps, which is what `isPlateBuilt` is for.
+    ///
+    /// The real weight of a T-bar or a sled is per-machine and has to be
+    /// measured, which is the same problem `LoadIncrement` has on stacks (#20).
+    public var usesOlympicBar: Bool {
+        self == .barbell
+    }
+
     /// The lightest load this equipment can present.
     ///
     /// A barbell cannot go below the bar, which is the floor every computed
     /// proposal has to respect — a percentage adjustment on a light lift will
     /// otherwise happily suggest 40 lb on a 45 lb bar.
     public var minimumLoad: Load {
-        isPlateBuilt ? PlateMath.standardBar : Load.zero
+        usesOlympicBar ? PlateMath.standardBar : Load.zero
     }
 }
 
@@ -125,7 +139,7 @@ extension Exercise {
     /// The plate breakdown for a load on this lift, or nil when a breakdown is
     /// meaningless — a cable stack has no plates to read off.
     public func plateBreakdown(for load: Load) -> PlateBreakdown? {
-        guard equipment.isPlateBuilt else { return nil }
+        guard equipment.usesOlympicBar else { return nil }
         return PlateMath.breakdown(for: load)
     }
 
@@ -133,9 +147,38 @@ extension Exercise {
     ///
     /// The single place a computed proposal becomes a real weight: snapped to
     /// the increment, then held at or above the equipment's floor. Anything
-    /// that suggests a load should route through here.
+    /// that suggests a load must route through here — including proposals that
+    /// merely echo what was lifted, since a stale increment (#20) can leave a
+    /// stored weight the equipment can no longer make.
     public func nearestAchievable(_ load: Load) -> Load {
         let snapped = increment.snapToNearest(load)
         return max(equipment.minimumLoad, snapped)
+    }
+
+    /// Makes a load that was actually lifted safe to reuse as a target.
+    ///
+    /// Deliberately gentler than `nearestAchievable`, which is for weights the
+    /// app computed. What you lifted is evidence and the increment is a guess,
+    /// so an odd dumbbell or stack weight is left exactly as logged — the rack
+    /// having 65s is far likelier than the set being imaginary.
+    ///
+    /// Barbells are the exception, because plate math is objective: 187 lb
+    /// cannot be built from standard plates, so it's a mis-log rather than a
+    /// mis-configured increment, and echoing it would leave a target that can
+    /// never be loaded and no plate line under the stepper.
+    ///
+    /// Either way the equipment's floor is enforced — nothing goes under the bar.
+    public func achievableTarget(echoing load: Load) -> Load {
+        let floored = max(equipment.minimumLoad, load)
+        guard equipment.usesOlympicBar else { return floored }
+        return max(equipment.minimumLoad, increment.snapToNearest(floored))
+    }
+
+    /// The lightest load this exercise can be set to and still be a set.
+    ///
+    /// Below one increment there is nothing to load, so a proposal that lands
+    /// there isn't lighter — it's nothing at all.
+    public var lightestUsableLoad: Load {
+        max(equipment.minimumLoad, Load(increment.pounds))
     }
 }

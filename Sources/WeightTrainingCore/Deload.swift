@@ -156,7 +156,10 @@ public enum DeloadDetector {
     /// to provide. A jump so coarse that 10% rounds to nothing still moves at
     /// least one increment, or the suggestion would propose no change at all.
     private static func backedOff(_ load: Load, on exercise: Exercise) -> Load {
-        let floor = exercise.equipment.minimumLoad
+        // One increment, not zero. On a 10 lb dumbbell step, backing 10 lb off
+        // by 10% snaps to nothing at all — and "back off to 0 lb and rebuild"
+        // is not a deload, it's a bug with a friendly sentence around it.
+        let floor = exercise.lightestUsableLoad
         let increment = exercise.increment
         let target = Load(load.pounds * (1 - deloadFraction))
         var result = increment.snap(target)

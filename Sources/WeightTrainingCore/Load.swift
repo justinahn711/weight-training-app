@@ -58,6 +58,12 @@ public struct LoadIncrement: Hashable, Codable, Sendable {
     public var pounds: Double
 
     public init(pounds: Double) {
+        // A zero or negative increment turns snapping into a no-op and makes
+        // every load look achievable, which silently disables the guard that
+        // stops the app proposing unbuildable weights. The #20 flow lets a
+        // measured stack increment be typed in, so this has to be impossible
+        // rather than merely discouraged.
+        precondition(pounds > 0, "load increment must be positive, got \(pounds)")
         self.pounds = pounds
     }
 

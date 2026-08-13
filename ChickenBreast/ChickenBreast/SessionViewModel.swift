@@ -139,9 +139,13 @@ final class SessionViewModel {
     /// 5 lb on a barbell — so the stepper can only produce loads the equipment
     /// can actually make.
     func adjustLoad(by steps: Int) {
-        guard let increment = current?.exercise.increment.pounds else { return }
-        let next = pendingLoad.pounds + Double(steps) * increment
-        pendingLoad = Load(max(0, next))
+        guard let exercise = current?.exercise else { return }
+        let next = pendingLoad.pounds + Double(steps) * exercise.increment.pounds
+        // Floored at what the equipment can present, not at zero. Stepping down
+        // to 15 lb on a 45 lb bar is not a light set, it's an impossible one —
+        // and the engine already refuses to propose such loads, so the one
+        // place a human dials a weight has to refuse them too.
+        pendingLoad = max(exercise.equipment.minimumLoad, Load(next))
     }
 
     func adjustReps(by delta: Int) {
@@ -174,7 +178,10 @@ final class SessionViewModel {
             pendingLoad = lastToday.load
             pendingReps = lastToday.reps
         } else {
-            pendingLoad = current.prescription.load ?? Load.zero
+            // On a cold start there's no target, so the stepper opens at the
+            // lightest thing the equipment can actually be set to — an empty
+            // bar, not zero.
+            pendingLoad = current.prescription.load ?? current.exercise.equipment.minimumLoad
             pendingReps = current.prescription.reps
         }
         // RPE always resets to the target rather than carrying the last set's

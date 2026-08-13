@@ -6,12 +6,19 @@ import Foundation
 /// tapped — the ramp is a plan for the next four minutes, and plans change when
 /// the rack is busy.
 public struct WarmupSet: Hashable, Identifiable, Sendable {
-    public let id: UUID
     public let load: Load
     public let reps: Int
 
-    public init(id: UUID = UUID(), load: Load, reps: Int) {
-        self.id = id
+    /// Derived from the weight rather than generated.
+    ///
+    /// A ramp is regenerated on every read, so a fresh `UUID` would hand
+    /// SwiftUI new identities each render — tearing down and re-inserting every
+    /// row instead of updating it, and taking the expand animation and any
+    /// press state with it. Rungs are unique by load within a ramp, which makes
+    /// the load a stable identity.
+    public var id: Double { load.pounds }
+
+    public init(load: Load, reps: Int) {
         self.load = load
         self.reps = reps
     }
@@ -52,9 +59,11 @@ public enum WarmupRamp {
 
         var rungs: [WarmupSet] = []
 
-        // Plate-built lifts start with the empty bar, which is both the lightest
-        // buildable load and the one everybody actually starts with.
-        if exercise.equipment.isPlateBuilt, working > bar {
+        // Barbell lifts start with the empty bar, which is both the lightest
+        // buildable load and the one everybody actually starts with. A T-bar or
+        // a hack squat has no such bar, so inventing a "45 lb" first rung there
+        // would be fiction.
+        if exercise.equipment.usesOlympicBar, working > bar {
             rungs.append(WarmupSet(load: bar, reps: 5))
         }
 
@@ -78,7 +87,7 @@ public enum WarmupRamp {
     /// Down, so a warmup is never accidentally heavier than intended — the one
     /// direction of error that costs working sets.
     private static func snap(_ load: Load, for exercise: Exercise, bar: Load) -> Load {
-        guard exercise.equipment.isPlateBuilt else {
+        guard exercise.equipment.usesOlympicBar else {
             return exercise.increment.snap(load)
         }
         guard load > bar else { return bar }
