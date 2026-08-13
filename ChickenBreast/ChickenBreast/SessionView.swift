@@ -126,21 +126,31 @@ struct SessionView: View {
     // MARK: - Action below
 
     private func actionBar(_ exercise: SessionExercise) -> some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 12) {
-                Stepper(
-                    label: "\(model.pendingLoad)",
-                    caption: "Weight",
-                    onDecrement: { model.adjustLoad(by: -1) },
-                    onIncrement: { model.adjustLoad(by: 1) }
-                )
-                Stepper(
-                    label: "\(model.pendingReps)",
-                    caption: "Reps",
-                    onDecrement: { model.adjustReps(by: -1) },
-                    onIncrement: { model.adjustReps(by: 1) }
-                )
-            }
+        VStack(spacing: 12) {
+            WeightStepper(
+                load: model.pendingLoad,
+                increment: exercise.exercise.increment,
+                onDecrement: { model.adjustLoad(by: -1) },
+                onIncrement: { model.adjustLoad(by: 1) }
+            )
+
+            ChoiceRow(
+                caption: "Reps",
+                values: model.repChoices,
+                isSelected: { $0 == model.pendingReps },
+                label: { String($0) },
+                onSelect: { model.pendingReps = $0 }
+            )
+
+            ChoiceRow(
+                caption: "RPE",
+                values: RPE.sessionChips,
+                isSelected: { $0 == model.pendingRPE },
+                label: { $0.value == $0.value.rounded()
+                    ? String(format: "%.0f", $0.value)
+                    : String(format: "%.1f", $0.value) },
+                onSelect: { model.pendingRPE = $0 }
+            )
 
             Button {
                 model.logSet()
@@ -208,41 +218,99 @@ private struct SetRow: View {
     }
 }
 
-/// A big two-sided stepper. Targets are deliberately oversized — this gets
-/// tapped with chalky hands, mid-set.
-private struct Stepper: View {
-    let label: String
-    let caption: String
+/// Weight, stepped by the exercise's real increment.
+///
+/// There is no text field here and nowhere else in the session either: the
+/// keyboard never appears mid-set (#4). Stepping by the increment also means
+/// the control can only produce loads the equipment can actually make — a
+/// dumbbell rack has no 67.5, so the UI shouldn't offer one.
+private struct WeightStepper: View {
+    let load: Load
+    let increment: LoadIncrement
     let onDecrement: () -> Void
     let onIncrement: () -> Void
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text(caption)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-            HStack(spacing: 0) {
-                button("minus", action: onDecrement)
-                Text(label)
-                    .font(.title3.bold().monospacedDigit())
-                    .frame(maxWidth: .infinity)
+        HStack(spacing: 0) {
+            button("minus", action: onDecrement)
+            VStack(spacing: 0) {
+                Text(load.description)
+                    .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                button("plus", action: onIncrement)
+                    .minimumScaleFactor(0.6)
+                Text("\(Load(increment.pounds)) steps")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity)
+            button("plus", action: onIncrement)
         }
-        .padding(.vertical, 8)
-        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 6)
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func button(_ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.headline)
-                .frame(width: 46, height: 40)
+                .font(.title2.weight(.semibold))
+                // Oversized on purpose: tapped with chalky hands, mid-set.
+                .frame(width: 64, height: 56)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// A horizontal row of tappable values, one tap to choose.
+///
+/// Used for both reps and RPE. Scrollable rather than clipped, so an unusually
+/// good set doesn't have to be rounded to whatever fits on screen.
+private struct ChoiceRow<Value: Hashable>: View {
+    let caption: String
+    let values: [Value]
+    let isSelected: (Value) -> Bool
+    let label: (Value) -> String
+    let onSelect: (Value) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(caption)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(values, id: \.self) { value in
+                            let selected = isSelected(value)
+                            Button {
+                                onSelect(value)
+                            } label: {
+                                Text(label(value))
+                                    .font(.title3.weight(selected ? .bold : .medium).monospacedDigit())
+                                    .foregroundStyle(selected ? Color.white : Color.primary)
+                                    .frame(minWidth: 54, minHeight: 48)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(selected ? AnyShapeStyle(Color.accentColor)
+                                                           : AnyShapeStyle(.fill.quaternary))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .id(value)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+                .onAppear {
+                    // Open with the pre-selected value in view, so the common
+                    // case needs no scrolling at all.
+                    if let selected = values.first(where: isSelected) {
+                        proxy.scrollTo(selected, anchor: .center)
+                    }
+                }
+            }
+        }
     }
 }

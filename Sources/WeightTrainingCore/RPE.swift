@@ -7,8 +7,24 @@ import Foundation
 /// more strength than the raw reps suggest) and RPE-creep stall detection,
 /// which fires weeks before an actual missed rep.
 public struct RPE: Hashable, Codable, Comparable, Sendable {
-    /// Valid values, and exactly the chips shown on the session screen.
+    /// Every value that can be stored. A superset of what the session screen
+    /// offers — see `sessionChips`.
     public static let allowedValues: [Double] = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10]
+
+    /// The chips actually shown while logging, and the reason 6.5 isn't among
+    /// them.
+    ///
+    /// Half-point precision matters where progression decisions are made —
+    /// 8 versus 8.5 is the difference between adding weight and holding — but
+    /// below RPE 7 a set doesn't count as hard volume at all, so splitting 6
+    /// from 6.5 buys nothing and costs a chip's worth of width on a row that
+    /// gets tapped with chalky hands. 6 stays as a floor marker for "that was
+    /// easy".
+    ///
+    /// 6.5 remains storable: the voice parser (#21) snaps to the full grid,
+    /// and a set logged at 6.5 on some future surface must round-trip intact.
+    public static let sessionChips: [RPE] = [6, 7, 7.5, 8, 8.5, 9, 9.5, 10]
+        .compactMap(RPE.init)
 
     public let value: Double
 
