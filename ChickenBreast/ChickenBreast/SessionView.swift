@@ -21,6 +21,15 @@ struct SessionView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         header(exercise)
                         context(exercise)
+                        if !model.warmupRamp.isEmpty {
+                            WarmupBlock(
+                                ramp: model.warmupRamp,
+                                isExpanded: $model.isWarmupRampExpanded,
+                                breakdown: { exercise.exercise.plateBreakdown(for: $0) },
+                                onLog: { model.logWarmup($0) },
+                                onClear: { model.clearWarmupRamp() }
+                            )
+                        }
                         setRows(exercise)
                     }
                     .padding(.horizontal, 20)
@@ -140,6 +149,9 @@ struct SessionView: View {
             WeightStepper(
                 load: model.pendingLoad,
                 increment: exercise.exercise.increment,
+                // Read off while loading the bar, so it sits directly under the
+                // number it describes (#14).
+                plates: model.plateBreakdown?.displayLine,
                 onDecrement: { model.adjustLoad(by: -1) },
                 onIncrement: { model.adjustLoad(by: 1) }
             )
@@ -228,6 +240,88 @@ private struct SetRow: View {
     }
 }
 
+/// The warmup ramp, collapsed by default (#15).
+///
+/// Collapsed because on most days the ramp is glanced at rather than read —
+/// the weights are obvious once you've done the lift twice. Expanded, each rung
+/// is tappable and logs exactly what it shows, so ramping never means dialling
+/// the stepper up and back down.
+private struct WarmupBlock: View {
+    let ramp: [WarmupSet]
+    @Binding var isExpanded: Bool
+    let breakdown: (Load) -> PlateBreakdown?
+    let onLog: (WarmupSet) -> Void
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Clear is a sibling of the disclosure button, not nested inside its
+            // label. A button inside another button's label never receives its
+            // own taps — the outer gesture wins — which would make #15's "one
+            // tap to clear" quietly toggle the block open instead.
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.snappy) { isExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                        Text("Warmup ramp")
+                            .font(.subheadline.weight(.semibold))
+                        Text(summary)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button("Clear", action: onClear)
+                    .font(.subheadline)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+            }
+
+            if isExpanded {
+                ForEach(ramp) { rung in
+                    Button {
+                        onLog(rung)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text("\(rung.load) × \(rung.reps)")
+                                .font(.body.weight(.medium).monospacedDigit())
+                            if let plates = breakdown(rung.load)?.displayLine {
+                                Text(plates)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "plus.circle")
+                                .foregroundStyle(.tint)
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(12)
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// `45 → 180, 4 sets` — enough to decide whether to expand it.
+    private var summary: String {
+        guard let first = ramp.first, let last = ramp.last else { return "" }
+        return ramp.count == 1
+            ? "\(first.load)"
+            : "\(first.load) → \(last.load), \(ramp.count) sets"
+    }
+}
+
 /// The rest clock — the primary thing on screen while resting (#6).
 ///
 /// Driven by `TimelineView` off the system clock rather than by a `Timer`
@@ -285,6 +379,7 @@ private struct RestBanner: View {
 private struct WeightStepper: View {
     let load: Load
     let increment: LoadIncrement
+    let plates: String?
     let onDecrement: () -> Void
     let onIncrement: () -> Void
 
@@ -296,9 +391,11 @@ private struct WeightStepper: View {
                     .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                Text("\(Load(increment.pounds)) steps")
+                Text(plates ?? "\(Load(increment.pounds)) steps")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .frame(maxWidth: .infinity)
             button("plus", action: onIncrement)

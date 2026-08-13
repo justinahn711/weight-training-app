@@ -98,9 +98,14 @@ public enum DeloadDetector {
         // trend in a subjective rating.
         if state.stallCount >= missesBeforeDeload {
             guard let load = state.targetLoad ?? sessions.last?.map(\.load).max() else { return nil }
+            let backed = backedOff(load, on: exercise)
+            // Already as light as the equipment goes. Proposing "45 → 45" is
+            // worse than saying nothing: a lift stalling on an empty bar is an
+            // exercise-selection problem, not a loading one.
+            guard backed < load else { return nil }
             return DeloadSuggestion(
                 from: load,
-                to: backedOff(load, by: exercise.increment),
+                to: backed,
                 trigger: .repeatedMisses(sessions: state.stallCount)
             )
         }
@@ -134,9 +139,12 @@ public enum DeloadDetector {
         let climbing = zip(rpes, rpes.dropFirst()).allSatisfy { $0 < $1 }
         guard climbing, let first = rpes.first, let last = rpes.last else { return nil }
 
+        let backed = backedOff(load, on: exercise)
+        guard backed < load else { return nil }
+
         return DeloadSuggestion(
             from: load,
-            to: backedOff(load, by: exercise.increment),
+            to: backed,
             trigger: .rpeCreep(from: first, to: last, sessions: creepSessions)
         )
     }
@@ -147,12 +155,19 @@ public enum DeloadDetector {
     /// comfortably lighter, and rounding up would shave the recovery it exists
     /// to provide. A jump so coarse that 10% rounds to nothing still moves at
     /// least one increment, or the suggestion would propose no change at all.
-    private static func backedOff(_ load: Load, by increment: LoadIncrement) -> Load {
+    private static func backedOff(_ load: Load, on exercise: Exercise) -> Load {
+        // One increment, not zero. On a 10 lb dumbbell step, backing 10 lb off
+        // by 10% snaps to nothing at all — and "back off to 0 lb and rebuild"
+        // is not a deload, it's a bug with a friendly sentence around it.
+        let floor = exercise.lightestUsableLoad
+        let increment = exercise.increment
         let target = Load(load.pounds * (1 - deloadFraction))
-        let snapped = increment.snap(target)
-        guard snapped < load else {
-            return Load(max(0, load.pounds - increment.pounds))
+        var result = increment.snap(target)
+        if result >= load {
+            result = Load(load.pounds - increment.pounds)
         }
-        return snapped
+        // Never below what the equipment can present: an empty bar is as light
+        // as a barbell deload gets.
+        return max(floor, min(result, load))
     }
 }

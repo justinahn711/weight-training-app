@@ -69,13 +69,34 @@ final class SessionViewModel {
             performedAt: Date()
         )
 
+        commit(record, startsRest: !isWarmup)
+    }
+
+    /// Logs one rung of the warmup ramp exactly as shown, without disturbing
+    /// the working weight already dialled in below.
+    func logWarmup(_ rung: WarmupSet) {
+        guard let current else { return }
+        commit(
+            SetRecord(
+                exerciseID: current.exercise.id,
+                load: rung.load,
+                reps: rung.reps,
+                isWarmup: true,
+                performedAt: Date()
+            ),
+            startsRest: false
+        )
+    }
+
+    private func commit(_ record: SetRecord, startsRest: Bool) {
+        guard let current else { return }
         do {
             try store.log(record)
             session.log(record)
             // Log, start resting, and be ready for the next set — one tap does
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
-            if !isWarmup {
+            if startsRest {
                 rest = RestTimer(
                     startedAt: record.performedAt,
                     duration: current.exercise.restTarget,
@@ -118,9 +139,13 @@ final class SessionViewModel {
     /// 5 lb on a barbell — so the stepper can only produce loads the equipment
     /// can actually make.
     func adjustLoad(by steps: Int) {
-        guard let increment = current?.exercise.increment.pounds else { return }
-        let next = pendingLoad.pounds + Double(steps) * increment
-        pendingLoad = Load(max(0, next))
+        guard let exercise = current?.exercise else { return }
+        let next = pendingLoad.pounds + Double(steps) * exercise.increment.pounds
+        // Floored at what the equipment can present, not at zero. Stepping down
+        // to 15 lb on a 45 lb bar is not a light set, it's an impossible one —
+        // and the engine already refuses to propose such loads, so the one
+        // place a human dials a weight has to refuse them too.
+        pendingLoad = max(exercise.equipment.minimumLoad, Load(next))
     }
 
     func adjustReps(by delta: Int) {
@@ -153,7 +178,10 @@ final class SessionViewModel {
             pendingLoad = lastToday.load
             pendingReps = lastToday.reps
         } else {
-            pendingLoad = current.prescription.load ?? Load.zero
+            // On a cold start there's no target, so the stepper opens at the
+            // lightest thing the equipment can actually be set to — an empty
+            // bar, not zero.
+            pendingLoad = current.prescription.load ?? current.exercise.equipment.minimumLoad
             pendingReps = current.prescription.reps
         }
         // RPE always resets to the target rather than carrying the last set's
@@ -161,6 +189,42 @@ final class SessionViewModel {
         // set, and inheriting a 9.5 from the previous set would quietly log
         // fatigue that hasn't happened yet.
         pendingRPE = current.prescription.rpe
+    }
+
+    // MARK: - Plates and warmups
+
+    /// How to build the weight currently dialled in, for plate-built lifts.
+    var plateBreakdown: PlateBreakdown? {
+        current?.exercise.plateBreakdown(for: pendingLoad)
+    }
+
+    /// Exercises whose ramp has been dismissed. Kept per exercise and only for
+    /// this session — clearing the block on bench says nothing about RDL later.
+    private var clearedRamps: Set<UUID> = []
+
+    /// Whether the ramp block is expanded. Collapsed by default (#15): on most
+    /// days the ramp is glanced at, not read.
+    var isWarmupRampExpanded = false
+
+    /// The ramp for the current lift, or empty when one isn't wanted.
+    ///
+    /// Disappears once the first working set is logged — a ramp is a plan for
+    /// getting to the first work set, and it's noise afterwards.
+    var warmupRamp: [WarmupSet] {
+        guard let current,
+              !clearedRamps.contains(current.id),
+              current.workingSets.isEmpty else { return [] }
+        return WarmupRamp.generate(
+            for: current.exercise,
+            workingLoad: current.prescription.load ?? pendingLoad
+        )
+    }
+
+    /// One tap to clear the block, per #15.
+    func clearWarmupRamp() {
+        guard let current else { return }
+        clearedRamps.insert(current.id)
+        isWarmupRampExpanded = false
     }
 
     /// The rep numbers offered on the row, centred on the target.
