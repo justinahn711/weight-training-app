@@ -1,0 +1,141 @@
+import XCTest
+import WeightTrainingCore
+@testable import WeightTrainingStore
+
+@MainActor
+final class SessionLoadingTests: XCTestCase {
+    private var store: TrainingStore!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        store = try TrainingStore.inMemory()
+        try store.seedLibraryIfNeeded()
+    }
+
+    override func tearDownWithError() throws {
+        store = nil
+        try super.tearDownWithError()
+    }
+
+    private var incline: Exercise { ExerciseLibrary.push[0] }
+
+    func testPushDayLoadsThePushLifts() throws {
+        let session = try store.startSession(kind: .push)
+        XCTAssertEqual(session.kind, .push)
+        XCTAssertEqual(
+            session.exercises.map(\.exercise.name),
+            ExerciseLibrary.push.map(\.name),
+            "day order is the library order"
+        )
+        XCTAssertEqual(session.current?.exercise.name, "Incline DB Press")
+    }
+
+    func testEveryDayLoads() throws {
+        for kind in DayKind.allCases {
+            let session = try store.startSession(kind: kind)
+            XCTAssertEqual(
+                session.exercises.count,
+                ExerciseLibrary.exercises(for: kind).count,
+                "\(kind.rawValue) day"
+            )
+        }
+    }
+
+    /// A fresh install has no targets, so the screen must say so rather than
+    /// invent one.
+    func testFreshInstallIsAllColdStarts() throws {
+        let session = try store.startSession(kind: .push)
+        for exercise in session.exercises {
+            XCTAssertTrue(exercise.prescription.isColdStart, exercise.exercise.name)
+            XCTAssertNil(exercise.lastPerformance)
+            XCTAssertTrue(exercise.loggedSets.isEmpty)
+        }
+    }
+
+    /// The session reads the *stored* exercise, so a corrected increment (#20)
+    /// is what shows up at the rack.
+    func testSessionUsesTheStoredExerciseNotTheLibraryDefinition() throws {
+        var edited = incline
+        edited.increment = LoadIncrement(pounds: 5)
+        edited.name = "Incline DB Press (30°)"
+        try store.upsert(edited)
+
+        let session = try store.startSession(kind: .push)
+        XCTAssertEqual(session.current?.exercise.name, "Incline DB Press (30°)")
+        XCTAssertEqual(session.current?.exercise.increment.pounds, 5)
+    }
+
+    func testStoredTargetBecomesThePrescription() throws {
+        try store.save(ProgressState(
+            exerciseID: incline.id,
+            targetLoad: Load(70),
+            targetReps: 11,
+            targetRPE: .eight
+        ))
+
+        let session = try store.startSession(kind: .push)
+        XCTAssertEqual(session.current?.prescription.load, Load(70))
+        XCTAssertEqual(session.current?.prescription.displayLine, "70 lb × 11 @ RPE 8")
+    }
+
+    func testPreviousSessionBecomesLastPerformance() throws {
+        let lastWeek = Date().addingTimeInterval(-7 * 86_400)
+        for (index, reps) in [11, 10, 8].enumerated() {
+            try store.log(SetRecord(
+                exerciseID: incline.id, load: Load(70), reps: reps, rpe: RPE(8),
+                performedAt: lastWeek.addingTimeInterval(Double(index) * 200)
+            ))
+        }
+
+        let session = try store.startSession(kind: .push)
+        XCTAssertEqual(session.current?.lastPerformance?.displayLine, "70 lb × 11, 10, 8")
+    }
+
+    // MARK: - Resuming
+
+    /// The app gets backgrounded constantly — by a call, by the screen locking,
+    /// by being force-quit. Sets logged earlier today have to come back as part
+    /// of the session, not vanish while sitting safely on disk.
+    func testTodaysSetsAreRehydratedIntoTheSession() throws {
+        let now = Date()
+        let warmup = SetRecord(exerciseID: incline.id, load: Load(45), reps: 10,
+                               isWarmup: true, performedAt: now.addingTimeInterval(-600))
+        let working = SetRecord(exerciseID: incline.id, load: Load(70), reps: 12,
+                                rpe: RPE(8), performedAt: now.addingTimeInterval(-300))
+        try store.log(warmup)
+        try store.log(working)
+
+        let session = try store.startSession(kind: .push, startedAt: now)
+        XCTAssertEqual(session.current?.loggedSets, [warmup, working])
+        XCTAssertEqual(session.current?.workingSets.count, 1)
+        XCTAssertEqual(session.startedCount, 1)
+    }
+
+    /// ...and today's work must not also be reported as "last time", which
+    /// would show the same sets twice under two different headings.
+    func testTodaysSetsAreExcludedFromLastPerformance() throws {
+        let now = Date()
+        let lastWeek = now.addingTimeInterval(-7 * 86_400)
+        try store.log(SetRecord(exerciseID: incline.id, load: Load(65), reps: 12,
+                                rpe: RPE(8), performedAt: lastWeek))
+        try store.log(SetRecord(exerciseID: incline.id, load: Load(70), reps: 11,
+                                rpe: RPE(8), performedAt: now.addingTimeInterval(-300)))
+
+        let session = try store.startSession(kind: .push, startedAt: now)
+        XCTAssertEqual(session.current?.lastPerformance?.displayLine, "65 lb × 12",
+                       "last time is the previous session, not this one")
+        XCTAssertEqual(session.current?.loggedSets.count, 1)
+    }
+
+    /// A lift the user deleted shouldn't reappear just because the day names it.
+    func testDeletedExercisesAreSkipped() throws {
+        // Simulate removal by seeding a store that never had the lift.
+        let fresh = try TrainingStore.inMemory()
+        let subset = Array(ExerciseLibrary.push.dropFirst())
+        try fresh.upsert(subset)
+
+        let session = try fresh.startSession(kind: .push)
+        XCTAssertEqual(session.exercises.count, ExerciseLibrary.push.count - 1)
+        XCTAssertFalse(session.exercises.contains { $0.exercise.id == incline.id })
+    }
+}
