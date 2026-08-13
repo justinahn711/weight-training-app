@@ -145,6 +145,9 @@ public enum ProgressionEngine {
 
         var next = state
         next.lastPerformedAt = now
+        // Recorded on every session, and only ever allowed to rise on real
+        // work — it's the series #24 charts and the signal #13 reads for creep.
+        next.lastE1RM = working.bestE1RM
         next.targetRPE = targetRPE
 
         if weakestReps >= range.top {
@@ -219,6 +222,9 @@ public enum ProgressionEngine {
 
         var next = state
         next.lastPerformedAt = now
+        // Recorded on every session, and only ever allowed to rise on real
+        // work — it's the series #24 charts and the signal #13 reads for creep.
+        next.lastE1RM = working.bestE1RM
         next.targetReps = reps
         next.targetRPE = targetRPE
 
