@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 import WeightTrainingCore
 
 /// The main surface: context above, one action below.
@@ -25,6 +26,9 @@ struct SessionView: View {
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)
                 }
+                if let rest = model.rest {
+                    RestBanner(rest: rest, onSkip: { model.skipRest() })
+                }
                 actionBar(exercise)
             } else {
                 ContentUnavailableView(
@@ -36,6 +40,12 @@ struct SessionView: View {
         }
         .navigationTitle(model.session.kind.rawValue.capitalized)
         .navigationBarTitleDisplayMode(.inline)
+        // Small, and the top rage-quit cause in every lifting app: the screen
+        // going dark mid-set (#7). Scoped to this view, so it's restored the
+        // moment the session is left rather than depending on a "finish"
+        // action being tapped.
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 // Reachable at all times without a menu — sweaty-hand mistaps
@@ -215,6 +225,54 @@ private struct SetRow: View {
         .padding(.horizontal, 12)
         .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 10))
         .opacity(set.isWarmup ? 0.6 : 1)
+    }
+}
+
+/// The rest clock — the primary thing on screen while resting (#6).
+///
+/// Driven by `TimelineView` off the system clock rather than by a `Timer`
+/// object, which means there is no running state to lose: coming back from the
+/// lock screen or from another app redraws the correct value immediately.
+private struct RestBanner: View {
+    let rest: RestTimer
+    let onSkip: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
+            let done = rest.isComplete(at: context.date)
+            HStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .stroke(.quaternary, lineWidth: 6)
+                    Circle()
+                        .trim(from: 0, to: rest.progress(at: context.date))
+                        .stroke(done ? Color.green : Color.accentColor,
+                                style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 44, height: 44)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(done ? "Rest complete" : "Resting")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    Text(rest.displayTime(at: context.date))
+                        .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(done ? Color.green : Color.primary)
+                        .contentTransition(.numericText())
+                }
+
+                Spacer()
+
+                Button("Skip", action: onSkip)
+                    .font(.body.weight(.semibold))
+                    .buttonStyle(.bordered)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(.fill.tertiary)
+        }
     }
 }
 
