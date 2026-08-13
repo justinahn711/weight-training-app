@@ -1,0 +1,90 @@
+import Foundation
+
+/// One suggested warmup set.
+///
+/// A suggestion, not a record. Nothing here is logged until it's performed and
+/// tapped — the ramp is a plan for the next four minutes, and plans change when
+/// the rack is busy.
+public struct WarmupSet: Hashable, Identifiable, Sendable {
+    public let id: UUID
+    public let load: Load
+    public let reps: Int
+
+    public init(id: UUID = UUID(), load: Load, reps: Int) {
+        self.id = id
+        self.load = load
+        self.reps = reps
+    }
+}
+
+/// Builds the ramp up to a working weight.
+///
+/// Generated rather than stored: a ramp derived from today's working load is
+/// always right, where a saved ramp goes stale the moment the lift progresses.
+public enum WarmupRamp {
+
+    /// Fractions of the working load, with reps falling as the weight rises.
+    ///
+    /// Reps drop off deliberately — the job of a warmup is to rehearse the
+    /// movement and prime the nervous system, and doing eight at 80% just
+    /// spends the working sets before they start.
+    static let steps: [(fraction: Double, reps: Int)] = [
+        (0.40, 5),
+        (0.60, 4),
+        (0.80, 2),
+    ]
+
+    /// The ramp for an exercise, or empty when one isn't wanted.
+    ///
+    /// Returns nothing at all when:
+    /// - the lift isn't flagged for ramps (`needsWarmupRamp`), which is what
+    ///   keeps cable laterals from sprouting a warmup block
+    /// - there's no working load yet, on a cold start
+    /// - the working load is so light that every rung collapses onto it
+    public static func generate(
+        for exercise: Exercise,
+        workingLoad: Load?,
+        bar: Load = PlateMath.standardBar
+    ) -> [WarmupSet] {
+        guard exercise.needsWarmupRamp, let working = workingLoad, working.pounds > 0 else {
+            return []
+        }
+
+        var rungs: [WarmupSet] = []
+
+        // Plate-built lifts start with the empty bar, which is both the lightest
+        // buildable load and the one everybody actually starts with.
+        if exercise.equipment.isPlateBuilt, working > bar {
+            rungs.append(WarmupSet(load: bar, reps: 5))
+        }
+
+        for step in steps {
+            let raw = Load(working.pounds * step.fraction)
+            let snapped = snap(raw, for: exercise, bar: bar)
+
+            // Skip rungs that can't be built lighter than the working set, or
+            // that duplicate one already on the ladder. Two identical warmup
+            // sets is a UI bug, not a plan.
+            guard snapped < working, snapped.pounds > 0 else { continue }
+            guard !rungs.contains(where: { $0.load == snapped }) else { continue }
+            rungs.append(WarmupSet(load: snapped, reps: step.reps))
+        }
+
+        return rungs.sorted { $0.load < $1.load }
+    }
+
+    /// Rounds a rung down to something the equipment can build.
+    ///
+    /// Down, so a warmup is never accidentally heavier than intended — the one
+    /// direction of error that costs working sets.
+    private static func snap(_ load: Load, for exercise: Exercise, bar: Load) -> Load {
+        guard exercise.equipment.isPlateBuilt else {
+            return exercise.increment.snap(load)
+        }
+        guard load > bar else { return bar }
+        // Barbell rungs move in whole increments above the bar, so the result
+        // is always loadable with real plates.
+        let aboveBar = exercise.increment.snap(Load(load.pounds - bar.pounds))
+        return Load(bar.pounds + aboveBar.pounds)
+    }
+}

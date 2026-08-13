@@ -69,13 +69,34 @@ final class SessionViewModel {
             performedAt: Date()
         )
 
+        commit(record, startsRest: !isWarmup)
+    }
+
+    /// Logs one rung of the warmup ramp exactly as shown, without disturbing
+    /// the working weight already dialled in below.
+    func logWarmup(_ rung: WarmupSet) {
+        guard let current else { return }
+        commit(
+            SetRecord(
+                exerciseID: current.exercise.id,
+                load: rung.load,
+                reps: rung.reps,
+                isWarmup: true,
+                performedAt: Date()
+            ),
+            startsRest: false
+        )
+    }
+
+    private func commit(_ record: SetRecord, startsRest: Bool) {
+        guard let current else { return }
         do {
             try store.log(record)
             session.log(record)
             // Log, start resting, and be ready for the next set — one tap does
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
-            if !isWarmup {
+            if startsRest {
                 rest = RestTimer(
                     startedAt: record.performedAt,
                     duration: current.exercise.restTarget,
@@ -161,6 +182,42 @@ final class SessionViewModel {
         // set, and inheriting a 9.5 from the previous set would quietly log
         // fatigue that hasn't happened yet.
         pendingRPE = current.prescription.rpe
+    }
+
+    // MARK: - Plates and warmups
+
+    /// How to build the weight currently dialled in, for plate-built lifts.
+    var plateBreakdown: PlateBreakdown? {
+        current?.exercise.plateBreakdown(for: pendingLoad)
+    }
+
+    /// Exercises whose ramp has been dismissed. Kept per exercise and only for
+    /// this session — clearing the block on bench says nothing about RDL later.
+    private var clearedRamps: Set<UUID> = []
+
+    /// Whether the ramp block is expanded. Collapsed by default (#15): on most
+    /// days the ramp is glanced at, not read.
+    var isWarmupRampExpanded = false
+
+    /// The ramp for the current lift, or empty when one isn't wanted.
+    ///
+    /// Disappears once the first working set is logged — a ramp is a plan for
+    /// getting to the first work set, and it's noise afterwards.
+    var warmupRamp: [WarmupSet] {
+        guard let current,
+              !clearedRamps.contains(current.id),
+              current.workingSets.isEmpty else { return [] }
+        return WarmupRamp.generate(
+            for: current.exercise,
+            workingLoad: current.prescription.load ?? pendingLoad
+        )
+    }
+
+    /// One tap to clear the block, per #15.
+    func clearWarmupRamp() {
+        guard let current else { return }
+        clearedRamps.insert(current.id)
+        isWarmupRampExpanded = false
     }
 
     /// The rep numbers offered on the row, centred on the target.

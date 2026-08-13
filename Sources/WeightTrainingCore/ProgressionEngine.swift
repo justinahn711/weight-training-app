@@ -218,7 +218,7 @@ public enum ProgressionEngine {
         // ones that hold, so all of them are snapped. Otherwise a target left
         // over from a mis-measured increment (#20) would persist as a weight
         // the equipment can't actually make.
-        let load = exercise.increment.snapToNearest(working.map(\.load).max() ?? Load.zero)
+        let load = exercise.nearestAchievable(working.map(\.load).max() ?? Load.zero)
 
         var next = state
         next.lastPerformedAt = now
@@ -244,7 +244,7 @@ public enum ProgressionEngine {
 
         // Easier than target (positive delta) means the load can rise.
         let scaled = Load(reference.load.pounds * (1 + delta * percentPerRPEPoint))
-        let proposed = exercise.increment.snapToNearest(scaled)
+        let proposed = exercise.nearestAchievable(scaled)
 
         next.targetLoad = proposed
         // A set that came in harder than target isn't a stall on its own —

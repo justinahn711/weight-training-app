@@ -212,7 +212,7 @@ final class DeloadDetectorTests: XCTestCase {
     /// A deload must always be buildable, and always actually lighter.
     func testDeloadedLoadIsBuildableAndLighter() {
         let lift = bench
-        for pounds in stride(from: 45.0, through: 405.0, by: 5.0) {
+        for pounds in stride(from: 50.0, through: 405.0, by: 5.0) {
             let state = ProgressState(exerciseID: lift.id, targetLoad: Load(pounds), stallCount: 2)
             guard let suggestion = DeloadDetector.evaluate(
                 exercise: lift, state: state, history: []
@@ -237,6 +237,15 @@ final class DeloadDetectorTests: XCTestCase {
         // 30 - 10% = 27, which snaps back up to 30; one step down is 20.
         XCTAssertEqual(suggestion.to, Load(20))
         XCTAssertLessThan(suggestion.to, suggestion.from)
+    }
+
+    /// There is nothing below an empty bar. Proposing "45 → 45" would be a
+    /// suggestion that changes nothing; a lift stalling on the bar is an
+    /// exercise-selection problem, not a loading one.
+    func testNoDeloadIsOfferedAtTheEquipmentsFloor() {
+        let lift = bench
+        let state = ProgressState(exerciseID: lift.id, targetLoad: Load(45), stallCount: 3)
+        XCTAssertNil(DeloadDetector.evaluate(exercise: lift, state: state, history: []))
     }
 
     func testHealthyProgressSuggestsNothing() {
