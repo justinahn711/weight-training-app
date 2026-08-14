@@ -18,6 +18,8 @@ struct ContentView: View {
     @State private var startupFailure: String?
     @State private var route: DayKind?
     @State private var cycle: CyclePosition?
+    @State private var volume: VolumeReport?
+    @State private var showingVolume = false
 
     var body: some View {
         NavigationStack {
@@ -33,6 +35,17 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("ChickenBreast")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Volume", systemImage: "chart.bar") { showingVolume = true }
+                        .disabled(volume == nil)
+                }
+            }
+            .navigationDestination(isPresented: $showingVolume) {
+                if let volume {
+                    VolumeView(report: volume)
+                }
+            }
             .navigationDestination(item: $route) { kind in
                 sessionDestination(for: kind)
             }
@@ -43,6 +56,7 @@ struct ContentView: View {
         .onChange(of: route) { _, newValue in
             guard newValue == nil, let store else { return }
             cycle = try? store.cyclePosition()
+            volume = try? store.volumeReport()
         }
     }
 
@@ -55,6 +69,25 @@ struct ContentView: View {
                     .font(.headline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // The volume guard is worth nothing behind a tap nobody takes, so
+            // the headline finding sits on the first screen.
+            if let volume, !volume.starved.isEmpty {
+                Button { showingVolume = true } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(starvedSummary(volume))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             ForEach(orderedDays, id: \.self) { kind in
@@ -91,6 +124,18 @@ struct ContentView: View {
             Spacer()
         }
         .padding(.horizontal, 20)
+    }
+
+    /// Names the muscles that are behind, at most three — a list of ten is a
+    /// wall of text nobody reads, and the worst three are the actionable part.
+    private func starvedSummary(_ report: VolumeReport) -> String {
+        let worst = report.starved.sorted { $0.sets < $1.sets }.prefix(3)
+        let names = worst.map { $0.muscle.displayName.lowercased() }
+        let remainder = report.starved.count - worst.count
+        let list = names.joined(separator: ", ")
+        return remainder > 0
+            ? "Behind on \(list) and \(remainder) more"
+            : "Behind on \(list)"
     }
 
     /// The due day first, then the rest of the cycle in order.
@@ -138,6 +183,7 @@ struct ContentView: View {
             try opened.seedLibraryIfNeeded()
             try opened.seedTemplatesIfNeeded()
             cycle = try opened.cyclePosition()
+            volume = try opened.volumeReport()
             store = opened
         } catch {
             startupFailure = String(describing: error)
