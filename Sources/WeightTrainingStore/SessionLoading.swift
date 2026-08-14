@@ -189,3 +189,15 @@ extension TrainingStore {
         return applied
     }
 }
+
+extension TrainingStore {
+
+    /// e1RM trends per lift, for #24.
+    public func e1RMTrends(calendar: Calendar = .current) throws -> [E1RMTrend] {
+        E1RMTrendBuilder.trends(
+            history: try allSets(),
+            exercises: try exercises(),
+            calendar: calendar
+        )
+    }
+}

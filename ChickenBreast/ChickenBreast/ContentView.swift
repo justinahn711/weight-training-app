@@ -20,6 +20,8 @@ struct ContentView: View {
     @State private var cycle: CyclePosition?
     @State private var volume: VolumeReport?
     @State private var showingVolume = false
+    @State private var trends: [E1RMTrend] = []
+    @State private var showingTrends = false
 
     var body: some View {
         NavigationStack {
@@ -37,6 +39,11 @@ struct ContentView: View {
             .navigationTitle("ChickenBreast")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button("Progress", systemImage: "chart.xyaxis.line") {
+                        showingTrends = true
+                    }
+                }
+                ToolbarItem(placement: .topBarLeading) {
                     Button("Volume", systemImage: "chart.bar") { showingVolume = true }
                         .disabled(volume == nil)
                 }
@@ -45,6 +52,9 @@ struct ContentView: View {
                 if let volume {
                     VolumeView(report: volume)
                 }
+            }
+            .navigationDestination(isPresented: $showingTrends) {
+                TrendsView(trends: trends)
             }
             .navigationDestination(item: $route) { kind in
                 sessionDestination(for: kind)
@@ -57,6 +67,7 @@ struct ContentView: View {
             guard newValue == nil, let store else { return }
             cycle = try? store.cyclePosition()
             volume = try? store.volumeReport()
+            trends = (try? store.e1RMTrends()) ?? []
         }
     }
 
@@ -184,6 +195,7 @@ struct ContentView: View {
             try opened.seedTemplatesIfNeeded()
             cycle = try opened.cyclePosition()
             volume = try opened.volumeReport()
+            trends = try opened.e1RMTrends()
             store = opened
         } catch {
             startupFailure = String(describing: error)
