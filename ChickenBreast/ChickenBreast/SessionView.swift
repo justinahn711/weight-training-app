@@ -58,7 +58,13 @@ struct SessionView: View {
             UIApplication.shared.isIdleTimerDisabled = true
             model.loadSuggestionContext()
         }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+            // Leaving the session is what finishes it — there's no "done"
+            // button to forget to press, and a session abandoned halfway still
+            // produced real work that should count.
+            model.applyProgression()
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 // Reachable at all times without a menu — sweaty-hand mistaps
