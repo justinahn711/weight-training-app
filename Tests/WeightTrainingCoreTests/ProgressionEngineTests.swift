@@ -102,8 +102,8 @@ final class DoubleProgressionTests: XCTestCase {
             state: state(press, load: 70, reps: 12, hits: 1),
             performed: sets(press, load: 70, reps: [12, 12, 12])
         )
-        XCTAssertEqual(result.change, .addedLoad(from: Load(70), to: Load(80)))
-        XCTAssertEqual(result.state.targetLoad, Load(80), "one dumbbell increment")
+        XCTAssertEqual(result.change, .addedLoad(from: Load(70), to: Load(75)))
+        XCTAssertEqual(result.state.targetLoad, Load(75), "the next dumbbell up")
         XCTAssertEqual(result.state.targetReps, 8, "back to the bottom of the range")
         XCTAssertEqual(result.state.consecutiveTopHits, 0, "banked hits are spent")
     }
@@ -154,7 +154,7 @@ final class DoubleProgressionTests: XCTestCase {
             state: state(press, load: 70, reps: 12),
             performed: sets(press, load: 70, reps: [12, 12], rpe: nil)
         )
-        XCTAssertEqual(result.change, .addedLoad(from: Load(70), to: Load(80)),
+        XCTAssertEqual(result.change, .addedLoad(from: Load(70), to: Load(75)),
                        "absent RPE is not evidence of overreach")
     }
 

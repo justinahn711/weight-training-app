@@ -78,12 +78,16 @@ final class PlateMathTests: XCTestCase {
                        "lighter than the bar")
     }
 
-    func testDumbbellsMoveInTenPoundTotals() {
+    /// A dumbbell load is one hand's worth, so 75 is a real dumbbell and 72.5
+    /// is not.
+    func testDumbbellsMoveToTheNextDumbbellOnTheRack() {
         XCTAssertTrue(PlateMath.isAchievable(Load(70), equipment: .dumbbell,
                                              increment: .dumbbell))
-        XCTAssertFalse(PlateMath.isAchievable(Load(75), equipment: .dumbbell,
+        XCTAssertTrue(PlateMath.isAchievable(Load(75), equipment: .dumbbell,
+                                             increment: .dumbbell))
+        XCTAssertFalse(PlateMath.isAchievable(Load(72.5), equipment: .dumbbell,
                                               increment: .dumbbell),
-                       "5 lb per hand is a 10 lb total step")
+                       "no such dumbbell")
     }
 
     func testStacksUseTheirConfiguredIncrement() {

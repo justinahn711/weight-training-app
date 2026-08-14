@@ -1,6 +1,18 @@
 import Foundation
 
-/// A weight in pounds.
+/// A weight in pounds, as it would be said out loud.
+///
+/// The unit is deliberately *not* uniform across equipment, because lifters
+/// aren't either:
+///
+/// - Barbells and plate-loaded machines: the whole load, bar included. "225"
+///   is a bar with two plates a side.
+/// - Dumbbells: the weight **in one hand**. "70" is a pair of 70s, not 35s.
+/// - Stacks and cables: whatever the pin says.
+///
+/// Making this uniform would mean logging a pair of 70s as 140, which nobody
+/// does and everybody would misread. The cost is that a dumbbell load is not
+/// comparable to a barbell load, which is correct — they aren't.
 ///
 /// Wrapped rather than passed around as a bare `Double` so that plate math and
 /// increment snapping have one place to live, and so a rep count can never be
@@ -46,15 +58,17 @@ extension Load: CustomStringConvertible {
     }
 }
 
-/// The smallest load change an exercise can actually make.
+/// The smallest load change an exercise can actually make, in the same units
+/// the load is expressed in.
 ///
 /// This is the single most consequential number in the app: it's what forces
-/// double progression almost everywhere. Dumbbells move 10 lb at a time, so on
-/// 70 lb incline presses the smallest possible jump is +14% — far too large for
-/// "add weight when you hit your reps" to be a workable rule.
+/// double progression almost everywhere. The next dumbbell up is 5 lb heavier
+/// per hand, so moving off the 70s is a 7% jump — and on a machine stack it's
+/// often 10 or 15 lb on a 100 lb setting. Both are far too coarse for "add
+/// weight when you hit your reps" to be a workable rule on its own.
 public struct LoadIncrement: Hashable, Codable, Sendable {
-    /// Smallest total change in pounds, counting both sides of a barbell or
-    /// both hands of a dumbbell pair.
+    /// Smallest change in pounds, in the exercise's own units — the whole bar
+    /// for a barbell, one hand for dumbbells.
     public var pounds: Double
 
     public init(pounds: Double) {
@@ -73,8 +87,11 @@ public struct LoadIncrement: Hashable, Codable, Sendable {
     /// Plate-loaded machine with 2.5 lb plates: 2.5 per side.
     public static let plateLoaded = LoadIncrement(pounds: 5)
 
-    /// Dumbbell pairs in 5 lb per-hand steps — 10 lb total.
-    public static let dumbbell = LoadIncrement(pounds: 10)
+    /// The next dumbbell on the rack, 5 lb heavier in each hand.
+    ///
+    /// Racks vary — many run 5 lb steps to 50 and 10 lb steps above — so this
+    /// is a default to be corrected per exercise once measured (#20).
+    public static let dumbbell = LoadIncrement(pounds: 5)
 
     /// Placeholder for machine stacks until each machine is measured at the gym.
     /// Tracked by issue #20.

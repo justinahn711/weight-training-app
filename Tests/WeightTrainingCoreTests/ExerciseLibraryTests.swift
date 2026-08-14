@@ -50,8 +50,13 @@ final class ExerciseLibraryTests: XCTestCase {
 
     // MARK: - Increments
 
-    /// The increments issue #2 specifies: barbell 5 lb, dumbbell 10 lb total,
-    /// machine stack 10 lb placeholder.
+    /// The increments the equipment actually offers: 5 lb on a barbell, the
+    /// next dumbbell up (5 lb in each hand), and a 10 lb stack placeholder
+    /// until each machine is measured (#20).
+    ///
+    /// Issue #2 said "dumbbell 10 lb total", which assumed a dumbbell load
+    /// meant the pair. It means one hand — you tap 70 for the 70s — so the
+    /// step is 5.
     func testIncrementsMatchTheEquipment() {
         for exercise in ExerciseLibrary.all {
             XCTAssertEqual(
@@ -61,7 +66,7 @@ final class ExerciseLibraryTests: XCTestCase {
             )
         }
         XCTAssertEqual(LoadIncrement.barbell.pounds, 5)
-        XCTAssertEqual(LoadIncrement.dumbbell.pounds, 10)
+        XCTAssertEqual(LoadIncrement.dumbbell.pounds, 5)
         XCTAssertEqual(LoadIncrement.stackDefault.pounds, 10)
     }
 

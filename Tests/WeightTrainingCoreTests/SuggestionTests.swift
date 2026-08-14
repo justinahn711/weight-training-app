@@ -46,9 +46,9 @@ final class SuggestionEngineTests: XCTestCase {
         let lift = press
         let chips = suggestions(lift, loggedToday: [set(lift, 70, 12, RPE(6.5))])
         let chip = try XCTUnwrap(chips.first)
-        XCTAssertEqual(chip.kind, .load(Load(80)), "one dumbbell increment up")
+        XCTAssertEqual(chip.kind, .load(Load(75)), "the next dumbbell up")
         XCTAssertEqual(chip.reason, "set 1 was RPE 6.5")
-        XCTAssertEqual(chip.title, "80 lb")
+        XCTAssertEqual(chip.title, "75 lb")
     }
 
     func testEveryChipCarriesANonEmptyReason() {
@@ -70,7 +70,7 @@ final class SuggestionEngineTests: XCTestCase {
         let lift = press
         let chips = suggestions(lift, loggedToday: [set(lift, 70, 7, RPE(9.5))])
         let chip = try XCTUnwrap(chips.first)
-        XCTAssertEqual(chip.kind, .load(Load(60)))
+        XCTAssertEqual(chip.kind, .load(Load(65)))
         XCTAssertEqual(chip.reason, "set 1 was RPE 9.5")
     }
 
@@ -116,8 +116,8 @@ final class SuggestionEngineTests: XCTestCase {
     func testNoChipOnceTheWeightHasAlreadyBeenRaised() {
         let lift = press
         let chips = suggestions(lift, loggedToday: [set(lift, 70, 12, RPE(6.5))],
-                                pendingLoad: 80)
-        XCTAssertFalse(chips.contains { $0.kind == .load(Load(80)) })
+                                pendingLoad: 75)
+        XCTAssertFalse(chips.contains { $0.kind == .load(Load(75)) })
     }
 
     // MARK: - Deload
