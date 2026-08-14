@@ -218,7 +218,9 @@ struct ContentView: View {
     private func openStore() async {
         guard store == nil, startupFailure == nil else { return }
         do {
-            let opened = try TrainingStore()
+            // Sync when the entitlement allows it; the store falls back to a
+            // local file if it doesn't, so the app always opens (#19).
+            let opened = try TrainingStore(syncsWithCloudKit: true)
             // Before anything reads: a duplicate arriving from another device
             // (#19) must never be observed, even briefly. On a clean store this
             // is one fetch per entity and no writes.
