@@ -89,7 +89,10 @@ public enum ExerciseLibrary {
             ],
             equipment: .plateLoaded,
             progressionRule: .doubleProgression(range: RepRange(8, 12)),
-            needsWarmupRamp: true
+            needsWarmupRamp: true,
+            // Plates go on one sleeve. The lever's own weight is gym-specific
+            // and unmeasured, so no plate breakdown is offered yet (#39).
+            loading: .unmeasuredMachine(sleeves: 1)
         ),
         Exercise(
             id: id("CB000002-0000-4000-8000-000000000002"),
@@ -144,7 +147,9 @@ public enum ExerciseLibrary {
             muscles: [.primary(.quads), .secondary(.glutes)],
             equipment: .plateLoaded,
             progressionRule: .rpeTargetedLoad(reps: 8, targetRPE: .eight),
-            needsWarmupRamp: true
+            needsWarmupRamp: true,
+            // Sled loads on both sides; its empty weight is unmeasured (#39).
+            loading: .unmeasuredMachine(sleeves: 2)
         ),
         Exercise(
             id: id("CB000003-0000-4000-8000-000000000002"),

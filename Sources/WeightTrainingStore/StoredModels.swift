@@ -71,6 +71,12 @@ public final class StoredExercise {
     public var musclesData: Data = Data()
     /// JSON `ProgressionRule`.
     public var progressionRuleData: Data = Data()
+    /// JSON `LoadingStyle`, empty when the exercise isn't plate-loaded.
+    ///
+    /// Persisted rather than re-derived from equipment, because the whole point
+    /// of the config (#39) is that a measured base weight survives — a T-bar
+    /// weighed once should not go back to "unknown" on the next launch.
+    public var loadingData: Data = Data()
 
     public init(_ exercise: Exercise) {
         self.id = exercise.id
@@ -80,6 +86,7 @@ public final class StoredExercise {
         self.needsWarmupRamp = exercise.needsWarmupRamp
         self.musclesData = encoded(exercise.muscles)
         self.progressionRuleData = encoded(exercise.progressionRule)
+        self.loadingData = exercise.loading.map(encoded) ?? Data()
     }
 
     /// Overwrites this row in place, preserving identity so relationships and
@@ -91,6 +98,7 @@ public final class StoredExercise {
         needsWarmupRamp = exercise.needsWarmupRamp
         musclesData = encoded(exercise.muscles)
         progressionRuleData = encoded(exercise.progressionRule)
+        loadingData = exercise.loading.map(encoded) ?? Data()
     }
 
     public func toDomain() throws -> Exercise {
@@ -102,7 +110,13 @@ public final class StoredExercise {
                 equipment: Equipment(rawValue: equipmentRaw) ?? .barbell,
                 increment: LoadIncrement(pounds: incrementPounds),
                 progressionRule: try decoded(ProgressionRule.self, from: progressionRuleData),
-                needsWarmupRamp: needsWarmupRamp
+                needsWarmupRamp: needsWarmupRamp,
+                // Empty means "not plate-loaded", which is different from
+                // "never stored" — rows written before #39 fall back to the
+                // equipment default via Exercise's initialiser.
+                loading: loadingData.isEmpty
+                    ? nil
+                    : try decoded(LoadingStyle.self, from: loadingData)
             )
         } catch {
             throw StoreError.corruptRecord(entity: "Exercise", id: id, underlying: error)
