@@ -117,3 +117,21 @@ extension TrainingStore {
         return stored.isEmpty ? DayTemplateLibrary.all : stored
     }
 }
+
+extension TrainingStore {
+
+    /// Trailing volume by muscle, for the guard in #25.
+    public func volumeReport(
+        days: Int = VolumeReport.windowDays,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> VolumeReport {
+        VolumeReport.trailing(
+            days: days,
+            history: try allSets(),
+            exercises: try exercises(),
+            now: now,
+            calendar: calendar
+        )
+    }
+}
