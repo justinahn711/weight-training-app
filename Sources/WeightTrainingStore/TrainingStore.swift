@@ -16,6 +16,7 @@ import WeightTrainingCore
 public final class TrainingStore {
     public let container: ModelContainer
 
+    var modelContext: ModelContext { container.mainContext }
     private var context: ModelContext { container.mainContext }
 
     /// - Parameter url: where the store file lives. Passing `nil` uses
@@ -50,6 +51,10 @@ public final class TrainingStore {
     /// dirty. A lifting app gets backgrounded mid-session constantly, and an
     /// unsaved set is a lost set.
     private func commit() throws {
+        try saveChanges()
+    }
+
+    func saveChanges() throws {
         guard context.hasChanges else { return }
         try context.save()
     }
@@ -78,11 +83,18 @@ public final class TrainingStore {
     }
 
     /// All exercises, alphabetical — the order the library picker wants.
+    ///
+    /// Uniqued by id on the way out. The schema can't enforce that any more
+    /// (see `deduplicate()`), and a duplicate must never reach the UI even in
+    /// the window before a dedupe pass runs.
     public func exercises() throws -> [Exercise] {
         let descriptor = FetchDescriptor<StoredExercise>(
             sortBy: [SortDescriptor(\.name)]
         )
-        return try context.fetch(descriptor).map { try $0.toDomain() }
+        var seen: Set<UUID> = []
+        return try context.fetch(descriptor)
+            .filter { seen.insert($0.id).inserted }
+            .map { try $0.toDomain() }
     }
 
     public func exercise(id: UUID) throws -> Exercise? {
@@ -125,7 +137,7 @@ public final class TrainingStore {
             predicate: #Predicate { $0.exerciseID == exerciseID },
             sortBy: [SortDescriptor(\.performedAt)]
         )
-        return try context.fetch(descriptor).map { $0.toDomain() }
+        return unique(try context.fetch(descriptor))
     }
 
     /// Sets performed at or after `date`, oldest first. The shape the volume
@@ -135,14 +147,23 @@ public final class TrainingStore {
             predicate: #Predicate { $0.performedAt >= date },
             sortBy: [SortDescriptor(\.performedAt)]
         )
-        return try context.fetch(descriptor).map { $0.toDomain() }
+        return unique(try context.fetch(descriptor))
     }
 
     public func allSets() throws -> [SetRecord] {
         let descriptor = FetchDescriptor<StoredSetLog>(
             sortBy: [SortDescriptor(\.performedAt)]
         )
-        return try context.fetch(descriptor).map { $0.toDomain() }
+        return unique(try context.fetch(descriptor))
+    }
+
+    /// Drops duplicate set rows by id.
+    ///
+    /// A duplicated set is not a cosmetic problem: it inflates volume, e1RM,
+    /// and every progression decision that reads the session.
+    private func unique(_ rows: [StoredSetLog]) -> [SetRecord] {
+        var seen: Set<UUID> = []
+        return rows.filter { seen.insert($0.id).inserted }.map { $0.toDomain() }
     }
 
     // MARK: - Progress state
@@ -164,12 +185,18 @@ public final class TrainingStore {
         try storedState(for: exerciseID)?.toDomain()
     }
 
+    /// The freshest state for an exercise.
+    ///
+    /// Picks the most recently performed rather than simply the first, so a
+    /// duplicate arriving from another device can't hand back a stale target
+    /// before `deduplicate()` has merged it.
     private func storedState(for exerciseID: UUID) throws -> StoredProgressState? {
-        var descriptor = FetchDescriptor<StoredProgressState>(
+        let descriptor = FetchDescriptor<StoredProgressState>(
             predicate: #Predicate { $0.exerciseID == exerciseID }
         )
-        descriptor.fetchLimit = 1
-        return try context.fetch(descriptor).first
+        return try context.fetch(descriptor).max {
+            ($0.lastPerformedAt ?? .distantPast) < ($1.lastPerformedAt ?? .distantPast)
+        }
     }
 
     // MARK: - Day templates

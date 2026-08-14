@@ -131,6 +131,10 @@ struct ContentView: View {
         guard store == nil, startupFailure == nil else { return }
         do {
             let opened = try TrainingStore()
+            // Before anything reads: a duplicate arriving from another device
+            // (#19) must never be observed, even briefly. On a clean store this
+            // is one fetch per entity and no writes.
+            try opened.deduplicate()
             try opened.seedLibraryIfNeeded()
             try opened.seedTemplatesIfNeeded()
             cycle = try opened.cyclePosition()
