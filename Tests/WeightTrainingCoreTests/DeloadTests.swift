@@ -234,8 +234,8 @@ final class DeloadDetectorTests: XCTestCase {
         let suggestion = try XCTUnwrap(
             DeloadDetector.evaluate(exercise: lift, state: state, history: [])
         )
-        // 30 - 10% = 27, which snaps back up to 30; one step down is 20.
-        XCTAssertEqual(suggestion.to, Load(20))
+        // 30 - 10% = 27, which snaps down to the next dumbbell: 25.
+        XCTAssertEqual(suggestion.to, Load(25))
         XCTAssertLessThan(suggestion.to, suggestion.from)
     }
 

@@ -17,16 +17,17 @@ public struct RepRange: Hashable, Codable, Sendable {
 
     /// How large a load jump the range can absorb before difficulty spikes.
     ///
-    /// A wider range tolerates a coarser increment: going 70 → 80 lb on
-    /// dumbbells only works if you can drop from 10 reps back to 6.
+    /// A wider range tolerates a coarser increment: moving from the 70s to the
+    /// 75s only works if you can drop from 10 reps back to 6.
     public var span: Int { top - bottom }
 }
 
 /// How an exercise advances between sessions.
 ///
 /// The choice is dictated by equipment, not preference. See `LoadIncrement` —
-/// with 10 lb dumbbell jumps and 10–15 lb machine stacks, load progression is
-/// only viable on the handful of lifts that move in true 5 lb steps.
+/// with 5 lb-per-hand dumbbell jumps and 10–15 lb machine stacks, load
+/// progression on its own is only viable on the handful of lifts where a 5 lb
+/// step is a small fraction of the working weight.
 public enum ProgressionRule: Hashable, Codable, Sendable {
     /// Add reps toward the top of the range, then add one increment and reset
     /// to the bottom. The default for nearly everything.
