@@ -135,3 +135,57 @@ extension TrainingStore {
         )
     }
 }
+
+extension TrainingStore {
+
+    /// Turns what was performed into next session's targets.
+    ///
+    /// Without this the progression engine is dead code: every lift stays on
+    /// "first time — just log it" forever, no stall is ever counted, and the
+    /// deload detector has nothing to read.
+    ///
+    /// Applied per exercise over the whole session rather than after each set,
+    /// because double progression is decided by the *weakest* set and that
+    /// isn't known until the last one is in.
+    ///
+    /// Idempotent by calendar day. `ProgressionEngine.advance` is not —
+    /// `consecutiveTopHits` increments — and a session can be left and
+    /// re-entered several times, or force-quit and resumed, so a state already
+    /// advanced today is left alone. That guard is the difference between
+    /// earning a load jump and being handed one for walking out of the gym
+    /// twice.
+    ///
+    /// - Returns: the exercises whose targets changed, and what changed.
+    @discardableResult
+    public func applyProgression(
+        for session: Session,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> [(exercise: Exercise, result: ProgressionResult)] {
+        var applied: [(exercise: Exercise, result: ProgressionResult)] = []
+
+        for sessionExercise in session.exercises {
+            let working = sessionExercise.workingSets
+            guard !working.isEmpty else { continue }
+
+            let state = try progressState(forExercise: sessionExercise.id)
+                ?? ProgressState(exerciseID: sessionExercise.id)
+
+            if let last = state.lastPerformedAt,
+               calendar.isDate(last, inSameDayAs: session.startedAt) {
+                continue
+            }
+
+            let result = ProgressionEngine.advance(
+                exercise: sessionExercise.exercise,
+                state: state,
+                performed: working,
+                now: now
+            )
+            try save(result.state)
+            applied.append((sessionExercise.exercise, result))
+        }
+
+        return applied
+    }
+}

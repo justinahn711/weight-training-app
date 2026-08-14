@@ -166,3 +166,145 @@ final class SessionLoadingTests: XCTestCase {
         XCTAssertFalse(session.exercises.contains { $0.exercise.id == incline.id })
     }
 }
+
+/// The loop that makes the app more than a notebook: perform a session, and
+/// next time the lift comes up it has a target.
+///
+/// The engine (#9, #10) and the store existed for several milestones without
+/// anything connecting them, so every lift stayed on "first time — just log
+/// it" forever. These tests are that connection.
+@MainActor
+final class ProgressionApplicationTests: XCTestCase {
+    private var store: TrainingStore!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        store = try TrainingStore.inMemory()
+        try store.seedLibraryIfNeeded()
+        try store.seedTemplatesIfNeeded()
+    }
+
+    override func tearDownWithError() throws {
+        store = nil
+        try super.tearDownWithError()
+    }
+
+    private var incline: Exercise { ExerciseLibrary.all.first { $0.name == "Incline DB Press" }! }
+
+    /// Log a first session blind, and the second one opens with a target.
+    func testAColdLiftGainsATargetAfterOneSession() throws {
+        let day = Date(timeIntervalSince1970: 1_760_000_000)
+        var session = try store.startSession(kind: .push, startedAt: day)
+        XCTAssertTrue(try XCTUnwrap(session.current).prescription.isColdStart)
+
+        for index in 0..<3 {
+            let record = SetRecord(exerciseID: incline.id, load: Load(65), reps: 10,
+                                   rpe: RPE(8),
+                                   performedAt: day.addingTimeInterval(Double(index) * 200))
+            try store.log(record)
+            session.log(record)
+        }
+        try store.applyProgression(for: session, now: day)
+
+        let next = try store.startSession(kind: .push,
+                                          startedAt: day.addingTimeInterval(3 * 86_400))
+        let prescription = try XCTUnwrap(next.current).prescription
+        XCTAssertFalse(prescription.isColdStart)
+        XCTAssertEqual(prescription.load, Load(65))
+        XCTAssertEqual(prescription.reps, 11, "one more rep than the weakest set")
+    }
+
+    /// Leaving and re-entering a session must not be worth a load jump.
+    func testApplyingTwiceInOneDayChangesNothingTheSecondTime() throws {
+        let day = Date(timeIntervalSince1970: 1_760_000_000)
+        var session = try store.startSession(kind: .push, startedAt: day)
+        let record = SetRecord(exerciseID: incline.id, load: Load(70), reps: 12,
+                               rpe: RPE(8), performedAt: day)
+        try store.log(record)
+        session.log(record)
+
+        let first = try store.applyProgression(for: session, now: day)
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(try store.progressState(forExercise: incline.id)?.consecutiveTopHits, 1)
+
+        let second = try store.applyProgression(for: session, now: day)
+        XCTAssertTrue(second.isEmpty, "already advanced today")
+        XCTAssertEqual(try store.progressState(forExercise: incline.id)?.consecutiveTopHits, 1,
+                       "walking out and back in is not a qualifying session")
+    }
+
+    /// Two sessions at the top of the range earn the jump, on the second.
+    func testTwoCleanSessionsEarnALoadJump() throws {
+        let first = Date(timeIntervalSince1970: 1_760_000_000)
+        let second = first.addingTimeInterval(3 * 86_400)
+
+        for day in [first, second] {
+            var session = try store.startSession(kind: .push, startedAt: day)
+            for index in 0..<3 {
+                let record = SetRecord(exerciseID: incline.id, load: Load(70), reps: 12,
+                                       rpe: RPE(8),
+                                       performedAt: day.addingTimeInterval(Double(index) * 200))
+                try store.log(record)
+                session.log(record)
+            }
+            try store.applyProgression(for: session, now: day)
+        }
+
+        let state = try XCTUnwrap(try store.progressState(forExercise: incline.id))
+        XCTAssertEqual(state.targetLoad, Load(75), "the next dumbbell up")
+        XCTAssertEqual(state.targetReps, 8, "back to the bottom of the range")
+    }
+
+    /// Exercises that weren't touched keep whatever they had.
+    func testUntouchedExercisesAreLeftAlone() throws {
+        let day = Date(timeIntervalSince1970: 1_760_000_000)
+        var session = try store.startSession(kind: .push, startedAt: day)
+        let record = SetRecord(exerciseID: incline.id, load: Load(70), reps: 10,
+                               rpe: RPE(8), performedAt: day)
+        try store.log(record)
+        session.log(record)
+
+        let applied = try store.applyProgression(for: session, now: day)
+        XCTAssertEqual(applied.count, 1)
+        let bench = ExerciseLibrary.all.first { $0.name == "Flat Bench" }!
+        XCTAssertNil(try store.progressState(forExercise: bench.id))
+    }
+
+    /// A warmup-only exercise produced no evidence, so it earns no target.
+    func testWarmupsAloneDoNotAdvanceALift() throws {
+        let day = Date(timeIntervalSince1970: 1_760_000_000)
+        var session = try store.startSession(kind: .push, startedAt: day)
+        let record = SetRecord(exerciseID: incline.id, load: Load(45), reps: 10,
+                               isWarmup: true, performedAt: day)
+        try store.log(record)
+        session.log(record)
+
+        XCTAssertTrue(try store.applyProgression(for: session, now: day).isEmpty)
+        XCTAssertNil(try store.progressState(forExercise: incline.id))
+    }
+
+    /// Missed sessions accumulate into a deload proposal, end to end.
+    func testRepeatedMissesEventuallyProposeADeload() throws {
+        let start = Date(timeIntervalSince1970: 1_760_000_000)
+        try store.save(ProgressState(exerciseID: incline.id, targetLoad: Load(80),
+                                     targetReps: 8))
+
+        for index in 0..<2 {
+            let day = start.addingTimeInterval(Double(index) * 3 * 86_400)
+            var session = try store.startSession(kind: .push, startedAt: day)
+            let record = SetRecord(exerciseID: incline.id, load: Load(80), reps: 5,
+                                   rpe: RPE(9.5), performedAt: day)
+            try store.log(record)
+            session.log(record)
+            try store.applyProgression(for: session, now: day)
+        }
+
+        let state = try XCTUnwrap(try store.progressState(forExercise: incline.id))
+        XCTAssertEqual(state.stallCount, 2)
+        let suggestion = DeloadDetector.evaluate(
+            exercise: incline, state: state,
+            history: try store.sets(forExercise: incline.id)
+        )
+        XCTAssertEqual(suggestion?.to, Load(70), "80 less 10%, snapped to a real dumbbell")
+    }
+}

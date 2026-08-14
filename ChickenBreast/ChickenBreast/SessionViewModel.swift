@@ -135,9 +135,9 @@ final class SessionViewModel {
 
     // MARK: - Weight and reps
 
-    /// Steps the weight by the exercise's real increment — 10 lb on dumbbells,
-    /// 5 lb on a barbell — so the stepper can only produce loads the equipment
-    /// can actually make.
+    /// Steps the weight by the exercise's real increment — the next dumbbell
+    /// up, 5 lb on a barbell — so the stepper can only produce loads the
+    /// equipment can actually make.
     func adjustLoad(by steps: Int) {
         guard let exercise = current?.exercise else { return }
         let next = pendingLoad.pounds + Double(steps) * exercise.increment.pounds
@@ -145,7 +145,7 @@ final class SessionViewModel {
         // to 15 lb on a 45 lb bar is not a light set, it's an impossible one —
         // and the engine already refuses to propose such loads, so the one
         // place a human dials a weight has to refuse them too.
-        pendingLoad = max(exercise.equipment.minimumLoad, Load(next))
+        pendingLoad = max(exercise.minimumLoad, Load(next))
     }
 
     func adjustReps(by delta: Int) {
@@ -181,7 +181,7 @@ final class SessionViewModel {
             // On a cold start there's no target, so the stepper opens at the
             // lightest thing the equipment can actually be set to — an empty
             // bar, not zero.
-            pendingLoad = current.prescription.load ?? current.exercise.equipment.minimumLoad
+            pendingLoad = current.prescription.load ?? current.exercise.minimumLoad
             pendingReps = current.prescription.reps
         }
         // RPE always resets to the target rather than carrying the last set's
@@ -189,6 +189,26 @@ final class SessionViewModel {
         // set, and inheriting a 9.5 from the previous set would quietly log
         // fatigue that hasn't happened yet.
         pendingRPE = current.prescription.rpe
+    }
+
+    // MARK: - Finishing
+
+    /// Turns what was performed into next session's targets.
+    ///
+    /// Leaving the session is what finishes it — there is no "done" button to
+    /// forget to press, and a session abandoned halfway still produced real
+    /// work that should count. The store owns the rule, including the
+    /// once-per-day guard that keeps walking out and back in from being worth
+    /// a load jump.
+    func applyProgression() {
+        do {
+            let applied = try store.applyProgression(for: session)
+            for entry in applied {
+                loadedStates[entry.exercise.id] = entry.result.state
+            }
+        } catch {
+            failure = "Couldn't save your progress: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Swapping
