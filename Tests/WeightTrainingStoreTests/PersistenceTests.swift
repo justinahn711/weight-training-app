@@ -124,6 +124,34 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(reloaded.last?.rpe, RPE(9.5), "half-step RPE preserved")
     }
 
+    /// A machine measured once must not go back to "unknown" on relaunch —
+    /// that's the whole point of storing the loading config (#39).
+    func testMeasuredLoadingConfigSurvivesRelaunch() throws {
+        var hack = ExerciseLibrary.all.first { $0.name == "Hack Squat" }!
+        hack.loading = LoadingStyle(baseWeight: Load(100), sleeves: 2,
+                                    availablePlates: [45, 25, 10, 5])
+        do {
+            let store = try reopen()
+            try store.upsert(hack)
+        }
+
+        let reloaded = try XCTUnwrap(try reopen().exercise(id: hack.id))
+        XCTAssertEqual(reloaded.loading?.baseWeight, Load(100))
+        XCTAssertEqual(reloaded.loading?.sleeves, 2)
+        XCTAssertEqual(reloaded.loading?.availablePlates, [45, 25, 10, 5])
+        XCTAssertEqual(reloaded.plateBreakdown(for: Load(280))?.displayLine, "45 · 45")
+    }
+
+    /// An exercise with no plates keeps having none.
+    func testAbsentLoadingConfigSurvivesRelaunch() throws {
+        let pulldown = ExerciseLibrary.all.first { $0.name == "Lat Pulldown" }!
+        do {
+            let store = try reopen()
+            try store.upsert(pulldown)
+        }
+        XCTAssertNil(try reopen().exercise(id: pulldown.id)?.loading)
+    }
+
     func testProgressStateSurvivesRelaunch() throws {
         let exercise = inclinePress()
         let state = ProgressState(

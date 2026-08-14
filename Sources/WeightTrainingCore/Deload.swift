@@ -166,7 +166,7 @@ public enum DeloadDetector {
         if result >= load {
             result = Load(load.pounds - increment.pounds)
         }
-        // Never below what the equipment can present: an empty bar is as light
+        // Never below what the apparatus can present: an empty bar is as light
         // as a barbell deload gets.
         return max(floor, min(result, load))
     }

@@ -13,28 +13,33 @@ public struct PlateCount: Hashable, Sendable {
 
 /// How to build a barbell load, one side of the bar.
 public struct PlateBreakdown: Hashable, Sendable {
+    /// What the apparatus weighs empty — the bar, the lever, the sled.
     public let bar: Load
     public let perSide: [PlateCount]
+
+    /// How many sleeves these plates go on. Two for a barbell, one for a T-bar.
+    public let sleeves: Int
 
     /// What the plates actually add up to, which is the load that can be built.
     public let total: Load
 
-    public init(bar: Load, perSide: [PlateCount]) {
+    public init(bar: Load, perSide: [PlateCount], sleeves: Int = 2) {
         self.bar = bar
         self.perSide = perSide
-        let perSideTotal = perSide.reduce(0) { $0 + $1.plate * Double($1.count) }
-        self.total = Load(bar.pounds + perSideTotal * 2)
+        self.sleeves = sleeves
+        let perSleeve = perSide.reduce(0) { $0 + $1.plate * Double($1.count) }
+        self.total = Load(bar.pounds + perSleeve * Double(sleeves))
     }
 
     public var isBarOnly: Bool { perSide.isEmpty }
 
-    /// `45 · 25 · 10` — plates per side, heaviest first, read while loading.
+    /// `45 · 25 · 10` — plates per sleeve, heaviest first, read while loading.
     ///
     /// Repeats are listed rather than multiplied because that's the order they
     /// go on the sleeve, and counting three 45s written out is faster than
     /// parsing "45×3" with a bar in your hands.
     public var displayLine: String {
-        guard !isBarOnly else { return "Bar only" }
+        guard !isBarOnly else { return sleeves == 1 ? "Empty" : "Bar only" }
         return perSide
             .flatMap { entry in Array(repeating: entry.plate, count: entry.count) }
             .map { $0 == $0.rounded() ? String(format: "%.0f", $0) : String(format: "%.1f", $0) }
@@ -57,34 +62,18 @@ public enum PlateMath {
     /// makes 5 lb barbell jumps possible at all.
     public static let standardPlates: [Double] = [45, 35, 25, 10, 5, 2.5]
 
-    /// Greedy breakdown of a barbell load.
+    /// Greedy breakdown against a standard Olympic bar.
     ///
-    /// - Returns: nil when the load can't be built — lighter than the bar, or
-    ///   needing half a 2.5. The caller is expected to snap first; returning
-    ///   nil rather than a nearest guess keeps a rounding decision from hiding
-    ///   inside a display helper.
+    /// Kept for the barbell case; anything else should go through the
+    /// exercise's own `LoadingStyle`, which knows its base weight and how many
+    /// sleeves it loads onto.
     public static func breakdown(
         for load: Load,
         bar: Load = standardBar,
         plates: [Double] = standardPlates
     ) -> PlateBreakdown? {
-        guard load >= bar else { return nil }
-
-        // Plates go on in pairs, so only half the difference is loaded per side.
-        var remainingPerSide = (load.pounds - bar.pounds) / 2
-        guard remainingPerSide >= 0 else { return nil }
-
-        var counts: [PlateCount] = []
-        for plate in plates.sorted(by: >) {
-            let count = Int((remainingPerSide / plate).rounded(.down))
-            guard count > 0 else { continue }
-            counts.append(PlateCount(plate: plate, count: count))
-            remainingPerSide -= Double(count) * plate
-        }
-
-        // Anything left over means the target wasn't buildable to begin with.
-        guard remainingPerSide < 0.001 else { return nil }
-        return PlateBreakdown(bar: bar, perSide: counts)
+        LoadingStyle(baseWeight: bar, sleeves: 2, availablePlates: plates)
+            .breakdown(for: load)
     }
 
     /// Whether a load can be built exactly with the given equipment.
@@ -138,9 +127,11 @@ extension Exercise {
 
     /// The plate breakdown for a load on this lift, or nil when a breakdown is
     /// meaningless — a cable stack has no plates to read off.
+    /// How to build a load on this specific apparatus, or nil when there are
+    /// no plates to read off — a stack, a dumbbell, or a machine nobody has
+    /// weighed yet.
     public func plateBreakdown(for load: Load) -> PlateBreakdown? {
-        guard equipment.usesOlympicBar else { return nil }
-        return PlateMath.breakdown(for: load)
+        loading?.breakdown(for: load)
     }
 
     /// The closest load to `load` that this equipment can actually be set to.
@@ -152,7 +143,7 @@ extension Exercise {
     /// stored weight the equipment can no longer make.
     public func nearestAchievable(_ load: Load) -> Load {
         let snapped = increment.snapToNearest(load)
-        return max(equipment.minimumLoad, snapped)
+        return max(minimumLoad, snapped)
     }
 
     /// Makes a load that was actually lifted safe to reuse as a target.
@@ -169,9 +160,12 @@ extension Exercise {
     ///
     /// Either way the equipment's floor is enforced — nothing goes under the bar.
     public func achievableTarget(echoing load: Load) -> Load {
-        let floored = max(equipment.minimumLoad, load)
-        guard equipment.usesOlympicBar else { return floored }
-        return max(equipment.minimumLoad, increment.snapToNearest(floored))
+        let floored = max(minimumLoad, load)
+        // Only correct the number where the arithmetic is objective. Plate math
+        // on a measured apparatus is; a configured stack increment is a guess,
+        // and the rack having 65s is likelier than the set being imaginary.
+        guard let loading, loading.isMeasured else { return floored }
+        return max(minimumLoad, increment.snapToNearest(floored))
     }
 
     /// The lightest load this exercise can be set to and still be a set.
@@ -179,6 +173,26 @@ extension Exercise {
     /// Below one increment there is nothing to load, so a proposal that lands
     /// there isn't lighter — it's nothing at all.
     public var lightestUsableLoad: Load {
-        max(equipment.minimumLoad, Load(increment.pounds))
+        max(minimumLoad, Load(increment.pounds))
+    }
+
+    /// The lightest load this exercise can present: the empty apparatus, or
+    /// nothing at all for a stack or a dumbbell.
+    public var minimumLoad: Load {
+        loading?.minimumLoad ?? .zero
+    }
+
+    /// Whether this exercise can actually be set to a load.
+    ///
+    /// Measured plate-loaded lifts are checked against real plates; everything
+    /// else against its increment, which is what a stack or a dumbbell rack
+    /// offers.
+    public func canBuild(_ load: Load) -> Bool {
+        if let loading, loading.isMeasured {
+            return loading.canBuild(load)
+        }
+        guard load >= minimumLoad, increment.pounds > 0 else { return false }
+        let steps = (load.pounds - minimumLoad.pounds) / increment.pounds
+        return abs(steps - steps.rounded()) < 0.001
     }
 }

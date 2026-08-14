@@ -59,12 +59,13 @@ public enum WarmupRamp {
 
         var rungs: [WarmupSet] = []
 
-        // Barbell lifts start with the empty bar, which is both the lightest
-        // buildable load and the one everybody actually starts with. A T-bar or
-        // a hack squat has no such bar, so inventing a "45 lb" first rung there
-        // would be fiction.
-        if exercise.equipment.usesOlympicBar, working > bar {
-            rungs.append(WarmupSet(load: bar, reps: 5))
+        // Start with the empty apparatus, which is both the lightest buildable
+        // load and the one everybody actually starts with — but only where its
+        // weight is known. Inventing a "45 lb" first rung on an unmeasured
+        // T-bar would be fiction.
+        let base = exercise.loading?.baseWeight
+        if let base, working > base {
+            rungs.append(WarmupSet(load: base, reps: 5))
         }
 
         for step in steps {
@@ -87,13 +88,13 @@ public enum WarmupRamp {
     /// Down, so a warmup is never accidentally heavier than intended — the one
     /// direction of error that costs working sets.
     private static func snap(_ load: Load, for exercise: Exercise, bar: Load) -> Load {
-        guard exercise.equipment.usesOlympicBar else {
+        guard let base = exercise.loading?.baseWeight else {
             return exercise.increment.snap(load)
         }
-        guard load > bar else { return bar }
-        // Barbell rungs move in whole increments above the bar, so the result
-        // is always loadable with real plates.
-        let aboveBar = exercise.increment.snap(Load(load.pounds - bar.pounds))
-        return Load(bar.pounds + aboveBar.pounds)
+        guard load > base else { return base }
+        // Rungs move in whole increments above the empty apparatus, so the
+        // result is always loadable with real plates.
+        let aboveBase = exercise.increment.snap(Load(load.pounds - base.pounds))
+        return Load(base.pounds + aboveBase.pounds)
     }
 }

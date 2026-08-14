@@ -49,6 +49,13 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
     /// pure noise for cable laterals, so this is opt-in per exercise.
     public var needsWarmupRamp: Bool
 
+    /// How this apparatus is built up to a weight, when it's plate-loaded.
+    ///
+    /// Per exercise rather than per equipment category, because a T-bar row and
+    /// a hack squat are both `.plateLoaded` and load nothing alike. Nil for
+    /// stacks, cables, and dumbbells, which have no plates to reason about.
+    public var loading: LoadingStyle?
+
     public init(
         id: UUID = UUID(),
         name: String,
@@ -56,7 +63,8 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
         equipment: Equipment,
         increment: LoadIncrement? = nil,
         progressionRule: ProgressionRule,
-        needsWarmupRamp: Bool = false
+        needsWarmupRamp: Bool = false,
+        loading: LoadingStyle? = nil
     ) {
         self.id = id
         self.name = name
@@ -65,6 +73,7 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
         self.increment = increment ?? equipment.defaultIncrement
         self.progressionRule = progressionRule
         self.needsWarmupRamp = needsWarmupRamp
+        self.loading = loading ?? equipment.defaultLoadingStyle
     }
 
     public var primaryMuscles: [Muscle] {
