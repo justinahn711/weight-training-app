@@ -191,6 +191,71 @@ final class SessionViewModel {
         pendingRPE = current.prescription.rpe
     }
 
+    // MARK: - Voice
+
+    /// What was heard, snapped and waiting. Nil when nothing is pending.
+    private(set) var heard: SnappedInput?
+
+    /// When the pending input will commit itself, or nil when it never will.
+    private(set) var autoCommitAt: Date?
+
+    /// How long a confident parse sits on screen before committing.
+    ///
+    /// Long enough to read and cancel, short enough that waiting isn't worse
+    /// than tapping. Anything uncertain never starts the clock at all.
+    static let autoCommitDelay: TimeInterval = 3
+
+    /// Applies a heard command.
+    ///
+    /// Set-shaped commands fill the form and wait. Everything else — next,
+    /// timers, adjustments — acts immediately, because none of them writes a
+    /// set and all of them are trivially undone.
+    func handle(_ parse: VoiceParse, now: Date = Date()) {
+        guard let current else { return }
+
+        switch parse.command {
+        case .nextExercise:
+            advance()
+        case .startTimer(let seconds):
+            rest = RestTimer(startedAt: now, duration: seconds, setID: UUID())
+        case .adjustLoad(let delta):
+            pendingLoad = max(current.exercise.minimumLoad,
+                              Load(pendingLoad.pounds + delta.pounds))
+        case .repeatLast:
+            if let last = current.loggedSets.last(where: { !$0.isWarmup }) {
+                pendingLoad = last.load
+                pendingReps = last.reps
+                pendingRPE = last.rpe ?? current.prescription.rpe
+            }
+        case .note:
+            // Notes have nowhere to live yet; dropped rather than pretended at.
+            break
+        case .logSet:
+            guard let snapped = VoiceSnapper.snap(parse, for: current.exercise,
+                                                  reference: pendingLoad) else { return }
+            heard = snapped
+            autoCommitAt = snapped.canAutoCommit
+                ? now.addingTimeInterval(Self.autoCommitDelay)
+                : nil
+        }
+    }
+
+    /// Writes the pending values into the form and logs the set.
+    func commitHeard() {
+        guard let snapped = heard else { return }
+        if let load = snapped.load { pendingLoad = load }
+        if let reps = snapped.reps { pendingReps = reps }
+        if let rpe = snapped.rpe { pendingRPE = rpe }
+        clearHeard()
+        logSet()
+    }
+
+    /// Any tap cancels — the form keeps whatever it had.
+    func clearHeard() {
+        heard = nil
+        autoCommitAt = nil
+    }
+
     // MARK: - Finishing
 
     /// Turns what was performed into next session's targets.
