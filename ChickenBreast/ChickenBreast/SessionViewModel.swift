@@ -191,6 +191,53 @@ final class SessionViewModel {
         pendingRPE = current.prescription.rpe
     }
 
+    // MARK: - Swapping
+
+    /// Every exercise on disk, for the swap sheet's search.
+    private var allExercises: [Exercise] = []
+    private var lastPerformed: [UUID: Date] = [:]
+
+    /// The current slot's own candidates, stalest first — the one-tap path.
+    ///
+    /// Excludes what's already on screen: offering to swap a lift for itself is
+    /// a row that can only waste a tap.
+    var swapCandidates: [Exercise] {
+        guard let current else { return [] }
+        let ids = current.slot?.candidateExerciseIDs ?? []
+        let candidates = ids.compactMap { id in allExercises.first { $0.id == id } }
+            .filter { $0.id != current.exercise.id }
+        return ExerciseSearch.rankedByStaleness(candidates, lastPerformed: lastPerformed)
+    }
+
+    /// Fuzzy search across the whole library, for everything else.
+    func searchResults(_ query: String) -> [Exercise] {
+        guard let current else { return [] }
+        return ExerciseSearch.search(query, in: allExercises)
+            .filter { $0.id != current.exercise.id }
+    }
+
+    /// Swaps the lift filling the current slot.
+    ///
+    /// The replacement is rebuilt from disk so it arrives with its own target
+    /// and its own history — a swap is not an inheritance.
+    func swap(to exercise: Exercise) {
+        guard let current else { return }
+        do {
+            let replacement = try store.sessionExercise(
+                for: exercise,
+                slot: current.slot,
+                startedAt: session.startedAt
+            )
+            session.replaceCurrent(with: replacement)
+            seedPendingFromCurrent()
+            // The old lift's advice has nothing to say about this one.
+            rest = nil
+            isWarmupRampExpanded = false
+        } catch {
+            failure = "Couldn't swap that exercise: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Suggestions
 
     /// Chips dismissed during this session.
@@ -263,6 +310,8 @@ final class SessionViewModel {
                 loadedStates[exercise.id] = state
             }
         }
+        allExercises = (try? store.exercises()) ?? []
+        lastPerformed = (try? store.lastPerformedDates()) ?? [:]
     }
 
     // MARK: - Plates and warmups
