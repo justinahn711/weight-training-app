@@ -7,15 +7,17 @@ import SwiftUI
 import WeightTrainingCore
 import WeightTrainingStore
 
-/// Pick a day and start.
+/// What to train next.
 ///
-/// The cycle is push → pull → legs and never a weekday, so this offers the
-/// three days rather than a calendar. Choosing the day for you is the
-/// cycle-position engine's job (#17); until then the choice is explicit.
+/// The cycle is push → pull → legs and never a weekday. The app leads with the
+/// day that's due — read from cycle position, not the calendar — while leaving
+/// the other two a tap away, because the rack you need is sometimes busy and
+/// the app suggests rather than decides.
 struct ContentView: View {
     @State private var store: TrainingStore?
     @State private var startupFailure: String?
     @State private var route: DayKind?
+    @State private var cycle: CyclePosition?
 
     var body: some View {
         NavigationStack {
@@ -36,34 +38,75 @@ struct ContentView: View {
             }
         }
         .task { await openStore() }
+        // Recomputed on return from a session, so finishing a push day moves
+        // the home screen on to pull without a relaunch.
+        .onChange(of: route) { _, newValue in
+            guard newValue == nil, let store else { return }
+            cycle = try? store.cyclePosition()
+        }
     }
 
     private var dayPicker: some View {
         VStack(spacing: 16) {
             Spacer()
-            ForEach(DayKind.allCases, id: \.self) { kind in
+
+            if let cycle {
+                Text(cycle.summary())
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            ForEach(orderedDays, id: \.self) { kind in
+                let isNext = kind == cycle?.next
                 Button {
                     route = kind
                 } label: {
                     HStack {
                         Text(kind.rawValue.capitalized)
-                            .font(.title2.bold())
+                            .font(isNext ? .title.bold() : .title3.weight(.semibold))
                         Spacer()
-                        Text("\(ExerciseLibrary.exercises(for: kind).count) lifts")
+                        Text(subtitle(for: kind))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 20)
-                    .frame(height: 72)
+                    .frame(height: isNext ? 88 : 68)
                     .frame(maxWidth: .infinity)
-                    .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 16))
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(isNext ? AnyShapeStyle(.tint.opacity(0.15))
+                                         : AnyShapeStyle(.fill.tertiary))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .strokeBorder(isNext ? AnyShapeStyle(.tint)
+                                                 : AnyShapeStyle(.clear), lineWidth: 2)
+                    )
                 }
                 .buttonStyle(.plain)
                 .disabled(store == nil)
             }
+
             Spacer()
         }
         .padding(.horizontal, 20)
+    }
+
+    /// The due day first, then the rest of the cycle in order.
+    private var orderedDays: [DayKind] {
+        guard let next = cycle?.next else { return DayKind.allCases }
+        return [next, next.next, next.next.next]
+    }
+
+    private func subtitle(for kind: DayKind) -> String {
+        let slots = DayTemplateLibrary.template(for: kind).slots.count
+        guard let days = cycle?.daysSince(kind) else { return "\(slots) slots" }
+        switch days {
+        case 0:  return "today"
+        case 1:  return "yesterday"
+        default: return "\(days) days ago"
+        }
     }
 
     @ViewBuilder
@@ -89,6 +132,8 @@ struct ContentView: View {
         do {
             let opened = try TrainingStore()
             try opened.seedLibraryIfNeeded()
+            try opened.seedTemplatesIfNeeded()
+            cycle = try opened.cyclePosition()
             store = opened
         } catch {
             startupFailure = String(describing: error)
