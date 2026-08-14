@@ -201,3 +201,31 @@ extension TrainingStore {
         )
     }
 }
+
+extension TrainingStore {
+
+    /// The weekly digest, assembled from the same signals the chips use (#27).
+    public func digest(now: Date = Date(), calendar: Calendar = .current) throws -> Digest {
+        let exercises = try exercises()
+        let history = try allSets()
+
+        var states: [UUID: ProgressState] = [:]
+        for exercise in exercises {
+            if let state = try progressState(forExercise: exercise.id) {
+                states[exercise.id] = state
+            }
+        }
+
+        return Digest.build(
+            trends: E1RMTrendBuilder.trends(history: history, exercises: exercises,
+                                            calendar: calendar),
+            volume: VolumeReport.trailing(history: history, exercises: exercises,
+                                          now: now, calendar: calendar),
+            states: states,
+            history: history,
+            exercises: exercises,
+            now: now,
+            calendar: calendar
+        )
+    }
+}
