@@ -10,6 +10,13 @@ import WeightTrainingCore
 /// so stay testable without a `ModelContainer`. These classes exist only to put
 /// those values on disk and hand them back.
 ///
+/// No attribute carries a unique constraint, and every one has a default. Both
+/// are requirements of SwiftData's CloudKit mirroring (#19): a synced store
+/// cannot enforce uniqueness, because two offline devices can each create the
+/// "same" row and neither is wrong until they meet. Uniqueness is enforced by
+/// `TrainingStore` instead — `upsert` fetches before inserting, and duplicates
+/// that arrive anyway are merged by `deduplicate()`.
+///
 /// Fields that get queried or sorted (`exerciseID`, `performedAt`, `isWarmup`)
 /// are stored as columns. Compound values with no query use — muscle tags, the
 /// progression rule, a template's slots — are stored as encoded JSON, which
@@ -54,16 +61,16 @@ private func rpe(fromStored value: Double?) -> RPE? {
 
 @Model
 public final class StoredExercise {
-    @Attribute(.unique) public var id: UUID
-    public var name: String
-    public var equipmentRaw: String
-    public var incrementPounds: Double
-    public var needsWarmupRamp: Bool
+    public var id: UUID = UUID()
+    public var name: String = ""
+    public var equipmentRaw: String = Equipment.barbell.rawValue
+    public var incrementPounds: Double = LoadIncrement.barbell.pounds
+    public var needsWarmupRamp: Bool = false
 
     /// JSON `[MuscleInvolvement]`.
-    public var musclesData: Data
+    public var musclesData: Data = Data()
     /// JSON `ProgressionRule`.
-    public var progressionRuleData: Data
+    public var progressionRuleData: Data = Data()
 
     public init(_ exercise: Exercise) {
         self.id = exercise.id
@@ -109,13 +116,13 @@ public final class StoredExercise {
 /// carries is `SetRecord`.
 @Model
 public final class StoredSetLog {
-    @Attribute(.unique) public var id: UUID
-    public var exerciseID: UUID
-    public var pounds: Double
-    public var reps: Int
+    public var id: UUID = UUID()
+    public var exerciseID: UUID = UUID()
+    public var pounds: Double = 0
+    public var reps: Int = 0
     public var rpeValue: Double?
-    public var isWarmup: Bool
-    public var performedAt: Date
+    public var isWarmup: Bool = false
+    public var performedAt: Date = Date()
 
     public init(_ record: SetRecord) {
         self.id = record.id
@@ -146,12 +153,12 @@ public final class StoredSetLog {
 public final class StoredProgressState {
     /// One row per exercise, which is what makes this the per-exercise brain
     /// rather than a per-session snapshot.
-    @Attribute(.unique) public var exerciseID: UUID
+    public var exerciseID: UUID = UUID()
     public var targetPounds: Double?
     public var targetReps: Int?
     public var targetRPEValue: Double?
-    public var stallCount: Int
-    public var consecutiveTopHits: Int
+    public var stallCount: Int = 0
+    public var consecutiveTopHits: Int = 0
     public var lastE1RMPounds: Double?
     public var lastPerformedAt: Date?
 
@@ -194,8 +201,8 @@ public final class StoredProgressState {
 
 @Model
 public final class StoredDayTemplate {
-    @Attribute(.unique) public var id: UUID
-    public var kindRaw: String
+    public var id: UUID = UUID()
+    public var kindRaw: String = DayKind.push.rawValue
     /// JSON `[Slot]`. Slots are only ever read as a whole day, never queried
     /// individually, so they don't earn their own entity.
     public var slotsData: Data
