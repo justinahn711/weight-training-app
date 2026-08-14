@@ -14,6 +14,7 @@ import WeightTrainingCore
 struct SessionView: View {
     @State var model: SessionViewModel
     @State private var isSwapping = false
+    @State private var voice = VoiceRecognizer()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,7 +37,20 @@ struct SessionView: View {
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)
                 }
-                if let rest = model.rest {
+                if let heard = model.heard {
+                    HeardBanner(
+                        heard: heard,
+                        autoCommitAt: model.autoCommitAt,
+                        onCommit: {
+                            model.commitHeard()
+                            voice.consume()
+                        },
+                        onCancel: {
+                            model.clearHeard()
+                            voice.consume()
+                        }
+                    )
+                } else if let rest = model.rest {
                     RestBanner(rest: rest, onSkip: { model.skipRest() })
                 }
                 actionBar(exercise)
@@ -74,7 +88,24 @@ struct SessionView: View {
                 }
                 .disabled(!model.canUndo)
             }
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    Task {
+                        if voice.isListening { voice.stop() } else { await voice.start() }
+                    }
+                } label: {
+                    Image(systemName: voice.isListening ? "waveform.circle.fill" : "mic")
+                        .symbolEffect(.pulse, isActive: voice.isListening)
+                }
+            }
         }
+        // Heard values reach the form only through the snapper — the view has
+        // no path that writes a spoken number directly.
+        .onChange(of: voice.parsed) { _, parsed in
+            guard let parsed else { return }
+            model.handle(parsed)
+        }
+        .onDisappear { voice.stop() }
         .sheet(isPresented: $isSwapping) {
             SwapSheet(
                 slotName: model.current?.slot?.name,
