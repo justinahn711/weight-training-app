@@ -22,6 +22,8 @@ struct ContentView: View {
     @State private var showingVolume = false
     @State private var trends: [E1RMTrend] = []
     @State private var showingTrends = false
+    @State private var digest: Digest?
+    @State private var showingDigest = false
 
     var body: some View {
         NavigationStack {
@@ -56,6 +58,11 @@ struct ContentView: View {
             .navigationDestination(isPresented: $showingTrends) {
                 TrendsView(trends: trends)
             }
+            .navigationDestination(isPresented: $showingDigest) {
+                if let digest, let store {
+                    DigestView(digest: digest, store: store, onApplied: refresh)
+                }
+            }
             .navigationDestination(item: $route) { kind in
                 sessionDestination(for: kind)
             }
@@ -65,9 +72,7 @@ struct ContentView: View {
         // the home screen on to pull without a relaunch.
         .onChange(of: route) { _, newValue in
             guard newValue == nil, let store else { return }
-            cycle = try? store.cyclePosition()
-            volume = try? store.volumeReport()
-            trends = (try? store.e1RMTrends()) ?? []
+            refresh()
         }
     }
 
@@ -80,6 +85,24 @@ struct ContentView: View {
                     .font(.headline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let digest, !digest.isEmpty {
+                Button { showingDigest = true } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                        Text("\(digest.bullets.count) thing\(digest.bullets.count == 1 ? "" : "s") to look at")
+                            .font(.subheadline.weight(.medium))
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(.tint)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
 
             // The volume guard is worth nothing behind a tap nobody takes, so
@@ -135,6 +158,15 @@ struct ContentView: View {
             Spacer()
         }
         .padding(.horizontal, 20)
+    }
+
+    /// Recomputes everything the home screen shows.
+    private func refresh() {
+        guard let store else { return }
+        cycle = try? store.cyclePosition()
+        volume = try? store.volumeReport()
+        trends = (try? store.e1RMTrends()) ?? []
+        digest = try? store.digest()
     }
 
     /// Names the muscles that are behind, at most three — a list of ten is a
@@ -196,7 +228,9 @@ struct ContentView: View {
             cycle = try opened.cyclePosition()
             volume = try opened.volumeReport()
             trends = try opened.e1RMTrends()
+            digest = try opened.digest()
             store = opened
+            await DigestNotification.schedule()
         } catch {
             startupFailure = String(describing: error)
         }
