@@ -13,6 +13,7 @@ import WeightTrainingCore
 /// constraint — the phone is on a bench two feet away, not in your hand.
 struct SessionView: View {
     @State var model: SessionViewModel
+    @State private var isSwapping = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,6 +69,17 @@ struct SessionView: View {
                 .disabled(!model.canUndo)
             }
         }
+        .sheet(isPresented: $isSwapping) {
+            SwapSheet(
+                slotName: model.current?.slot?.name,
+                candidates: model.swapCandidates,
+                search: { model.searchResults($0) },
+                onPick: { exercise in
+                    model.swap(to: exercise)
+                    isSwapping = false
+                }
+            )
+        }
         .alert("Something went wrong",
                isPresented: Binding(get: { model.failure != nil },
                                     set: { if !$0 { model.dismissFailure() } })) {
@@ -81,13 +93,35 @@ struct SessionView: View {
 
     private func header(_ exercise: SessionExercise) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(model.progressLabel)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-            Text(exercise.exercise.name)
-                .font(.largeTitle.bold())
-                .minimumScaleFactor(0.6)
-                .lineLimit(2)
+            HStack(spacing: 8) {
+                Text(model.progressLabel)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                if let slot = exercise.slot {
+                    // The slot is the job. Naming it makes a swap legible as a
+                    // substitution rather than as abandoning the day's shape.
+                    Text(slot.name)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            Button {
+                isSwapping = true
+            } label: {
+                HStack(spacing: 6) {
+                    Text(exercise.exercise.name)
+                        .font(.largeTitle.bold())
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.tint)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
@@ -258,6 +292,79 @@ private struct SetRow: View {
         .padding(.horizontal, 12)
         .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 10))
         .opacity(set.isWarmup ? 0.6 : 1)
+    }
+}
+
+/// Swapping the lift filling a slot (#18).
+///
+/// The slot's own candidates sit at the top, stalest first, so the common case
+/// is one tap with no typing. Search is there for everything else.
+///
+/// There is deliberately no "create exercise" button. A lift invented at the
+/// rack has no history, no increment, and no muscle tags, and it pollutes
+/// volume tracking permanently — that's a considered decision, not a mid-set
+/// one. This is also the only place in a session a keyboard can appear, and
+/// only if you reach for search.
+private struct SwapSheet: View {
+    let slotName: String?
+    let candidates: [Exercise]
+    let search: (String) -> [Exercise]
+    let onPick: (Exercise) -> Void
+
+    @State private var query = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !candidates.isEmpty, query.isEmpty {
+                    Section {
+                        ForEach(candidates) { exercise in
+                            row(exercise)
+                        }
+                    } header: {
+                        Text(slotName.map { "For \($0.lowercased())" } ?? "Alternatives")
+                    } footer: {
+                        Text("Least recently trained first.")
+                    }
+                }
+
+                Section("All exercises") {
+                    let results = search(query)
+                    if results.isEmpty {
+                        Text("Nothing matches “\(query)”")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(results) { exercise in
+                            row(exercise)
+                        }
+                    }
+                }
+            }
+            .searchable(text: $query, prompt: "Search exercises")
+            .navigationTitle("Swap exercise")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func row(_ exercise: Exercise) -> some View {
+        Button {
+            onPick(exercise)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(exercise.name)
+                    .font(.body.weight(.medium))
+                Text(exercise.primaryMuscles.map(\.rawValue).joined(separator: ", "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

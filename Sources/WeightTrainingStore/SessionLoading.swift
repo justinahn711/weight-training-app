@@ -74,8 +74,19 @@ extension TrainingStore {
         return Session(kind: kind, exercises: sessionExercises, startedAt: startedAt)
     }
 
+    /// When each exercise was last performed, for ranking swap candidates by
+    /// staleness (#18).
+    public func lastPerformedDates() throws -> [UUID: Date] {
+        var dates: [UUID: Date] = [:]
+        for set in try allSets() where !set.isWarmup {
+            if let existing = dates[set.exerciseID], existing >= set.performedAt { continue }
+            dates[set.exerciseID] = set.performedAt
+        }
+        return dates
+    }
+
     /// Builds one filled slot: the exercise, its target, and its history.
-    func sessionExercise(
+    public func sessionExercise(
         for exercise: Exercise,
         slot: Slot?,
         startedAt: Date,

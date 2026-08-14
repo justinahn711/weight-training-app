@@ -104,6 +104,30 @@ public struct Session: Hashable, Sendable {
         exercises[index].loggedSets.append(record)
     }
 
+    // MARK: - Swapping
+
+    /// Replaces the exercise at `index`, keeping the slot it was filling.
+    ///
+    /// The slot is the job; the exercise is only who's doing it. Preserving it
+    /// means a swap is a substitution within the day's shape rather than a
+    /// deletion and an unrelated addition — which is what lets the rotating
+    /// pair and the day's structure survive a busy rack.
+    ///
+    /// Sets already logged against the old exercise stay exactly where they
+    /// are. They happened, and they belong to that lift.
+    public mutating func replace(at index: Int, with replacement: SessionExercise) {
+        guard exercises.indices.contains(index) else { return }
+        // Nothing to do if it's already there, and re-inserting would discard
+        // sets logged against it this session.
+        guard exercises[index].id != replacement.id else { return }
+        exercises[index] = replacement
+    }
+
+    /// Replaces whatever is on screen now.
+    public mutating func replaceCurrent(with replacement: SessionExercise) {
+        replace(at: currentIndex, with: replacement)
+    }
+
     /// Removes the most recently logged set anywhere in the session and returns
     /// it, so the caller can undo the same set on disk.
     ///
