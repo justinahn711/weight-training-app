@@ -265,8 +265,19 @@ public final class TrainingStore {
         try commit()
     }
 
+    /// Every template, uniqued by id — the same guarantee `exercises()` and the
+    /// set reads make.
+    ///
+    /// This was the one read path that could hand back duplicates, and a fresh
+    /// install is where it shows: `deduplicate()` and the seeds both run at
+    /// launch, before CloudKit's first import lands, so seeding inserts the
+    /// library into what looks like an empty store and the import then delivers
+    /// a second copy of every row. The next launch merges them, but the whole
+    /// first launch runs on doubled templates.
     public func dayTemplates() throws -> [DayTemplate] {
-        try context.fetch(FetchDescriptor<StoredDayTemplate>())
+        var seen: Set<UUID> = []
+        return try context.fetch(FetchDescriptor<StoredDayTemplate>())
+            .filter { seen.insert($0.id).inserted }
             .map { try $0.toDomain() }
     }
 
