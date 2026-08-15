@@ -72,6 +72,9 @@ struct SessionView: View {
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
             model.loadSuggestionContext()
+            // The lock screen is only useful while a session is open, which is
+            // exactly the span this view is on screen for (#23).
+            model.publishActivity()
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
@@ -79,6 +82,7 @@ struct SessionView: View {
             // button to forget to press, and a session abandoned halfway still
             // produced real work that should count.
             model.applyProgression()
+            model.endActivity()
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
