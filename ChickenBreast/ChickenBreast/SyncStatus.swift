@@ -4,6 +4,7 @@
 //
 
 import CloudKit
+import CoreData
 import Observation
 import SwiftUI
 import WeightTrainingStore
@@ -38,23 +39,56 @@ final class SyncStatus {
         var isHealthy: Bool { self == .syncing }
     }
 
+    /// The last mirroring export that finished, if one ever has.
+    ///
+    /// `State` answers "could we sync" — the account exists, the container
+    /// built. This answers "did a set actually leave the phone", which is the
+    /// question a reachable-but-idle store can't distinguish. A fresh simulator
+    /// with no iCloud account sits at `.noAccount` and never exports; a signed-in
+    /// one reports a success here within a minute of a logged set.
+    enum Export: Equatable {
+        case none
+        case succeeded(Date)
+        case failed(String, Date)
+    }
+
     private(set) var state: State = .checking
+    private(set) var lastExport: Export = .none
 
     /// Whether the store was even asked to sync, which is a separate question
     /// from whether iCloud is reachable.
     private(set) var storeRequestedSync = false
 
+    private var exportWatch: Task<Void, Never>?
+
     /// Turns SwiftData's error into something that says what to do.
     ///
-    /// `loadIssueModelContainer` is what SwiftData reports when it can't build
-    /// a CloudKit container, and by far the most common cause is running a
-    /// build that carries no iCloud entitlement — which is every simulator
-    /// build here, since entitlements are only applied when signing for a
-    /// device.
+    /// `loadIssueModelContainer` is SwiftData's blanket "couldn't build the
+    /// CloudKit container", and on its own it says nothing about why. The two
+    /// causes need different fixes and must not be collapsed:
+    ///
+    /// - A schema CloudKit refuses. Any non-optional attribute without a
+    ///   default sinks the whole store, and the underlying error names it.
+    ///   This is a code bug, and it's what #19 actually hit.
+    /// - A missing or unreachable entitlement, which is a signing problem.
+    ///
+    /// Not the simulator case either way: simulator builds carry the entitlement
+    /// and export to real CloudKit. What they lack is APNs, so remote changes
+    /// never get pushed down. And a simulator with no iCloud account fails more
+    /// quietly still — the container builds and the account check reports
+    /// `.noAccount`.
     static func explain(_ failure: String?) -> String {
         guard let failure else { return "the store opened without CloudKit" }
+        if failure.contains("all attributes be optional") {
+            // Keep the attribute names: they're the entire fix.
+            let names = failure
+                .split(separator: ":")
+                .last
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            return "a model attribute has no default, so CloudKit rejected the schema (\(names))"
+        }
         if failure.contains("loadIssueModelContainer") {
-            return "no iCloud entitlement in this build — sync needs a device build"
+            return "CloudKit couldn't open the store — check the schema and the entitlement"
         }
         return failure
     }
@@ -83,6 +117,44 @@ final class SyncStatus {
         } catch {
             state = .failed(error.localizedDescription)
         }
+
+        watchExports()
+    }
+
+    /// Listens for mirroring events so a failed export can't pass for a working
+    /// one.
+    ///
+    /// SwiftData is `NSPersistentCloudKitContainer` underneath and posts the
+    /// same event notifications, which is the only place the outcome of an
+    /// export is reported — the store's save succeeds long before CloudKit is
+    /// consulted, so nothing on the write path can tell you it later failed.
+    ///
+    /// Events post twice, once on start and once on finish; only the finished
+    /// ones carry a verdict, so the unfinished ones are dropped.
+    private func watchExports() {
+        guard exportWatch == nil else { return }
+        exportWatch = Task { [weak self] in
+            let events = NotificationCenter.default.notifications(
+                named: NSPersistentCloudKitContainer.eventChangedNotification
+            )
+            for await note in events {
+                guard
+                    let event = note.userInfo?[
+                        NSPersistentCloudKitContainer.eventNotificationUserInfoKey
+                    ] as? NSPersistentCloudKitContainer.Event,
+                    event.type == .export,
+                    let finished = event.endDate
+                else { continue }
+
+                // Ends the loop once the status object is gone, rather than
+                // leaving a task awaiting notifications nobody reads.
+                guard let self else { break }
+
+                self.lastExport = event.succeeded
+                    ? .succeeded(finished)
+                    : .failed(event.error?.localizedDescription ?? "unknown error", finished)
+            }
+        }
     }
 }
 
@@ -95,10 +167,18 @@ struct SyncBadge: View {
 
     var body: some View {
         if !status.state.isHealthy, status.state != .checking {
-            Label(status.state.summary, systemImage: "icloud.slash")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            line(status.state.summary)
+        } else if case .failed(let reason, _) = status.lastExport {
+            // Reachable but not arriving. Worth its own line: this is the case
+            // that otherwise looks identical to working sync.
+            line("iCloud didn't accept the last save: \(reason)")
         }
+    }
+
+    private func line(_ text: String) -> some View {
+        Label(text, systemImage: "icloud.slash")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
