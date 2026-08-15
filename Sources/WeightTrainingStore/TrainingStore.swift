@@ -19,15 +19,66 @@ public final class TrainingStore {
     var modelContext: ModelContext { container.mainContext }
     private var context: ModelContext { container.mainContext }
 
-    /// - Parameter url: where the store file lives. Passing `nil` uses
-    ///   SwiftData's default application-support location, which is what the
-    ///   app ships with; tests pass a temp URL to get an isolated file.
-    public init(url: URL? = nil) throws {
+    /// Whether the store was configured to mirror to iCloud.
+    ///
+    /// Intent, not confirmation. SwiftData accepts a CloudKit configuration
+    /// without checking that the app carries the entitlement or that anyone is
+    /// signed in — it fails later and quietly, at sync time. So this being true
+    /// means "sync was asked for and the container was built", and answering
+    /// "is my data actually reaching iCloud" needs a real device with a real
+    /// account.
+    ///
+    /// It goes false only when building the CloudKit container throws outright,
+    /// which is the case worth falling back from: a schema CloudKit refuses.
+    public private(set) var isCloudKitEnabled = false
+
+    /// Why CloudKit was declined, when it was.
+    ///
+    /// Kept rather than swallowed: a silent fallback to local storage is
+    /// indistinguishable from working sync until someone goes looking for their
+    /// data on another device.
+    public private(set) var cloudKitFailure: String?
+
+    /// - Parameters:
+    ///   - url: where the store file lives. Passing `nil` uses SwiftData's
+    ///     default application-support location, which is what the app ships
+    ///     with; tests pass a temp URL to get an isolated file.
+    ///   - syncsWithCloudKit: mirror to the app's private CloudKit database
+    ///     (#19). Off for tests, which must never talk to iCloud — a test suite
+    ///     that depends on a network account isn't a test suite.
+    public init(url: URL? = nil, syncsWithCloudKit: Bool = false) throws {
         let schema = Schema(TrainingSchema.models)
-        let configuration = url.map {
-            ModelConfiguration(schema: schema, url: $0)
-        } ?? ModelConfiguration(schema: schema)
-        self.container = try ModelContainer(for: schema, configurations: configuration)
+
+        func configuration(cloudKit: Bool) -> ModelConfiguration {
+            // `.automatic` reads the container from the app's entitlement, so
+            // the identifier lives in one place rather than being duplicated
+            // here where it could drift.
+            let database: ModelConfiguration.CloudKitDatabase = cloudKit ? .automatic : .none
+            if let url {
+                return ModelConfiguration(schema: schema, url: url, cloudKitDatabase: database)
+            }
+            return ModelConfiguration(schema: schema, cloudKitDatabase: database)
+        }
+
+        if syncsWithCloudKit {
+            do {
+                self.container = try ModelContainer(
+                    for: schema, configurations: configuration(cloudKit: true)
+                )
+                self.isCloudKitEnabled = true
+                return
+            } catch {
+                // Fall through to a local store. Losing sync is a degraded
+                // app; failing to open is a broken one — but the reason has to
+                // survive, or the failure is invisible.
+                self.isCloudKitEnabled = false
+                self.cloudKitFailure = String(describing: error)
+            }
+        }
+
+        self.container = try ModelContainer(
+            for: schema, configurations: configuration(cloudKit: false)
+        )
     }
 
     /// An in-memory store, for previews and for tests that don't care about

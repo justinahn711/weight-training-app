@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var showingTrends = false
     @State private var digest: Digest?
     @State private var showingDigest = false
+    @State private var sync = SyncStatus()
 
     var body: some View {
         NavigationStack {
@@ -79,6 +80,8 @@ struct ContentView: View {
     private var dayPicker: some View {
         VStack(spacing: 16) {
             Spacer()
+
+            SyncBadge(status: sync)
 
             if let cycle {
                 Text(cycle.summary())
@@ -218,7 +221,9 @@ struct ContentView: View {
     private func openStore() async {
         guard store == nil, startupFailure == nil else { return }
         do {
-            let opened = try TrainingStore()
+            // Sync when the entitlement allows it; the store falls back to a
+            // local file if it doesn't, so the app always opens (#19).
+            let opened = try TrainingStore(syncsWithCloudKit: true)
             // Before anything reads: a duplicate arriving from another device
             // (#19) must never be observed, even briefly. On a clean store this
             // is one fetch per entity and no writes.
@@ -230,6 +235,7 @@ struct ContentView: View {
             trends = try opened.e1RMTrends()
             digest = try opened.digest()
             store = opened
+            await sync.refresh(store: opened)
             await DigestNotification.schedule()
         } catch {
             startupFailure = String(describing: error)

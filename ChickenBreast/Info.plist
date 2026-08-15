@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Everything else is still generated from the INFOPLIST_KEY_* build
+	     settings and merged into this file at build time. This exists only for
+	     UIBackgroundModes, which the generator can't emit.
+
+	     CloudKit mirroring schedules its export as a background activity
+	     (com.apple.coredata.cloudkit.activity.export). Without this key that
+	     scheduling is refused with BGSystemTaskSchedulerErrorDomain Code=3, so
+	     the exporter is created and never runs — sets stay on the device and
+	     nothing reaches iCloud, with no error anywhere (#19). -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+</dict>
+</plist>

@@ -173,3 +173,47 @@ final class DeduplicationTests: XCTestCase {
         XCTAssertTrue(try store.deduplicate().isEmpty)
     }
 }
+
+/// Sync must never be something a test depends on. A suite that talks to a
+/// network account isn't a suite.
+@MainActor
+final class CloudKitConfigurationTests: XCTestCase {
+
+    func testTestStoresNeverSync() throws {
+        let memory = try TrainingStore.inMemory()
+        XCTAssertFalse(memory.isCloudKitEnabled)
+
+        let url = URL.temporaryDirectory.appending(path: "sync-\(UUID().uuidString).store")
+        defer {
+            for suffix in ["", "-shm", "-wal"] {
+                try? FileManager.default.removeItem(at: URL(filePath: url.path() + suffix))
+            }
+        }
+        let file = try TrainingStore(url: url)
+        XCTAssertFalse(file.isCloudKitEnabled, "sync is opt-in, never the default")
+    }
+
+    /// Asking for sync without an entitlement must still open a working store.
+    ///
+    /// Note what this proves and doesn't: SwiftData builds the container
+    /// happily with no entitlement and fails later at sync time, so this test
+    /// documents that the app keeps working rather than that sync is off.
+    /// Whether data actually reaches iCloud can only be answered on a device
+    /// signed into an account.
+    func testAskingForSyncWithoutAnEntitlementStillOpens() throws {
+        let url = URL.temporaryDirectory.appending(path: "sync-\(UUID().uuidString).store")
+        defer {
+            for suffix in ["", "-shm", "-wal"] {
+                try? FileManager.default.removeItem(at: URL(filePath: url.path() + suffix))
+            }
+        }
+
+        // The test bundle carries no iCloud entitlement, so this exercises the
+        // fallback path exactly as an unconfigured app would.
+        let store = try TrainingStore(url: url, syncsWithCloudKit: true)
+
+        // The store opens and works regardless of whether sync is real.
+        try store.seedLibraryIfNeeded()
+        XCTAssertEqual(try store.exercises().count, ExerciseLibrary.all.count)
+    }
+}
