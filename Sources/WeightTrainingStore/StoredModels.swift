@@ -219,7 +219,12 @@ public final class StoredDayTemplate {
     public var kindRaw: String = DayKind.push.rawValue
     /// JSON `[Slot]`. Slots are only ever read as a whole day, never queried
     /// individually, so they don't earn their own entity.
-    public var slotsData: Data
+    ///
+    /// The default is not decoration: CloudKit refuses a schema containing any
+    /// non-optional attribute without one, and refuses it wholesale — this one
+    /// property missing a default is enough to make the entire store fall back
+    /// to local-only, silently.
+    public var slotsData: Data = Data()
 
     public init(_ template: DayTemplate) {
         self.id = template.id
@@ -237,7 +242,12 @@ public final class StoredDayTemplate {
             return DayTemplate(
                 id: id,
                 kind: DayKind(rawValue: kindRaw) ?? .push,
-                slots: try decoded([Slot].self, from: slotsData)
+                // Empty means the row is still at its default — a template
+                // CloudKit has materialised but not yet filled in. Reading that
+                // as a dayless day is degraded; throwing would take the whole
+                // launch down, since `openStore()` turns any error here into a
+                // startup failure.
+                slots: slotsData.isEmpty ? [] : try decoded([Slot].self, from: slotsData)
             )
         } catch {
             throw StoreError.corruptRecord(entity: "DayTemplate", id: id, underlying: error)
