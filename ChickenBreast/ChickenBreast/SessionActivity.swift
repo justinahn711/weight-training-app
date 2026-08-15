@@ -28,6 +28,23 @@ struct SessionActivityAttributes: ActivityAttributes {
         /// never a set count, so there is no denominator to show.
         var setsLogged: Int
 
+        /// What the lock-screen button would log, carried as values rather than
+        /// looked up when it's tapped.
+        ///
+        /// The button must log exactly the set shown above it. Re-deriving the
+        /// target inside the intent would let the two drift — the phone can sit
+        /// locked for minutes while a suggestion elsewhere moves the target —
+        /// and logging a weight the screen never displayed is the one outcome
+        /// worse than not logging at all.
+        var exerciseID: UUID
+        var targetPounds: Double?
+        var targetReps: Int
+        var targetRPE: Double?
+
+        /// Whether there's a target to log at all. A first-ever lift has none,
+        /// and the button hides rather than inventing one.
+        var canLogTarget: Bool { targetPounds != nil }
+
         /// When the current rest ends, or nil when not resting.
         ///
         /// A date rather than a countdown, for the same reason `RestTimer`

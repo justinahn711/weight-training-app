@@ -4,6 +4,7 @@
 //
 
 import ActivityKit
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -20,11 +21,14 @@ import WidgetKit
 struct SessionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SessionActivityAttributes.self) { context in
-            LockScreenView(
-                state: context.state,
-                dayKind: context.attributes.dayKind,
-                isStale: context.isStale
-            )
+            VStack(spacing: 12) {
+                LockScreenView(
+                    state: context.state,
+                    dayKind: context.attributes.dayKind,
+                    isStale: context.isStale
+                )
+                SessionButtons(state: context.state)
+            }
                 .padding()
                 .activityBackgroundTint(.black.opacity(0.5))
                 .activitySystemActionForegroundColor(.white)
@@ -49,10 +53,13 @@ struct SessionLiveActivity: Widget {
                     )
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text(setsLine(context.state.setsLogged))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(spacing: 8) {
+                        Text(setsLine(context.state.setsLogged))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        SessionButtons(state: context.state)
+                    }
                 }
             } compactLeading: {
                 Image(systemName: "figure.strengthtraining.traditional")
@@ -72,6 +79,52 @@ struct SessionLiveActivity: Widget {
     /// number of sets.
     private func setsLine(_ count: Int) -> String {
         count == 1 ? "1 set logged" : "\(count) sets logged"
+    }
+}
+
+
+/// The lock-screen controls (#23).
+///
+/// Two, deliberately. The done-when is a full exercise logged without unlocking
+/// the phone, which needs exactly "log the set I was told to do" and "I'm done
+/// resting" — anything more is a form, and a form is what unlocking is for.
+///
+/// These are `LiveActivityIntent`s, so tapping them runs the work in the app's
+/// process without unlocking or foregrounding anything.
+private struct SessionButtons: View {
+    let state: SessionActivityAttributes.ContentState
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if state.canLogTarget, let pounds = state.targetPounds {
+                Button(intent: LogTargetSetIntent(
+                    exerciseID: state.exerciseID,
+                    pounds: pounds,
+                    reps: state.targetReps,
+                    rpe: state.targetRPE
+                )) {
+                    Label("Log set", systemImage: "plus.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                // A first-ever lift has no target, so there is nothing this
+                // button could honestly log.
+                Text("Open the app to log the first set")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+            }
+
+            if state.isResting {
+                Button(intent: SkipRestIntent()) {
+                    Label("Skip", systemImage: "forward.fill")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+            }
+        }
     }
 }
 

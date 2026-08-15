@@ -231,9 +231,12 @@ struct ContentView: View {
     private func openStore() async {
         guard store == nil, startupFailure == nil else { return }
         do {
-            // Sync when the entitlement allows it; the store falls back to a
-            // local file if it doesn't, so the app always opens (#19).
-            let opened = try TrainingStore(syncsWithCloudKit: true)
+            // Shared rather than constructed here, so a set logged from the
+            // lock screen (#23) and one logged on this screen go through the
+            // same store. Sync is requested inside; the store falls back to a
+            // local file when the entitlement doesn't allow it, so the app
+            // always opens (#19).
+            let opened = try AppStore.shared.store()
             // Before anything reads: a duplicate arriving from another device
             // (#19) must never be observed, even briefly. On a clean store this
             // is one fetch per entity and no writes.

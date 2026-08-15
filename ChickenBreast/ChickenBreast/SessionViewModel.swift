@@ -321,6 +321,10 @@ final class SessionViewModel {
             exerciseName: current.exercise.name,
             targetLine: current.prescription.displayLine,
             setsLogged: current.workingSets.count,
+            exerciseID: current.exercise.id,
+            targetPounds: current.prescription.load?.pounds,
+            targetReps: current.prescription.reps,
+            targetRPE: current.prescription.rpe.value,
             restEndsAt: rest?.endsAt
         )
         liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)
