@@ -135,4 +135,87 @@ final class LoadingStyleTests: XCTestCase {
         XCTAssertTrue(tbar.canBuild(Load(90)))
         XCTAssertTrue(tbar.canBuild(Load(135)))
     }
+
+    // MARK: - Custom plate sets (#39)
+
+    /// A gym without 5s or 2.5s still builds what it can build.
+    ///
+    /// The greedy breakdown this replaced took the heaviest plate first and
+    /// stranded the remainder: 25 against a 30 lb sleeve leaves 5, which this
+    /// set cannot make, so it declared a weight unbuildable that three 10s
+    /// build exactly. Greedy is only correct for plate sets that happen to be
+    /// self-refining, which is exactly what a configurable set stops being.
+    func testExactBreakdownWhereGreedyWouldStrandARemainder() throws {
+        let style = LoadingStyle(baseWeight: Load(50), sleeves: 1, availablePlates: [25, 10])
+
+        let breakdown = try XCTUnwrap(style.breakdown(for: Load(80)))
+        XCTAssertEqual(breakdown.total, Load(80))
+        XCTAssertEqual(breakdown.perSide, [PlateCount(plate: 10, count: 3)])
+    }
+
+    /// A weight no combination reaches is still refused.
+    func testUnreachableWeightHasNoBreakdown() {
+        let style = LoadingStyle(baseWeight: Load(50), sleeves: 1, availablePlates: [25, 10])
+        XCTAssertNil(style.breakdown(for: Load(55)), "5 cannot be made from 25s and 10s")
+        XCTAssertFalse(style.canBuild(Load(55)))
+    }
+
+    // MARK: - One source of truth (#39)
+
+    /// The bug #39 names: the increment proposed a weight the plates refused.
+    ///
+    /// A 2.5 lb increment on a barbell offers 187.5, which needs 71.25 per
+    /// sleeve and cannot be built from any standard plate. Proposal and
+    /// breakdown now read the same plate set, so the answer is loadable.
+    func testProposalsAreAlwaysBuildable() throws {
+        var barbell = self.lift("Flat Bench")
+        barbell.increment = LoadIncrement(pounds: 2.5)
+        barbell.loading = .olympicBarbell
+
+        let proposed = barbell.nearestAchievable(Load(187.5))
+        XCTAssertTrue(
+            barbell.loading!.canBuild(proposed),
+            "nearestAchievable produced \(proposed.pounds), which cannot be loaded"
+        )
+    }
+
+    /// Swept rather than spot-checked: no proposal anywhere in a working range
+    /// may be unbuildable.
+    func testNoProposalInRangeIsUnbuildable() {
+        var barbell = self.lift("Flat Bench")
+        barbell.increment = LoadIncrement(pounds: 2.5)
+        barbell.loading = .olympicBarbell
+
+        var offenders: [Double] = []
+        for tenths in stride(from: 450, through: 4000, by: 1) {
+            let proposed = barbell.nearestAchievable(Load(Double(tenths) / 10))
+            if !barbell.loading!.canBuild(proposed) { offenders.append(proposed.pounds) }
+        }
+        XCTAssertEqual(offenders.first, nil, "unbuildable proposals: \(offenders.prefix(5))")
+    }
+
+    /// Between two equally distant loadable weights, the lighter one wins —
+    /// it's the one you can definitely finish.
+    func testTiesRoundDown() {
+        let style = LoadingStyle.olympicBarbell
+        // 46.25 sits exactly between 45 (empty bar) and 47.5.
+        XCTAssertEqual(style.nearestBuildable(Load(46.25)), Load(45))
+    }
+
+    /// A bar cannot go below itself.
+    func testNeverProposesLessThanTheApparatus() {
+        let style = LoadingStyle.olympicBarbell
+        XCTAssertEqual(style.nearestBuildable(Load(10)), Load(45))
+    }
+
+    /// An unmeasured machine has no plate set to consult, so the increment
+    /// still decides — losing sync with the plates is not a reason to start
+    /// inventing a base weight.
+    func testUnmeasuredMachineStillSnapsToItsIncrement() {
+        var machine = self.lift("Flat Bench")
+        machine.increment = LoadIncrement(pounds: 10)
+        machine.loading = .unmeasuredMachine(sleeves: 2)
+
+        XCTAssertEqual(machine.nearestAchievable(Load(93)), Load(90))
+    }
 }

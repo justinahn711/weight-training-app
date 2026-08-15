@@ -136,12 +136,20 @@ extension Exercise {
 
     /// The closest load to `load` that this equipment can actually be set to.
     ///
-    /// The single place a computed proposal becomes a real weight: snapped to
-    /// the increment, then held at or above the equipment's floor. Anything
+    /// The single place a computed proposal becomes a real weight. Anything
     /// that suggests a load must route through here — including proposals that
     /// merely echo what was lifted, since a stale increment (#20) can leave a
     /// stored weight the equipment can no longer make.
+    ///
+    /// A measured plate-built lift answers from its plate set, because that is
+    /// what it can physically make; everything else snaps to the increment.
+    /// Having both read the same source is the point of #39 — a lift with a
+    /// 2.5 lb increment used to be proposed 187.5 by this method and then told
+    /// by `plateBreakdown` that it couldn't be loaded.
     public func nearestAchievable(_ load: Load) -> Load {
+        if let loading, loading.isMeasured {
+            return loading.nearestBuildable(load)
+        }
         let snapped = increment.snapToNearest(load)
         return max(minimumLoad, snapped)
     }
