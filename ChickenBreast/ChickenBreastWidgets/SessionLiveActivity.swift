@@ -20,7 +20,11 @@ import WidgetKit
 struct SessionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SessionActivityAttributes.self) { context in
-            LockScreenView(state: context.state, dayKind: context.attributes.dayKind)
+            LockScreenView(
+                state: context.state,
+                dayKind: context.attributes.dayKind,
+                isStale: context.isStale
+            )
                 .padding()
                 .activityBackgroundTint(.black.opacity(0.5))
                 .activitySystemActionForegroundColor(.white)
@@ -38,7 +42,11 @@ struct SessionLiveActivity: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    RestReadout(endsAt: context.state.restEndsAt, font: .title2)
+                    RestReadout(
+                        endsAt: context.state.restEndsAt,
+                        isStale: context.isStale,
+                        font: .title2
+                    )
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     Text(setsLine(context.state.setsLogged))
@@ -49,7 +57,11 @@ struct SessionLiveActivity: Widget {
             } compactLeading: {
                 Image(systemName: "figure.strengthtraining.traditional")
             } compactTrailing: {
-                RestReadout(endsAt: context.state.restEndsAt, font: .caption2)
+                RestReadout(
+                    endsAt: context.state.restEndsAt,
+                    isStale: context.isStale,
+                    font: .caption2
+                )
             } minimal: {
                 Image(systemName: "figure.strengthtraining.traditional")
             }
@@ -70,16 +82,33 @@ struct SessionLiveActivity: Widget {
 /// that just ended.
 private struct RestReadout: View {
     let endsAt: Date?
+    /// True once the content has passed its `staleDate`, which the controller
+    /// sets to the moment rest ends. WidgetKit re-renders then, which is the
+    /// only way this view learns that time has passed — the app pushes updates
+    /// when the facts change, and rest finishing is not something anyone does.
+    let isStale: Bool
     let font: Font
 
     var body: some View {
         if let endsAt {
-            Text(timerInterval: Date.now...endsAt, countsDown: true)
-                .font(font.monospacedDigit())
-                .multilineTextAlignment(.trailing)
-                // Fixed so the digits don't reflow the layout every second as
-                // the numbers change width.
-                .frame(minWidth: 44, alignment: .trailing)
+            if isStale {
+                // Counting up, not frozen at zero. Rest running long is
+                // information — it's the first sign a session is dragging — and
+                // a stopped clock reading 0:00 is indistinguishable from a rest
+                // that just started.
+                Text(timerInterval: endsAt...(endsAt + 3600), countsDown: false)
+                    .font(font.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .frame(minWidth: 44, alignment: .trailing)
+            } else {
+                Text(timerInterval: Date.now...endsAt, countsDown: true)
+                    .font(font.monospacedDigit())
+                    .multilineTextAlignment(.trailing)
+                    // Fixed so the digits don't reflow the layout every second
+                    // as the numbers change width.
+                    .frame(minWidth: 44, alignment: .trailing)
+            }
         } else {
             Image(systemName: "dumbbell.fill")
                 .font(font)
@@ -91,6 +120,7 @@ private struct RestReadout: View {
 private struct LockScreenView: View {
     let state: SessionActivityAttributes.ContentState
     let dayKind: String
+    let isStale: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -109,11 +139,18 @@ private struct LockScreenView: View {
             }
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 2) {
-                RestReadout(endsAt: state.restEndsAt, font: .largeTitle)
-                Text(state.isResting ? "resting" : "ready")
+                RestReadout(endsAt: state.restEndsAt, isStale: isStale, font: .largeTitle)
+                Text(caption)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// Says which clock is being read, since a countdown and an overrun look
+    /// alike at a glance.
+    private var caption: String {
+        guard state.isResting else { return "ready" }
+        return isStale ? "over" : "resting"
     }
 }
