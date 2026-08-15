@@ -9,19 +9,39 @@
 /* Begin PBXBuildFile section */
 		AA00000000000000000000B1 /* WeightTrainingCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA00000000000000000000C1 /* WeightTrainingCore */; };
 		AA00000000000000000000B2 /* WeightTrainingStore in Frameworks */ = {isa = PBXBuildFile; productRef = AA00000000000000000000C2 /* WeightTrainingStore */; };
+		BB00000000000000000000E2 /* ChickenBreastWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BB00000000000000000000D1 /* ChickenBreastWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		E55E62BC302D811200D256F7 /* ChickenBreast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ChickenBreast.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB00000000000000000000D1 /* ChickenBreastWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ChickenBreastWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E55E62BE302D811200D256F7 /* ChickenBreast */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BB00000000000000000000E5 /* Exceptions for "ChickenBreast" folder in "ChickenBreastWidgetsExtension" target */,
+			);
 			path = ChickenBreast;
 			sourceTree = "<group>";
 		};
+		BB00000000000000000000D6 /* ChickenBreastWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ChickenBreastWidgets;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		BB00000000000000000000E5 /* Exceptions for "ChickenBreast" folder in "ChickenBreastWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				SessionActivity.swift,
+			);
+			target = BB00000000000000000000D2 /* ChickenBreastWidgetsExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		E55E62B9302D811200D256F7 /* Frameworks */ = {
@@ -33,13 +53,35 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB00000000000000000000D4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		BB00000000000000000000E1 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BB00000000000000000000E2 /* ChickenBreastWidgetsExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXGroup section */
 		E55E62B3302D811200D256F7 = {
 			isa = PBXGroup;
 			children = (
 				E55E62BE302D811200D256F7 /* ChickenBreast */,
+				BB00000000000000000000D6 /* ChickenBreastWidgets */,
 				E55E62BD302D811200D256F7 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -48,6 +90,7 @@
 			isa = PBXGroup;
 			children = (
 				E55E62BC302D811200D256F7 /* ChickenBreast.app */,
+				BB00000000000000000000D1 /* ChickenBreastWidgetsExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -62,10 +105,12 @@
 				E55E62B8302D811200D256F7 /* Sources */,
 				E55E62B9302D811200D256F7 /* Frameworks */,
 				E55E62BA302D811200D256F7 /* Resources */,
+				BB00000000000000000000E1 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BB00000000000000000000E3 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				E55E62BE302D811200D256F7 /* ChickenBreast */,
@@ -79,7 +124,47 @@
 			productReference = E55E62BC302D811200D256F7 /* ChickenBreast.app */;
 			productType = "com.apple.product-type.application";
 		};
+		BB00000000000000000000D2 /* ChickenBreastWidgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB00000000000000000000D7 /* Build configuration list for PBXNativeTarget "ChickenBreastWidgetsExtension" */;
+			buildPhases = (
+				BB00000000000000000000D3 /* Sources */,
+				BB00000000000000000000D4 /* Frameworks */,
+				BB00000000000000000000D5 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BB00000000000000000000D6 /* ChickenBreastWidgets */,
+			);
+			name = ChickenBreastWidgetsExtension;
+			packageProductDependencies = (
+			);
+			productName = ChickenBreastWidgetsExtension;
+			productReference = BB00000000000000000000D1 /* ChickenBreastWidgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		BB00000000000000000000E3 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BB00000000000000000000D2 /* ChickenBreastWidgetsExtension */;
+			targetProxy = BB00000000000000000000E4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		BB00000000000000000000E4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E55E62B4302D811200D256F7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BB00000000000000000000D2;
+			remoteInfo = ChickenBreastWidgetsExtension;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXProject section */
 		E55E62B4302D811200D256F7 /* Project object */ = {
@@ -90,6 +175,9 @@
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					E55E62BB302D811200D256F7 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					BB00000000000000000000D2 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -112,6 +200,7 @@
 			projectRoot = "";
 			targets = (
 				E55E62BB302D811200D256F7 /* ChickenBreast */,
+				BB00000000000000000000D2 /* ChickenBreastWidgetsExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -124,10 +213,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB00000000000000000000D5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		E55E62B8302D811200D256F7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB00000000000000000000D3 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -353,6 +456,64 @@
 			};
 			name = Release;
 		};
+		BB00000000000000000000D8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87A8S37MAY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "ChickenBreastWidgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = ChickenBreastWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justinloves.ChickenBreast.ChickenBreastWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		BB00000000000000000000D9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 87A8S37MAY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "ChickenBreastWidgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = ChickenBreastWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.justinloves.ChickenBreast.ChickenBreastWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -370,6 +531,15 @@
 			buildConfigurations = (
 				E55E62C8302D811400D256F7 /* Debug */,
 				E55E62C9302D811400D256F7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BB00000000000000000000D7 /* Build configuration list for PBXNativeTarget "ChickenBreastWidgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB00000000000000000000D8 /* Debug */,
+				BB00000000000000000000D9 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
