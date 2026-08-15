@@ -22,7 +22,8 @@ final class DigestTests: XCTestCase {
 
     private func digest(
         history: [SetRecord],
-        states: [UUID: ProgressState] = [:]
+        states: [UUID: ProgressState] = [:],
+        readiness: Readiness? = nil
     ) -> Digest {
         Digest.build(
             trends: E1RMTrendBuilder.trends(history: history, exercises: ExerciseLibrary.all),
@@ -31,8 +32,16 @@ final class DigestTests: XCTestCase {
             states: states,
             history: history,
             exercises: ExerciseLibrary.all,
+            readiness: readiness,
             now: now
         )
+    }
+
+    /// A reading with the given score and notes, built directly — the scoring
+    /// itself is `ReadinessTests`' problem.
+    private func reading(score: Int, notes: [String]) -> Readiness {
+        Readiness(score: score, notes: notes, hrvDeviation: nil,
+                  restingHRDeviation: nil, sleepHours: nil)
     }
 
     // MARK: - The cap
@@ -171,6 +180,68 @@ final class DigestTests: XCTestCase {
         for bullet in built.bullets {
             for weekday in weekdays {
                 XCTAssertFalse(bullet.text.lowercased().contains(weekday), bullet.text)
+            }
+        }
+    }
+
+    // MARK: - Recovery (#26)
+
+    /// Readiness reaches the digest as another signal, not as an instruction.
+    func testRecoveryAppearsAsAReadOnlyBullet() throws {
+        let digest = digest(
+            history: sets("Flat Bench", count: 3, load: 185, reps: 5, daysAgo: 2),
+            readiness: reading(score: 30, notes: ["HRV 22% below your 14-day average"])
+        )
+
+        let bullet = try XCTUnwrap(digest.bullets.first { $0.text.contains("HRV") })
+        XCTAssertEqual(bullet.action, .review(.readiness))
+        XCTAssertFalse(bullet.isActionable, "recovery never changes a target on its own")
+    }
+
+    /// A day with nothing unusual about it says nothing. Reporting "recovery is
+    /// normal" every week is how a digest becomes noise.
+    func testAnOrdinaryMorningIsNotWorthABullet() {
+        let digest = digest(
+            history: sets("Flat Bench", count: 3, load: 185, reps: 5, daysAgo: 2),
+            readiness: reading(score: 52, notes: [])
+        )
+        XCTAssertFalse(digest.bullets.contains { $0.action == .review(.readiness) })
+    }
+
+    /// No Health data at all is not a finding either.
+    func testNoReadingProducesNoBullet() {
+        let digest = digest(
+            history: sets("Flat Bench", count: 3, load: 185, reps: 5, daysAgo: 2),
+            readiness: nil
+        )
+        XCTAssertFalse(digest.bullets.contains { $0.action == .review(.readiness) })
+    }
+
+    /// A bad night outranks a volume hole that has been there for days, but
+    /// never outranks a lift that is actually grinding.
+    func testLowRecoveryOutranksVolumeButNotADeload() throws {
+        var history: [SetRecord] = []
+        for daysAgo in [5.0, 3.0, 1.0] {
+            history += sets("Flat Bench", count: 3, load: 185, reps: 5,
+                            rpe: RPE(daysAgo == 5.0 ? 7.5 : 9), daysAgo: daysAgo)
+        }
+        let state = ProgressState(exerciseID: lift("Flat Bench").id,
+                                  targetLoad: Load(185), targetReps: 5,
+                                  lastPerformedAt: now.addingTimeInterval(-86_400))
+
+        let digest = digest(
+            history: history,
+            states: [lift("Flat Bench").id: state],
+            readiness: reading(score: 25, notes: ["slept 5h10"])
+        )
+
+        let kinds = digest.bullets.map(\.action)
+        if let recovery = kinds.firstIndex(of: .review(.readiness)) {
+            if let volume = kinds.firstIndex(of: .review(.volume)) {
+                XCTAssertLessThan(recovery, volume, "a bad night reads before a volume hole")
+            }
+            if let deload = kinds.firstIndex(where: { if case .deload = $0 { return true }; return false }) {
+                XCTAssertLessThan(deload, recovery, "a grinding lift still leads")
             }
         }
     }
