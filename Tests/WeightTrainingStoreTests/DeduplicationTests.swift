@@ -138,6 +138,26 @@ final class DeduplicationTests: XCTestCase {
         XCTAssertEqual(try store.dayTemplates().count, DayTemplateLibrary.all.count)
     }
 
+    /// The same guarantee the exercise reads make: a duplicate never reaches a
+    /// caller, including before a dedupe pass has run.
+    ///
+    /// This is the fresh-install window, observed for real: `deduplicate()` and
+    /// the seeds run at launch, before CloudKit's first import arrives, so the
+    /// library is seeded into an apparently empty store and the import then
+    /// delivers a second copy of every row.
+    func testTemplateReadsAreCorrectBeforeDeduplicationRuns() throws {
+        try store.seedTemplatesIfNeeded()
+        for template in DayTemplateLibrary.all {
+            try insertRaw(StoredDayTemplate(template))
+        }
+
+        XCTAssertEqual(
+            try store.dayTemplates().count, DayTemplateLibrary.all.count,
+            "uniqued on the way out"
+        )
+        XCTAssertEqual(try store.dayTemplate(kind: .push)?.kind, .push)
+    }
+
     // MARK: - Cost and safety
 
     /// Safe to run on every launch: no duplicates means no writes.
