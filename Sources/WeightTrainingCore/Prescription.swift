@@ -26,8 +26,15 @@ public struct Prescription: Hashable, Sendable {
 
     /// Reads the target off the exercise's stored state, with the progression
     /// rule supplying the reps and RPE whenever state doesn't.
+    ///
+    /// The stored target is snapped to what the equipment can currently be set
+    /// to, rather than echoed. State outlives configuration: a stack corrected
+    /// from 10 lb to 15 (#20), or a machine whose plate set was recorded (#39),
+    /// leaves behind targets the equipment can no longer make. Snapping here is
+    /// what makes a correction reflow the next target immediately instead of
+    /// waiting for the next session to advance it.
     public init(exercise: Exercise, state: ProgressState?) {
-        self.load = state?.targetLoad
+        self.load = state?.targetLoad.map { exercise.nearestAchievable($0) }
         self.reps = state?.targetReps ?? exercise.progressionRule.displayRepTarget
         self.rpe = state?.targetRPE ?? exercise.progressionRule.displayRPETarget
     }

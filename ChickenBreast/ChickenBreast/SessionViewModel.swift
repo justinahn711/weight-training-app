@@ -301,6 +301,38 @@ final class SessionViewModel {
             .filter { $0.id != current.exercise.id }
     }
 
+    /// Corrects what the app assumes about this machine (#20, #39).
+    ///
+    /// Rebuilt through the store rather than patched in place, for the same
+    /// reason a swap is: the prescription, the plate line and the suggestions
+    /// are all derived from the exercise, so they have to be recomputed from
+    /// the corrected one. #20's done-when is that a changed increment reflows
+    /// the lift's suggestions immediately, and rebuilding is what makes that
+    /// true without a relaunch.
+    ///
+    /// The edit persists, so it survives the session and syncs to your other
+    /// devices — a stack measured once should stay measured.
+    func updateConfiguration(increment: LoadIncrement, loading: LoadingStyle?) {
+        guard let current else { return }
+        do {
+            var corrected = current.exercise
+            corrected.increment = increment
+            corrected.loading = loading
+            try store.upsert(corrected)
+
+            let rebuilt = try store.sessionExercise(
+                for: corrected,
+                slot: current.slot,
+                startedAt: session.startedAt
+            )
+            session.replaceCurrent(with: rebuilt)
+            seedPendingFromCurrent()
+            loadSuggestionContext()
+        } catch {
+            failure = "Couldn't save that setting: \(error.localizedDescription)"
+        }
+    }
+
     /// Swaps the lift filling the current slot.
     ///
     /// The replacement is rebuilt from disk so it arrives with its own target

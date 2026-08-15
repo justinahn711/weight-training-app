@@ -56,28 +56,151 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
 
     /// The plates for a load, one sleeve's worth, or nil when the load can't be
     /// built from the available plates.
+    ///
+    /// Exact rather than greedy. Greedy is correct for the standard set but
+    /// wrong for the custom ones this config exists to allow: with 25s and 10s
+    /// only, greedy meets 30 by taking a 25 and stranding 5, while 10+10+10
+    /// builds it exactly. A gym whose plate set makes the app declare a
+    /// loadable weight unbuildable is worse than no config at all.
     public func breakdown(for load: Load) -> PlateBreakdown? {
         guard let base = baseWeight, load >= base else { return nil }
-
-        var remainingPerSleeve = (load.pounds - base.pounds) / Double(sleeves)
-        guard remainingPerSleeve >= 0 else { return nil }
-
-        var counts: [PlateCount] = []
-        for plate in availablePlates.sorted(by: >) {
-            let count = Int((remainingPerSleeve / plate).rounded(.down))
-            guard count > 0 else { continue }
-            counts.append(PlateCount(plate: plate, count: count))
-            remainingPerSleeve -= Double(count) * plate
+        let perSleeve = (load.pounds - base.pounds) / Double(sleeves)
+        guard let counts = Self.plates(making: perSleeve, from: availablePlates) else {
+            return nil
         }
-
-        // Anything left over means the target wasn't buildable to begin with.
-        guard remainingPerSleeve < 0.001 else { return nil }
         return PlateBreakdown(bar: base, perSide: counts, sleeves: sleeves)
     }
 
     /// Whether a load can be built exactly.
     public func canBuild(_ load: Load) -> Bool {
         breakdown(for: load) != nil
+    }
+
+    /// The closest load this apparatus can actually be set to.
+    ///
+    /// The plate set, not a scalar increment, is what a plate-built lift can
+    /// really make — which is the disagreement #39 is about: `nearestAchievable`
+    /// snapped to the increment while `breakdown` read the plates, so a lift
+    /// with a 2.5 lb increment would be handed 187.5 and then told it couldn't
+    /// be loaded. Both now read this.
+    ///
+    /// Ties round down. Between two equally distant loads the lighter one is
+    /// the one you can definitely complete.
+    public func nearestBuildable(_ load: Load) -> Load {
+        guard let base = baseWeight else { return load }
+        guard load > base else { return base }
+
+        let perSleeve = (load.pounds - base.pounds) / Double(sleeves)
+        let reachable = Self.reachable(upTo: perSleeve + (availablePlates.max() ?? 0),
+                                       from: availablePlates)
+        guard !reachable.isEmpty else { return base }
+
+        let target = Self.cents(perSleeve)
+        let best = reachable.min { a, b in
+            let da = abs(a - target), db = abs(b - target)
+            return da == db ? a < b : da < db
+        }
+        return Load(base.pounds + Double(best ?? 0) / 100 * Double(sleeves))
+    }
+
+    // MARK: - Plate reachability
+
+    /// Pounds as hundredths, so plate arithmetic is exact integer work rather
+    /// than a pile of floating-point tolerances.
+    private static func cents(_ pounds: Double) -> Int {
+        Int((pounds * 100).rounded())
+    }
+
+    /// The largest step every plate is a whole number of.
+    ///
+    /// Reachability is solved in these units rather than hundredths, which is
+    /// what keeps it cheap: the standard set shares a 2.5 lb step, so a 500 lb
+    /// sleeve is 200 states instead of 50,000. `nearestAchievable` sits on the
+    /// progression engine's hot path and cannot afford the dense version.
+    private static func step(of sizes: [Int]) -> Int {
+        sizes.reduce(0) { gcd($0, $1) }
+    }
+
+    private static func gcd(_ a: Int, _ b: Int) -> Int {
+        var (a, b) = (abs(a), abs(b))
+        while b != 0 { (a, b) = (b, a % b) }
+        return a
+    }
+
+    /// Every per-sleeve total buildable from `plates`, up to a bound, in cents.
+    ///
+    /// Unlimited plates of each size, which matches what `availablePlates`
+    /// records — sizes the gym has, not how many are on the rack.
+    private static func reachable(upTo bound: Double, from plates: [Double]) -> [Int] {
+        let sizes = plates.map(cents).filter { $0 > 0 }
+        guard !sizes.isEmpty, bound >= 0 else { return [0] }
+
+        let unit = step(of: sizes)
+        guard unit > 0 else { return [0] }
+
+        let limit = cents(bound) / unit
+        guard limit >= 0, limit <= 20_000 else { return [0] }
+        let steps = sizes.map { $0 / unit }
+
+        var possible = [Bool](repeating: false, count: limit + 1)
+        possible[0] = true
+        if limit >= 1 {
+            for value in 1...limit {
+                for size in steps where size <= value && possible[value - size] {
+                    possible[value] = true
+                    break
+                }
+            }
+        }
+        return possible.enumerated().compactMap { $1 ? $0 * unit : nil }
+    }
+
+    /// An exact plate multiset for one sleeve, heaviest first, or nil if the
+    /// amount can't be made.
+    ///
+    /// Prefers heavier plates among exact solutions — fewer plates to handle
+    /// and to read off mid-set — but never at the cost of exactness.
+    private static func plates(making perSleeve: Double, from plates: [Double]) -> [PlateCount]? {
+        let target = cents(perSleeve)
+        guard target >= 0 else { return nil }
+        guard target > 0 else { return [] }
+
+        let sizes = plates.map(cents).filter { $0 > 0 }.sorted(by: >)
+        guard !sizes.isEmpty else { return nil }
+
+        let unit = step(of: sizes)
+        // Not a whole number of the shared step, so no combination reaches it.
+        guard unit > 0, target % unit == 0 else { return nil }
+
+        let goal = target / unit
+        guard goal <= 20_000 else { return nil }
+        let steps = sizes.map { $0 / unit }
+
+        // Which plate to take at each remaining amount, taking the heaviest
+        // that still leaves a solvable remainder.
+        var choice = [Int?](repeating: nil, count: goal + 1)
+        var solvable = [Bool](repeating: false, count: goal + 1)
+        solvable[0] = true
+        if goal >= 1 {
+            for value in 1...goal {
+                for size in steps where size <= value && solvable[value - size] {
+                    solvable[value] = true
+                    choice[value] = size
+                    break
+                }
+            }
+        }
+        guard solvable[goal] else { return nil }
+
+        var counts: [Int: Int] = [:]
+        var remaining = goal
+        while remaining > 0, let size = choice[remaining] {
+            counts[size * unit, default: 0] += 1
+            remaining -= size
+        }
+        return counts
+            .sorted { $0.key > $1.key }
+            .map { PlateCount(plate: Double($0.key) / 100, count: $0.value) }
     }
 }
 

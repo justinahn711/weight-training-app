@@ -14,6 +14,7 @@ import WeightTrainingCore
 struct SessionView: View {
     @State var model: SessionViewModel
     @State private var isSwapping = false
+    @State private var isConfiguring = false
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -117,6 +118,13 @@ struct SessionView: View {
                 }
             )
         }
+        .sheet(isPresented: $isConfiguring) {
+            if let exercise = model.current?.exercise {
+                ExerciseConfigView(exercise: exercise) { increment, loading in
+                    model.updateConfiguration(increment: increment, loading: loading)
+                }
+            }
+        }
         .alert("Something went wrong",
                isPresented: Binding(get: { model.failure != nil },
                                     set: { if !$0 { model.dismissFailure() } })) {
@@ -164,6 +172,25 @@ struct SessionView: View {
         .padding(.top, 8)
     }
 
+    /// One line describing what the app currently assumes, so the button says
+    /// what tapping it would change rather than just "Settings".
+    private func configSummary(_ exercise: SessionExercise) -> String {
+        let step = exercise.exercise.increment.pounds
+        let stepText = step == step.rounded()
+            ? String(format: "%.0f", step)
+            : String(format: "%.1f", step)
+        guard let loading = exercise.exercise.loading else {
+            return "Steps of \(stepText) lb"
+        }
+        guard let base = loading.baseWeight else {
+            return "Steps of \(stepText) lb · not weighed"
+        }
+        let baseText = base.pounds == base.pounds.rounded()
+            ? String(format: "%.0f", base.pounds)
+            : String(format: "%.1f", base.pounds)
+        return "Steps of \(stepText) lb · empty \(baseText) lb"
+    }
+
     private func context(_ exercise: SessionExercise) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             // The target is the biggest thing on screen after the lift's name:
@@ -187,6 +214,23 @@ struct SessionView: View {
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
+
+            // Sits with the target because that's what it changes, and because
+            // the moment you notice a stack moves in 15s is the moment you're
+            // reading this line (#20).
+            Button {
+                isConfiguring = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "slider.horizontal.3")
+                    Text(configSummary(exercise))
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+                .foregroundStyle(.tint)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -633,7 +677,9 @@ private struct WeightStepper: View {
 ///
 /// Used for both reps and RPE. Scrollable rather than clipped, so an unusually
 /// good set doesn't have to be rounded to whatever fits on screen.
-private struct ChoiceRow<Value: Hashable>: View {
+/// Shared with the config sheet (#20), so a stack increment is picked from the
+/// same chip row the reps and RPE use — one control to learn, not three.
+struct ChoiceRow<Value: Hashable>: View {
     let caption: String
     let values: [Value]
     let isSelected: (Value) -> Bool
