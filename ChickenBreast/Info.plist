@@ -15,5 +15,10 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
+
+	<!-- Without this the system refuses every Activity.request and returns no
+	     reason, so the lock screen simply stays empty (#23). -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 </dict>
 </plist>

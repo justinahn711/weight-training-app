@@ -18,6 +18,7 @@ import WeightTrainingStore
 @Observable
 final class SessionViewModel {
     private let store: TrainingStore
+    private let liveActivity = SessionActivityController()
 
     private(set) var session: Session
     private(set) var failure: String?
@@ -103,6 +104,7 @@ final class SessionViewModel {
                     setID: record.id
                 )
             }
+            publishActivity()
         } catch {
             failure = "Couldn't save that set: \(error.localizedDescription)"
         }
@@ -111,6 +113,7 @@ final class SessionViewModel {
     /// Dismisses the rest clock without touching the logged set.
     func skipRest() {
         rest = nil
+        publishActivity()
     }
 
     /// Removes the most recent set from both the session and disk. Backs #8.
@@ -299,6 +302,37 @@ final class SessionViewModel {
         guard let current else { return [] }
         return ExerciseSearch.search(query, in: allExercises)
             .filter { $0.id != current.exercise.id }
+    }
+
+    // MARK: - Live Activity (#23)
+
+    /// Pushes the current lift, target and rest to the lock screen.
+    ///
+    /// Called after anything that changes what someone glancing at their phone
+    /// would need to know, rather than on a timer: the countdown itself ticks
+    /// on the widget's side from `restEndsAt`, so updates are only needed when
+    /// the *facts* change, not when the clock does.
+    func publishActivity() {
+        guard let current else {
+            liveActivity.end()
+            return
+        }
+        let state = SessionActivityAttributes.ContentState(
+            exerciseName: current.exercise.name,
+            targetLine: current.prescription.displayLine,
+            setsLogged: current.workingSets.count,
+            exerciseID: current.exercise.id,
+            targetPounds: current.prescription.load?.pounds,
+            targetReps: current.prescription.reps,
+            targetRPE: current.prescription.rpe.value,
+            restEndsAt: rest?.endsAt
+        )
+        liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)
+    }
+
+    /// Takes the lock screen down when the session ends.
+    func endActivity() {
+        liveActivity.end()
     }
 
     /// Corrects what the app assumes about this machine (#20, #39).
