@@ -68,6 +68,17 @@ final class SyncStatus {
     /// from whether iCloud is reachable.
     private(set) var storeRequestedSync = false
 
+    /// Why mirroring failed to start, when it did.
+    ///
+    /// Setup is the gate — nothing imports or exports until it succeeds — and
+    /// the account check alone can't stand in for it. The common causes do show
+    /// up there: a stale iCloud session reports `couldNotDetermine`, and the
+    /// badge already says so. What it can't see is a setup that fails while the
+    /// account is perfectly `.available` — a zone problem, a quota, a
+    /// transient CloudKit error. Those would otherwise leave the app looking
+    /// healthy and syncing nothing, which is how #19 stayed hidden for a day.
+    private(set) var setupFailure: String?
+
     private var eventWatch: Task<Void, Never>?
 
     /// Turns SwiftData's error into something that says what to do.
@@ -163,6 +174,16 @@ final class SyncStatus {
                     if event.type == .import, event.succeeded {
                         self?.lastImport = finished
                     }
+                    // Setup is the gate: nothing imports or exports until it
+                    // succeeds, so a failure here means the store is local-only
+                    // no matter how healthy everything upstream looks. A later
+                    // success clears it, because setup retries on every launch
+                    // and recovers on its own once the account does.
+                    if event.type == .setup {
+                        self?.setupFailure = event.succeeded
+                            ? nil
+                            : (event.error?.localizedDescription ?? "unknown error")
+                    }
                     continue
                 }
 
@@ -188,6 +209,12 @@ struct SyncBadge: View {
     var body: some View {
         if !status.state.isHealthy, status.state != .checking {
             line(status.state.summary)
+        } else if let setupFailure = status.setupFailure {
+            // Ranked above the export failure because it explains it: when
+            // setup never completed, no export was ever attempted, so a
+            // "didn't accept the last save" line would be describing a
+            // consequence and pointing at the wrong thing.
+            line("iCloud sync didn't start: \(setupFailure)")
         } else if case .failed(let reason, _) = status.lastExport {
             // Reachable but not arriving. Worth its own line: this is the case
             // that otherwise looks identical to working sync.
