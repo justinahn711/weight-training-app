@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var showingTrends = false
     @State private var digest: Digest?
     @State private var showingDigest = false
+    @State private var sync = SyncStatus()
 
     var body: some View {
         NavigationStack {
@@ -79,6 +80,8 @@ struct ContentView: View {
     private var dayPicker: some View {
         VStack(spacing: 16) {
             Spacer()
+
+            SyncBadge(status: sync)
 
             if let cycle {
                 Text(cycle.summary())
@@ -232,6 +235,7 @@ struct ContentView: View {
             trends = try opened.e1RMTrends()
             digest = try opened.digest()
             store = opened
+            await sync.refresh(store: opened)
             await DigestNotification.schedule()
         } catch {
             startupFailure = String(describing: error)

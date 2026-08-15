@@ -32,6 +32,13 @@ public final class TrainingStore {
     /// which is the case worth falling back from: a schema CloudKit refuses.
     public private(set) var isCloudKitEnabled = false
 
+    /// Why CloudKit was declined, when it was.
+    ///
+    /// Kept rather than swallowed: a silent fallback to local storage is
+    /// indistinguishable from working sync until someone goes looking for their
+    /// data on another device.
+    public private(set) var cloudKitFailure: String?
+
     /// - Parameters:
     ///   - url: where the store file lives. Passing `nil` uses SwiftData's
     ///     default application-support location, which is what the app ships
@@ -62,8 +69,10 @@ public final class TrainingStore {
                 return
             } catch {
                 // Fall through to a local store. Losing sync is a degraded
-                // app; failing to open is a broken one.
+                // app; failing to open is a broken one — but the reason has to
+                // survive, or the failure is invisible.
                 self.isCloudKitEnabled = false
+                self.cloudKitFailure = String(describing: error)
             }
         }
 
