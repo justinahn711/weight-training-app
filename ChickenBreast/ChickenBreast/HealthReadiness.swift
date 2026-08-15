@@ -69,12 +69,44 @@ final class HealthReadiness {
                                             now: now)
         async let sleep = sleepHoursPerNight(now: now)
 
-        return Readiness.from(
-            hrv: await hrv,
-            restingHR: await restingHR,
-            sleep: await sleep,
-            now: now
-        )
+        let hrvSamples = await hrv
+        let hrSamples = await restingHR
+        let sleepSamples = await sleep
+        let reading = Readiness.from(hrv: hrvSamples, restingHR: hrSamples,
+                                     sleep: sleepSamples, now: now)
+        writeDiagnostic(hrv: hrvSamples, restingHR: hrSamples,
+                        sleep: sleepSamples, reading: reading)
+        return reading
+    }
+
+    // TEMPORARY (#26): records what HealthKit actually returned, so an empty
+    // readiness can be told apart from a thin baseline or an ordinary morning.
+    private func writeDiagnostic(
+        hrv: [HealthSample], restingHR: [HealthSample],
+        sleep: [HealthSample], reading: Readiness?
+    ) {
+        func describe(_ samples: [HealthSample]) -> [String: Any] {
+            [
+                "count": samples.count,
+                "first": samples.first.map { ISO8601DateFormatter().string(from: $0.date) } ?? "-",
+                "last": samples.last.map { ISO8601DateFormatter().string(from: $0.date) } ?? "-",
+                "values": samples.suffix(4).map { round($0.value * 10) / 10 },
+            ]
+        }
+        let payload: [String: Any] = [
+            "healthAvailable": isAvailable,
+            "hrv": describe(hrv),
+            "restingHR": describe(restingHR),
+            "sleep": describe(sleep),
+            "readiness": reading.map { ["score": $0.score, "notes": $0.notes] } ?? ["score": -1],
+            "writtenAt": ISO8601DateFormatter().string(from: Date()),
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload,
+                                                     options: .prettyPrinted),
+              let dir = FileManager.default.urls(for: .applicationSupportDirectory,
+                                                 in: .userDomainMask).first
+        else { return }
+        try? data.write(to: dir.appendingPathComponent("readiness-debug.json"))
     }
 
     // MARK: - Queries
@@ -159,17 +191,14 @@ final class HealthReadiness {
             HKCategoryValueSleepAnalysis.asleepREM.rawValue,
         ]
 
-        // Attributed to the day a night ends, so "last night" belongs to this
-        // morning rather than to the evening it started in.
-        var hoursByDay: [Date: Double] = [:]
-        for sample in samples where asleep.contains(sample.value) {
-            let day = Calendar.current.startOfDay(for: sample.endDate)
-            let hours = sample.endDate.timeIntervalSince(sample.startDate) / 3600
-            hoursByDay[day, default: 0] += hours
-        }
-
-        return hoursByDay
-            .map { HealthSample(date: $0.key, value: $0.value) }
-            .sorted { $0.date < $1.date }
+        // Unioned rather than summed. Oura writes a whole-night record *and*
+        // the stages covering the same minutes, so adding the durations counted
+        // every night about twice — a real 9-hour night arrived as 18.5, which
+        // then scored as perfect recovery and had nothing to report.
+        return SleepSummary.hoursPerNight(
+            samples
+                .filter { asleep.contains($0.value) }
+                .map { SleepInterval(start: $0.startDate, end: $0.endDate) }
+        )
     }
 }
