@@ -55,11 +55,20 @@ final class SyncStatus {
     private(set) var state: State = .checking
     private(set) var lastExport: Export = .none
 
+    /// When CloudKit last finished handing rows down to this device.
+    ///
+    /// Watched rather than ignored because an import is the one moment a
+    /// duplicate can appear: `deduplicate()` runs at launch, and on a fresh
+    /// install the first import arrives after it, seeding having already
+    /// inserted the library into an apparently empty store. Whoever owns the
+    /// store reconciles when this changes.
+    private(set) var lastImport: Date?
+
     /// Whether the store was even asked to sync, which is a separate question
     /// from whether iCloud is reachable.
     private(set) var storeRequestedSync = false
 
-    private var exportWatch: Task<Void, Never>?
+    private var eventWatch: Task<Void, Never>?
 
     /// Turns SwiftData's error into something that says what to do.
     ///
@@ -118,22 +127,23 @@ final class SyncStatus {
             state = .failed(error.localizedDescription)
         }
 
-        watchExports()
+        watchMirroringEvents()
     }
 
-    /// Listens for mirroring events so a failed export can't pass for a working
-    /// one.
+    /// Listens for mirroring events, so a failed export can't pass for a working
+    /// one and an import can't land unnoticed.
     ///
     /// SwiftData is `NSPersistentCloudKitContainer` underneath and posts the
-    /// same event notifications, which is the only place the outcome of an
-    /// export is reported — the store's save succeeds long before CloudKit is
-    /// consulted, so nothing on the write path can tell you it later failed.
+    /// same event notifications, which is the only place either outcome is
+    /// reported — the store's save succeeds long before CloudKit is consulted,
+    /// so nothing on the write path can tell you it later failed, and nothing at
+    /// all announces rows arriving from another device.
     ///
     /// Events post twice, once on start and once on finish; only the finished
     /// ones carry a verdict, so the unfinished ones are dropped.
-    private func watchExports() {
-        guard exportWatch == nil else { return }
-        exportWatch = Task { [weak self] in
+    private func watchMirroringEvents() {
+        guard eventWatch == nil else { return }
+        eventWatch = Task { [weak self] in
             let events = NotificationCenter.default.notifications(
                 named: NSPersistentCloudKitContainer.eventChangedNotification
             )
@@ -142,9 +152,19 @@ final class SyncStatus {
                     let event = note.userInfo?[
                         NSPersistentCloudKitContainer.eventNotificationUserInfoKey
                     ] as? NSPersistentCloudKitContainer.Event,
-                    event.type == .export,
                     let finished = event.endDate
                 else { continue }
+
+                guard event.type == .export else {
+                    // The event carries no "did anything change" flag, so every
+                    // successful import is reported. That's affordable: the only
+                    // listener re-runs `deduplicate()`, which on a clean store
+                    // is one fetch per entity and no writes.
+                    if event.type == .import, event.succeeded {
+                        self?.lastImport = finished
+                    }
+                    continue
+                }
 
                 // Ends the loop once the status object is gone, rather than
                 // leaving a task awaiting notifications nobody reads.

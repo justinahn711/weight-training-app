@@ -75,6 +75,16 @@ struct ContentView: View {
             guard newValue == nil, let store else { return }
             refresh()
         }
+        // Rows arriving from another device are the one thing that can
+        // reintroduce a duplicate after the launch-time pass — on a fresh
+        // install the first import lands after the library has already been
+        // seeded into an apparently empty store. Merging here means the doubled
+        // state lasts seconds rather than until the next launch.
+        .onChange(of: sync.lastImport) { _, _ in
+            guard let store else { return }
+            try? store.deduplicate()
+            refresh()
+        }
     }
 
     private var dayPicker: some View {
