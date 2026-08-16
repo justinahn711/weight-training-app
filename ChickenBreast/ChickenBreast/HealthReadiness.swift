@@ -34,6 +34,10 @@ final class HealthReadiness {
         if let restingHR = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) {
             types.insert(restingHR)
         }
+        // Asked for because resting heart rate often arrives here instead (#59).
+        if let heartRate = HKQuantityType.quantityType(forIdentifier: .heartRate) {
+            types.insert(heartRate)
+        }
         if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
             types.insert(sleep)
         }
@@ -67,14 +71,27 @@ final class HealthReadiness {
         async let restingHR = dailyAverages(.restingHeartRate,
                                             unit: HKUnit.count().unitDivided(by: .minute()),
                                             now: now)
-        async let sleep = sleepHoursPerNight(now: now)
+        async let asleep = asleepIntervals()
+
+        let nights = await asleep
+        let resting = await restingHR
 
         return Readiness.from(
             hrv: await hrv,
-            restingHR: await restingHR,
-            sleep: await sleep,
+            // Derived from the overnight series when Apple's dedicated type is
+            // empty (#59). Oura exports resting heart rate into the Heart Rate
+            // category rather than that type, so a phone with a perfectly good
+            // sync reports none at all and readiness runs on sleep alone.
+            restingHR: resting.isEmpty ? await derivedRestingHR(asleep: nights) : resting,
+            sleep: SleepSummary.hoursPerNight(nights),
             now: now
         )
+    }
+
+    /// Resting heart rate rebuilt from the beats recorded while asleep.
+    private func derivedRestingHR(asleep: [SleepInterval]) async -> [HealthSample] {
+        guard !asleep.isEmpty else { return [] }
+        return RestingHeartRate.perNight(heartRate: await heartRateSamples(), asleep: asleep)
     }
 
     // MARK: - Queries
@@ -126,12 +143,42 @@ final class HealthReadiness {
         }
     }
 
-    /// Hours actually asleep per night.
+    /// Every heart-rate sample in the window, timestamps intact.
+    ///
+    /// Not averaged per day like the other measures: the whole point is to find
+    /// the floor of a night, and a daily average has already thrown that away.
+    private func heartRateSamples() async -> [HealthSample] {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
+            return []
+        }
+        let interval = window
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        let predicate = HKQuery.predicateForSamples(withStart: interval.start,
+                                                    end: interval.end)
+
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate,
+                                                   ascending: true)]
+            ) { _, results, _ in
+                let samples = (results as? [HKQuantitySample] ?? []).map {
+                    HealthSample(date: $0.startDate, value: $0.quantity.doubleValue(for: unit))
+                }
+                continuation.resume(returning: samples)
+            }
+            store.execute(query)
+        }
+    }
+
+    /// The stretches spent asleep.
     ///
     /// Sums the asleep stages rather than measuring time in bed: Oura writes
     /// core, deep and REM separately, and counting the gaps between them would
     /// credit a night spent awake staring at the ceiling.
-    private func sleepHoursPerNight(now: Date) async -> [HealthSample] {
+    private func asleepIntervals() async -> [SleepInterval] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
             return []
         }
@@ -159,14 +206,8 @@ final class HealthReadiness {
             HKCategoryValueSleepAnalysis.asleepREM.rawValue,
         ]
 
-        // Unioned rather than summed. Oura writes a whole-night record *and*
-        // the stages covering the same minutes, so adding the durations counted
-        // every night about twice — a real 9-hour night arrived as 18.5, which
-        // then scored as perfect recovery and had nothing to report.
-        return SleepSummary.hoursPerNight(
-            samples
-                .filter { asleep.contains($0.value) }
-                .map { SleepInterval(start: $0.startDate, end: $0.endDate) }
-        )
+        return samples
+            .filter { asleep.contains($0.value) }
+            .map { SleepInterval(start: $0.startDate, end: $0.endDate) }
     }
 }
