@@ -41,7 +41,7 @@ final class DigestTests: XCTestCase {
     /// itself is `ReadinessTests`' problem.
     private func reading(score: Int, notes: [String]) -> Readiness {
         Readiness(score: score, notes: notes, hrvDeviation: nil,
-                  restingHRDeviation: nil, sleepHours: nil)
+                  restingHRDeviation: nil, sleepHours: nil, basis: [.sleep])
     }
 
     // MARK: - The cap

@@ -44,6 +44,26 @@ public struct Readiness: Hashable, Sendable {
     /// Last night, in hours.
     public let sleepHours: Double?
 
+    /// Which measures actually contributed.
+    ///
+    /// Recorded so a reading can never imply more than it knows. HRV and
+    /// resting heart rate go missing in ordinary ways — a ring left on the
+    /// charger, an export that quietly stops — and a score computed from sleep
+    /// alone must not be presented as a full recovery picture.
+    public let basis: Set<Measure>
+
+    public enum Measure: String, Hashable, Sendable, Comparable {
+        case hrv, restingHR, sleep
+
+        public static func < (a: Measure, b: Measure) -> Bool {
+            a.rawValue < b.rawValue
+        }
+    }
+
+    /// True when nothing cardiac was available, so this is a sleep score
+    /// wearing a recovery label.
+    public var isSleepOnly: Bool { basis == [.sleep] }
+
     public enum Level: String, Sendable {
         case low, fair, good
 
@@ -98,8 +118,10 @@ public struct Readiness: Hashable, Sendable {
 
         var components: [(score: Double, weight: Double)] = []
         var notes: [String] = []
+        var basis: Set<Measure> = []
 
         if let hrvPart {
+            basis.insert(.hrv)
             // ±20% from baseline spans the whole range. HRV swings far more
             // than heart rate does, so a tighter band would peg the score at
             // an extreme on any ordinary night.
@@ -112,6 +134,7 @@ public struct Readiness: Hashable, Sendable {
         }
 
         if let hrPart {
+            basis.insert(.restingHR)
             // Inverted: a resting heart rate above baseline is the bad
             // direction. 6 bpm is a wide day-to-day swing.
             components.append((normalised(-hrPart.absolute / 6, span: 1), 0.3))
@@ -121,6 +144,7 @@ public struct Readiness: Hashable, Sendable {
         }
 
         if let lastNight {
+            basis.insert(.sleep)
             // Anchored to hours rather than to a baseline: eight hours is good
             // for almost everyone, and someone who habitually sleeps five
             // should not be told five is their normal and therefore fine.
@@ -140,7 +164,8 @@ public struct Readiness: Hashable, Sendable {
             notes: notes,
             hrvDeviation: hrvPart?.ratio,
             restingHRDeviation: hrPart?.absolute,
-            sleepHours: lastNight
+            sleepHours: lastNight,
+            basis: basis
         )
     }
 

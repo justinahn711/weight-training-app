@@ -145,4 +145,53 @@ final class ReadinessTests: XCTestCase {
         XCTAssertTrue(readiness.notes.contains { $0.contains("HRV") && $0.contains("below") })
         XCTAssertTrue(readiness.notes.contains { $0.contains("slept") })
     }
+
+    // MARK: - Saying only what it knows (#26)
+
+    /// Found on a real phone: Oura stopped writing HRV and resting heart rate
+    /// to Health a month before sleep did. A score built from sleep alone is
+    /// still worth having, but it must not be presented as a full recovery
+    /// picture — so the reading records what it actually used.
+    func testASleepOnlyReadingSaysSo() throws {
+        let readiness = try XCTUnwrap(
+            Readiness.from(hrv: [], restingHR: [], sleep: series([5.5]), now: now)
+        )
+
+        XCTAssertEqual(readiness.basis, [.sleep])
+        XCTAssertTrue(readiness.isSleepOnly)
+        XCTAssertFalse(
+            readiness.notes.contains { $0.lowercased().contains("hrv") },
+            "nothing may claim a measure that was never read"
+        )
+    }
+
+    /// And a full reading records all three.
+    func testAFullReadingRecordsEveryMeasureUsed() throws {
+        var hrv = Array(repeating: 60.0, count: 14)
+        hrv.append(58)
+        var hr = Array(repeating: 50.0, count: 14)
+        hr.append(51)
+
+        let readiness = try XCTUnwrap(
+            Readiness.from(hrv: series(hrv), restingHR: series(hr),
+                           sleep: series([7.5]), now: now)
+        )
+
+        XCTAssertEqual(readiness.basis, [.hrv, .restingHR, .sleep])
+        XCTAssertFalse(readiness.isSleepOnly)
+    }
+
+    /// Stale cardiac data must not sneak into the basis. This is exactly the
+    /// July-13 case that prompted the field.
+    func testMonthOldCardiacDataIsNotPartOfTheBasis() throws {
+        let readiness = try XCTUnwrap(
+            Readiness.from(
+                hrv: series(Array(repeating: 60.0, count: 15), endingDaysAgo: 30),
+                restingHR: [],
+                sleep: series([6.0]),
+                now: now
+            )
+        )
+        XCTAssertEqual(readiness.basis, [.sleep])
+    }
 }
