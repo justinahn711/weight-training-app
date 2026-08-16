@@ -25,6 +25,8 @@ struct ContentView: View {
     @State private var digest: Digest?
     @State private var showingDigest = false
     @State private var sync = SyncStatus()
+    @State private var health = HealthReadiness()
+    @State private var readiness: Readiness?
 
     var body: some View {
         NavigationStack {
@@ -228,6 +230,18 @@ struct ContentView: View {
         }
     }
 
+    /// Reads recovery and folds it into the digest.
+    ///
+    /// Asked for once, at launch, and silently: #26 wants zero taps, and iOS
+    /// shows its own Health sheet exactly once. A refusal is indistinguishable
+    /// from having no data, which is fine — both mean no readiness line.
+    private func loadReadiness() async {
+        await health.requestAccess()
+        guard let store, let reading = await health.current() else { return }
+        readiness = reading
+        digest = try? store.digest(readiness: reading)
+    }
+
     private func openStore() async {
         guard store == nil, startupFailure == nil else { return }
         do {
@@ -247,6 +261,10 @@ struct ContentView: View {
             volume = try opened.volumeReport()
             trends = try opened.e1RMTrends()
             digest = try opened.digest()
+            // Recovery arrives after the screen does. It's context, never a
+            // reason to keep someone waiting on a Health query before they can
+            // start a session (#26).
+            Task { await loadReadiness() }
             store = opened
             await sync.refresh(store: opened)
             await DigestNotification.schedule()

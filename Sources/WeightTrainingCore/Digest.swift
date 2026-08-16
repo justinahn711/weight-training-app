@@ -13,6 +13,9 @@ public struct DigestBullet: Hashable, Sendable, Identifiable {
         public enum Detail: Hashable, Sendable {
             case volume
             case trend(exerciseID: UUID)
+            /// Recovery (#26). Informational by design — readiness never
+            /// changes a target on its own, it just sits next to the lifts.
+            case readiness
         }
     }
 
@@ -70,6 +73,7 @@ public struct Digest: Hashable, Sendable {
         states: [UUID: ProgressState],
         history: [SetRecord],
         exercises: [Exercise],
+        readiness: Readiness? = nil,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> Digest {
@@ -123,6 +127,18 @@ public struct Digest: Hashable, Sendable {
                     + "\(climbing.points.count) sessions. Keep going.",
                 action: .review(.trend(exerciseID: climbing.exercise.id)),
                 priority: 40
+            ))
+        }
+
+        // Recovery last to be added and mid-priority: it explains a hard week
+        // rather than instructing anything, so it should never crowd out a
+        // stalling lift — but a bad night is worth reading before a volume
+        // hole that has been there for days.
+        if let readiness, !readiness.notes.isEmpty {
+            candidates.append(DigestBullet(
+                text: "\(readiness.level.summary) — \(readiness.notes.joined(separator: ", "))",
+                action: .review(.readiness),
+                priority: readiness.level == .low ? 70 : 30
             ))
         }
 

@@ -205,7 +205,14 @@ extension TrainingStore {
 extension TrainingStore {
 
     /// The weekly digest, assembled from the same signals the chips use (#27).
-    public func digest(now: Date = Date(), calendar: Calendar = .current) throws -> Digest {
+    /// - Parameter readiness: recovery for today, when Health has any (#26).
+    ///   Passed in rather than read here: the store owns training data, and a
+    ///   HealthKit query has no business behind a synchronous store call.
+    public func digest(
+        readiness: Readiness? = nil,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> Digest {
         let exercises = try exercises()
         let history = try allSets()
 
@@ -224,6 +231,7 @@ extension TrainingStore {
             states: states,
             history: history,
             exercises: exercises,
+            readiness: readiness,
             now: now,
             calendar: calendar
         )

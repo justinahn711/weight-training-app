@@ -438,6 +438,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Reading sleep, HRV and resting heart rate lets the app tell you when a hard week is showing up in your recovery. It only reads, and the data never leaves your phone.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Logging sets by voice needs the microphone. Audio is processed on device and never leaves your phone.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition turns what you say into a logged set. It runs on device, so it works with no signal.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -488,6 +489,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Reading sleep, HRV and resting heart rate lets the app tell you when a hard week is showing up in your recovery. It only reads, and the data never leaves your phone.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Logging sets by voice needs the microphone. Audio is processed on device and never leaves your phone.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition turns what you say into a logged set. It runs on device, so it works with no signal.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
