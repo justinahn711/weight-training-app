@@ -192,6 +192,20 @@ extension TrainingStore {
 
 extension TrainingStore {
 
+    /// Every training day, newest first (#63).
+    ///
+    /// Reconstructed from sets rather than read from stored sessions, because
+    /// there are no stored sessions — the sets are the record, and a day is
+    /// what happened to be logged on it.
+    public func trainingDays(calendar: Calendar = .current) throws -> [TrainingDay] {
+        TrainingHistory.days(
+            history: try allSets(),
+            exercises: try exercises(),
+            templates: try storedTemplatesOrLibrary(),
+            calendar: calendar
+        )
+    }
+
     /// e1RM trends per lift, for #24.
     public func e1RMTrends(calendar: Calendar = .current) throws -> [E1RMTrend] {
         E1RMTrendBuilder.trends(

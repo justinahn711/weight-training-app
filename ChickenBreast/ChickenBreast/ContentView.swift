@@ -27,6 +27,8 @@ struct ContentView: View {
     @State private var sync = SyncStatus()
     @State private var health = HealthReadiness()
     @State private var readiness: Readiness?
+    @State private var days: [TrainingDay] = []
+    @State private var showingHistory = false
 
     var body: some View {
         NavigationStack {
@@ -52,6 +54,10 @@ struct ContentView: View {
                     Button("Volume", systemImage: "chart.bar") { showingVolume = true }
                         .disabled(volume == nil)
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("History", systemImage: "calendar") { showingHistory = true }
+                        .disabled(days.isEmpty)
+                }
             }
             .navigationDestination(isPresented: $showingVolume) {
                 if let volume {
@@ -60,6 +66,9 @@ struct ContentView: View {
             }
             .navigationDestination(isPresented: $showingTrends) {
                 TrendsView(trends: trends)
+            }
+            .navigationDestination(isPresented: $showingHistory) {
+                HistoryView(days: days)
             }
             .navigationDestination(isPresented: $showingDigest) {
                 if let digest, let store {
@@ -181,6 +190,7 @@ struct ContentView: View {
         cycle = try? store.cyclePosition()
         volume = try? store.volumeReport()
         trends = (try? store.e1RMTrends()) ?? []
+        days = (try? store.trainingDays()) ?? []
         digest = try? store.digest()
     }
 
@@ -260,6 +270,7 @@ struct ContentView: View {
             cycle = try opened.cyclePosition()
             volume = try opened.volumeReport()
             trends = try opened.e1RMTrends()
+            days = try opened.trainingDays()
             digest = try opened.digest()
             // Recovery arrives after the screen does. It's context, never a
             // reason to keep someone waiting on a Health query before they can
