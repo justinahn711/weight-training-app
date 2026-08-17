@@ -79,6 +79,18 @@ public struct Digest: Hashable, Sendable {
     ) -> Digest {
         var candidates: [DigestBullet] = []
 
+        // Recovery qualifies the first finding rather than taking a line of its
+        // own. "Bench effort creeping, slept 5h20" is one thought; the same two
+        // facts on separate lines make the reader join them up, and cost a slot
+        // out of three doing it.
+        //
+        // Only the unfavourable half is used. "HRV above your average" attached
+        // to a grinding lift would read as an excuse that argues against itself.
+        let qualifier = readiness.map { $0.concerns }.flatMap { concerns -> String? in
+            concerns.isEmpty ? nil : concerns.prefix(2).joined(separator: ", ")
+        }
+        var qualifierUsed = false
+
         // Deloads first. A lift grinding at the same weight is the finding most
         // likely to change what happens next session.
         let byExercise = Dictionary(grouping: history) { $0.exerciseID }
@@ -96,8 +108,17 @@ public struct Digest: Hashable, Sendable {
             case .repeatedMisses(let sessions):
                 reason = "\(exercise.name) missed \(sessions) sessions running"
             }
+            // Attached to one finding only. Repeating "slept 5h20" under every
+            // stalling lift turns an explanation into nagging.
+            let qualified: String
+            if let qualifier, !qualifierUsed {
+                qualified = "\(reason), \(qualifier) — deload to \(suggestion.to)?"
+                qualifierUsed = true
+            } else {
+                qualified = "\(reason) — deload to \(suggestion.to)?"
+            }
             candidates.append(DigestBullet(
-                text: "\(reason) — deload to \(suggestion.to)?",
+                text: qualified,
                 action: .deload(exerciseID: exercise.id, to: suggestion.to),
                 priority: 100
             ))
@@ -134,7 +155,9 @@ public struct Digest: Hashable, Sendable {
         // rather than instructing anything, so it should never crowd out a
         // stalling lift — but a bad night is worth reading before a volume
         // hole that has been there for days.
-        if let readiness, !readiness.notes.isEmpty {
+        // Only when it hasn't already qualified a finding — saying it twice is
+        // worse than either placement alone.
+        if let readiness, !readiness.notes.isEmpty, !qualifierUsed {
             candidates.append(DigestBullet(
                 text: "\(readiness.level.summary) — \(readiness.notes.joined(separator: ", "))",
                 action: .review(.readiness),
