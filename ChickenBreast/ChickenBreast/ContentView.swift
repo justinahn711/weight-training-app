@@ -68,7 +68,9 @@ struct ContentView: View {
                 TrendsView(trends: trends)
             }
             .navigationDestination(isPresented: $showingHistory) {
-                HistoryView(days: days)
+                if let store {
+                    HistoryView(days: days, store: store)
+                }
             }
             .navigationDestination(isPresented: $showingDigest) {
                 if let digest, let store {
