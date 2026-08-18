@@ -39,9 +39,12 @@ final class DigestTests: XCTestCase {
 
     /// A reading with the given score and notes, built directly — the scoring
     /// itself is `ReadinessTests`' problem.
-    private func reading(score: Int, notes: [String]) -> Readiness {
-        Readiness(score: score, notes: notes, hrvDeviation: nil,
-                  restingHRDeviation: nil, sleepHours: nil, basis: [.sleep])
+    private func reading(
+        score: Int, notes: [String], concerns: [String]? = nil
+    ) -> Readiness {
+        Readiness(score: score, notes: notes, concerns: concerns ?? notes,
+                  hrvDeviation: nil, restingHRDeviation: nil, sleepHours: nil,
+                  basis: [.sleep])
     }
 
     // MARK: - The cap
@@ -217,32 +220,82 @@ final class DigestTests: XCTestCase {
         XCTAssertFalse(digest.bullets.contains { $0.action == .review(.readiness) })
     }
 
-    /// A bad night outranks a volume hole that has been there for days, but
-    /// never outranks a lift that is actually grinding.
-    func testLowRecoveryOutranksVolumeButNotADeload() throws {
-        var history: [SetRecord] = []
-        for daysAgo in [5.0, 3.0, 1.0] {
-            history += sets("Flat Bench", count: 3, load: 185, reps: 5,
-                            rpe: RPE(daysAgo == 5.0 ? 7.5 : 9), daysAgo: daysAgo)
-        }
-        let state = ProgressState(exerciseID: lift("Flat Bench").id,
-                                  targetLoad: Load(185), targetReps: 5,
-                                  lastPerformedAt: now.addingTimeInterval(-86_400))
+    /// Recovery qualifies the finding instead of competing with it (#62).
+    ///
+    /// "Bench effort creeping, slept 5h10" is one thought. The same two facts
+    /// on separate lines make the reader join them up, and cost one of three
+    /// slots doing it.
+    func testRecoveryQualifiesTheDeloadLine() throws {
+        let digest = stalling(readiness: reading(score: 25, notes: ["slept 5h10"]))
 
-        let digest = digest(
-            history: history,
-            states: [lift("Flat Bench").id: state],
-            readiness: reading(score: 25, notes: ["slept 5h10"])
+        let deload = try XCTUnwrap(digest.bullets.first { $0.isActionable })
+        XCTAssertTrue(deload.text.contains("Incline DB Press"))
+        XCTAssertTrue(deload.text.contains("slept 5h10"), "the reason should be on the line")
+        XCTAssertFalse(
+            digest.bullets.contains { $0.action == .review(.readiness) },
+            "and must not also appear on its own"
+        )
+    }
+
+    /// Attached to one finding only. Repeating "slept 5h10" under every
+    /// stalling lift turns an explanation into nagging.
+    func testOnlyOneFindingIsQualified() {
+        var history = stallingHistory(for: "Incline DB Press")
+        history += stallingHistory(for: "Lat Pulldown", load: 120)
+        let states = [
+            lift("Incline DB Press").id: state(for: "Incline DB Press"),
+            lift("Lat Pulldown").id: state(for: "Lat Pulldown", load: 120),
+        ]
+
+        let digest = digest(history: history, states: states,
+                            readiness: reading(score: 25, notes: ["slept 5h10"]))
+
+        let mentions = digest.bullets.filter { $0.text.contains("slept 5h10") }
+        XCTAssertLessThanOrEqual(mentions.count, 1)
+    }
+
+    /// Good news must not be attached to a stall, where it would read as an
+    /// excuse that argues against itself.
+    func testFavourableRecoveryDoesNotQualifyAStall() throws {
+        let digest = stalling(
+            readiness: reading(score: 80,
+                               notes: ["HRV 14% above your 14-day average"],
+                               concerns: [])
         )
 
-        let kinds = digest.bullets.map(\.action)
-        if let recovery = kinds.firstIndex(of: .review(.readiness)) {
-            if let volume = kinds.firstIndex(of: .review(.volume)) {
-                XCTAssertLessThan(recovery, volume, "a bad night reads before a volume hole")
-            }
-            if let deload = kinds.firstIndex(where: { if case .deload = $0 { return true }; return false }) {
-                XCTAssertLessThan(deload, recovery, "a grinding lift still leads")
-            }
+        let deload = try XCTUnwrap(digest.bullets.first { $0.isActionable })
+        XCTAssertFalse(deload.text.contains("HRV"))
+    }
+
+    /// With nothing to qualify, recovery still gets its own line.
+    func testRecoveryStandsAloneWhenThereIsNoFinding() {
+        let digest = digest(
+            history: sets("Flat Bench", count: 3, load: 185, reps: 5, daysAgo: 2),
+            readiness: reading(score: 25, notes: ["slept 5h10"])
+        )
+        XCTAssertTrue(digest.bullets.contains { $0.action == .review(.readiness) })
+    }
+
+    // MARK: - Fixtures for the above
+
+    /// Effort climbing at an unchanged load — the shape the deload detector
+    /// fires on. Matches `testADeloadLeadsTheDigest`, which is the fixture
+    /// known to actually trigger one.
+    private func stallingHistory(for name: String, load: Double = 70) -> [SetRecord] {
+        var history: [SetRecord] = []
+        for (daysAgo, rpe) in [(5.0, RPE(8)!), (3.0, RPE(8.5)!), (1.0, RPE(9)!)] {
+            history += sets(name, count: 3, load: load, reps: 10, rpe: rpe, daysAgo: daysAgo)
         }
+        return history
+    }
+
+    private func state(for name: String, load: Double = 70) -> ProgressState {
+        ProgressState(exerciseID: lift(name).id, targetLoad: Load(load), targetReps: 10)
+    }
+
+    private func stalling(readiness: Readiness) -> Digest {
+        digest(history: stallingHistory(for: "Incline DB Press"),
+               states: [lift("Incline DB Press").id: state(for: "Incline DB Press")],
+               readiness: readiness)
     }
 }

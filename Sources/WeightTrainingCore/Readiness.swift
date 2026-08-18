@@ -36,6 +36,14 @@ public struct Readiness: Hashable, Sendable {
     /// close to baseline — a day with nothing to say about it.
     public let notes: [String]
 
+    /// The subset of `notes` that reads as a reason things were hard.
+    ///
+    /// Separated because recovery qualifies a finding (#62) — "bench effort
+    /// creeping, slept 5h20" — and only the unfavourable half explains a stall.
+    /// Attaching "HRV 12% above your average" to a grinding lift would read as
+    /// an excuse that contradicts itself.
+    public let concerns: [String]
+
     /// How far HRV sat from baseline, as a fraction. Positive is above.
     public let hrvDeviation: Double?
     /// How far resting heart rate sat from baseline, in beats. Positive is
@@ -118,6 +126,7 @@ public struct Readiness: Hashable, Sendable {
 
         var components: [(score: Double, weight: Double)] = []
         var notes: [String] = []
+        var concerns: [String] = []
         var basis: Set<Measure> = []
 
         if let hrvPart {
@@ -127,7 +136,9 @@ public struct Readiness: Hashable, Sendable {
             // an extreme on any ordinary night.
             components.append((normalised(hrvPart.ratio, span: 0.20), 0.4))
             if hrvPart.ratio <= -0.10 {
-                notes.append("HRV \(percent(hrvPart.ratio)) below your 14-day average")
+                let note = "HRV \(percent(hrvPart.ratio)) below your 14-day average"
+                notes.append(note)
+                concerns.append(note)
             } else if hrvPart.ratio >= 0.10 {
                 notes.append("HRV \(percent(hrvPart.ratio)) above your 14-day average")
             }
@@ -139,7 +150,9 @@ public struct Readiness: Hashable, Sendable {
             // direction. 6 bpm is a wide day-to-day swing.
             components.append((normalised(-hrPart.absolute / 6, span: 1), 0.3))
             if hrPart.absolute >= 3 {
-                notes.append("resting HR up \(Int(hrPart.absolute.rounded())) bpm")
+                let note = "resting HR up \(Int(hrPart.absolute.rounded())) bpm"
+                notes.append(note)
+                concerns.append(note)
             }
         }
 
@@ -151,7 +164,9 @@ public struct Readiness: Hashable, Sendable {
             let sleepScore = clamp((lastNight - 5) / 3, 0, 1)
             components.append((sleepScore, 0.3))
             if lastNight < 6.5 {
-                notes.append("slept \(hoursText(lastNight))")
+                let note = "slept \(hoursText(lastNight))"
+                notes.append(note)
+                concerns.append(note)
             }
         }
 
@@ -162,6 +177,7 @@ public struct Readiness: Hashable, Sendable {
         return Readiness(
             score: Int((weighted * 100).rounded()),
             notes: notes,
+            concerns: concerns,
             hrvDeviation: hrvPart?.ratio,
             restingHRDeviation: hrPart?.absolute,
             sleepHours: lastNight,

@@ -167,6 +167,35 @@ public final class TrainingStore {
         try commit()
     }
 
+    /// Corrects a previously logged set (#61).
+    ///
+    /// Until this existed, `undoLastSet` was the only way to take a set back
+    /// and it reached exactly one — the newest. Anything mislogged before that
+    /// was permanent, which matters more here than in a tap-only app: sets are
+    /// logged by voice mid-session, and a misheard "eight" as "eighty" writes a
+    /// set that silently inflates volume, e1RM and every target downstream.
+    ///
+    /// Nothing derived is rewritten. Volume, trends and the next target are all
+    /// computed from history when they're next read, so correcting the history
+    /// is the whole fix. Stored progress state is deliberately left alone: it
+    /// records what was actually trained against at the time, and rewriting it
+    /// would revise a session you already performed.
+    ///
+    /// - Returns: false when no set has that id — an edit racing a delete from
+    ///   another device, which is a no-op rather than an error.
+    @discardableResult
+    public func updateSet(_ record: SetRecord) throws -> Bool {
+        let id = record.id
+        var descriptor = FetchDescriptor<StoredSetLog>(
+            predicate: #Predicate { $0.id == id }
+        )
+        descriptor.fetchLimit = 1
+        guard let stored = try context.fetch(descriptor).first else { return false }
+        stored.update(from: record)
+        try commit()
+        return true
+    }
+
     /// Removes a set. Backs the one-gesture undo in #8, where a mislogged set
     /// has to disappear completely rather than being marked void — a voided row
     /// would still have to be filtered out of every statistic downstream.

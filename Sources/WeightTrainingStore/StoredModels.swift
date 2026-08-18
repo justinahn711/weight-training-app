@@ -148,6 +148,20 @@ public final class StoredSetLog {
         self.performedAt = record.performedAt
     }
 
+    /// Corrects a logged set in place (#61).
+    ///
+    /// Identity and the moment performed are deliberately not touched: a
+    /// correction fixes what was recorded about a set, and changing when it
+    /// happened would move it to another day rather than correct it. The lift
+    /// is fixed for the same reason — a set on the wrong exercise is a
+    /// different set, and deleting it is the honest fix.
+    public func update(from record: SetRecord) {
+        pounds = record.load.pounds
+        reps = record.reps
+        rpeValue = record.rpe?.value
+        isWarmup = record.isWarmup
+    }
+
     public func toDomain() -> SetRecord {
         SetRecord(
             id: id,
