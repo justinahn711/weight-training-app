@@ -73,6 +73,7 @@ public struct Digest: Hashable, Sendable {
         states: [UUID: ProgressState],
         history: [SetRecord],
         exercises: [Exercise],
+        records: [PersonalRecord] = [],
         readiness: Readiness? = nil,
         now: Date = Date(),
         calendar: Calendar = .current
@@ -134,12 +135,26 @@ public struct Digest: Hashable, Sendable {
             ))
         }
 
+        // The best news available: a record beats a trend, because it's the
+        // thing that was actually trained for rather than a slope fitted after
+        // the fact.
+        let named = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0.name) })
+        var celebrated: UUID?
+        if let record = records.first, let name = named[record.exerciseID] {
+            celebrated = record.exerciseID
+            candidates.append(DigestBullet(
+                text: "\(name): \(sentence(for: record))",
+                action: .review(.trend(exerciseID: record.exerciseID)),
+                priority: 50
+            ))
+        }
+
         // Then the good news, which is the reason to keep reading the digest at
         // all — a digest that only ever nags gets silenced.
         let climbing = trends
             .filter { $0.isMeaningful && ($0.change?.pounds ?? 0) > 0 }
             .max { ($0.change?.pounds ?? 0) < ($1.change?.pounds ?? 0) }
-        if let climbing, let change = climbing.change {
+        if let climbing, let change = climbing.change, climbing.exercise.id != celebrated {
             let pounds = change.pounds == change.pounds.rounded()
                 ? String(format: "%.0f", change.pounds)
                 : String(format: "%.1f", change.pounds)
@@ -170,6 +185,24 @@ public struct Digest: Hashable, Sendable {
             .prefix(maximumBullets)
 
         return Digest(bullets: Array(bullets), generatedAt: now)
+    }
+}
+
+private extension Digest {
+
+    /// Says what was beaten, in the terms the lifter would use.
+    static func sentence(for record: PersonalRecord) -> String {
+        switch record.kind {
+        case .heaviest(let load):
+            return "\(load) × \(record.set.reps) — heaviest yet"
+        case .reps(let reps, let load):
+            return "\(reps) reps at \(load) — most yet at that weight"
+        case .estimatedMax(let estimate):
+            // Named as an estimate, because it wasn't lifted. Calling a
+            // computed figure a personal best would be the app inventing an
+            // achievement.
+            return "estimated max \(estimate) — a best"
+        }
     }
 }
 

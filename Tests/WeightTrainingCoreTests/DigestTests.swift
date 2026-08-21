@@ -23,7 +23,8 @@ final class DigestTests: XCTestCase {
     private func digest(
         history: [SetRecord],
         states: [UUID: ProgressState] = [:],
-        readiness: Readiness? = nil
+        readiness: Readiness? = nil,
+        records: [PersonalRecord] = []
     ) -> Digest {
         Digest.build(
             trends: E1RMTrendBuilder.trends(history: history, exercises: ExerciseLibrary.all),
@@ -32,6 +33,7 @@ final class DigestTests: XCTestCase {
             states: states,
             history: history,
             exercises: ExerciseLibrary.all,
+            records: records,
             readiness: readiness,
             now: now
         )
@@ -297,5 +299,56 @@ final class DigestTests: XCTestCase {
         digest(history: stallingHistory(for: "Incline DB Press"),
                states: [lift("Incline DB Press").id: state(for: "Incline DB Press")],
                readiness: readiness)
+    }
+
+    // MARK: - Records (#70)
+
+    /// A record beats a trend: it's the thing that was actually trained for,
+    /// rather than a slope fitted after the fact.
+    func testARecordOutranksAClimbingTrend() throws {
+        let bench = lift("Flat Bench")
+        let pr = SetRecord(exerciseID: bench.id, load: Load(225), reps: 3, rpe: RPE(9),
+                           performedAt: now.addingTimeInterval(-86_400))
+        let record = PersonalRecord(exerciseID: bench.id, kind: .heaviest(Load(225)),
+                                    set: pr, previous: 215)
+
+        let built = digest(
+            history: sets("Flat Bench", count: 3, load: 185, reps: 5, daysAgo: 2),
+            records: [record]
+        )
+
+        let bullet = try XCTUnwrap(built.bullets.first { $0.text.contains("heaviest yet") })
+        XCTAssertEqual(bullet.action, .review(.trend(exerciseID: bench.id)))
+        XCTAssertFalse(bullet.isActionable, "good news changes nothing on its own")
+    }
+
+    /// A rep record reads in the terms double progression works in — the
+    /// programme spends weeks adding reps before it adds weight.
+    func testARepRecordSaysWhatItBeat() throws {
+        let bench = lift("Flat Bench")
+        let pr = SetRecord(exerciseID: bench.id, load: Load(185), reps: 8, rpe: RPE(9),
+                           performedAt: now.addingTimeInterval(-86_400))
+        let record = PersonalRecord(exerciseID: bench.id, kind: .reps(8, at: Load(185)),
+                                    set: pr, previous: 6)
+
+        let built = digest(history: sets("Flat Bench", count: 1, load: 185, reps: 8, daysAgo: 1),
+                           records: [record])
+        let bullet = try XCTUnwrap(built.bullets.first { $0.text.contains("most yet") })
+        XCTAssertTrue(bullet.text.contains("8 reps at 185 lb"), bullet.text)
+    }
+
+    /// An estimated max is named as an estimate. Calling a computed figure a
+    /// personal best would be the app inventing an achievement.
+    func testAnEstimatedMaxIsNotCalledALift() throws {
+        let bench = lift("Flat Bench")
+        let pr = SetRecord(exerciseID: bench.id, load: Load(185), reps: 6, rpe: RPE(7),
+                           performedAt: now.addingTimeInterval(-86_400))
+        let record = PersonalRecord(exerciseID: bench.id, kind: .estimatedMax(Load(240)),
+                                    set: pr, previous: 232)
+
+        let built = digest(history: sets("Flat Bench", count: 1, load: 185, reps: 6, daysAgo: 1),
+                           records: [record])
+        let bullet = try XCTUnwrap(built.bullets.first { $0.text.contains("estimated max") })
+        XCTAssertFalse(bullet.text.contains("heaviest"), bullet.text)
     }
 }

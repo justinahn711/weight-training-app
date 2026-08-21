@@ -245,6 +245,12 @@ extension TrainingStore {
             states: states,
             history: history,
             exercises: exercises,
+            // Records are found rather than stored, so a corrected or deleted
+            // set (#61) takes its record with it.
+            records: PersonalRecords.recent(
+                in: history,
+                since: calendar.date(byAdding: .day, value: -7, to: now) ?? now
+            ),
             readiness: readiness,
             now: now,
             calendar: calendar
