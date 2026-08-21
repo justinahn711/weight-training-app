@@ -98,11 +98,19 @@ final class SessionViewModel {
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
             if startsRest {
-                rest = RestTimer(
+                let timer = RestTimer(
                     startedAt: record.performedAt,
                     duration: current.exercise.restTarget,
                     setID: record.id
                 )
+                rest = timer
+                // The alert is what makes resting with the phone away possible
+                // (#69); the Live Activity only helps if you're looking.
+                let name = current.exercise.name
+                let next = current.prescription.isColdStart
+                    ? nil
+                    : current.prescription.displayLine
+                Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
             }
             publishActivity()
         } catch {
@@ -113,6 +121,7 @@ final class SessionViewModel {
     /// Dismisses the rest clock without touching the logged set.
     func skipRest() {
         rest = nil
+        RestNotification.cancel()
         publishActivity()
     }
 
@@ -126,6 +135,8 @@ final class SessionViewModel {
             // mid-rest doesn't cancel the rest you're actually taking (#8).
             if rest?.setID == record.id {
                 rest = nil
+                // A buzz for a set you took back is worse than no buzz at all.
+                RestNotification.cancel()
             }
         } catch {
             // Put it back rather than leaving screen and disk disagreeing.
@@ -333,6 +344,10 @@ final class SessionViewModel {
     /// Takes the lock screen down when the session ends.
     func endActivity() {
         liveActivity.end()
+        // Rest belongs to a session in progress. Leaving ends the session
+        // (SessionView.onDisappear), so a pending alert would arrive for
+        // training that's already finished.
+        RestNotification.cancel()
     }
 
     /// Corrects what the app assumes about this machine (#20, #39).

@@ -592,6 +592,10 @@ private struct RestBanner: View {
     let rest: RestTimer
     let onSkip: () -> Void
 
+    /// Which rest has already been announced, so the tap fires once and
+    /// re-arms for the next set rather than buzzing every second afterwards.
+    @State private var buzzedFor: UUID?
+
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
             let done = rest.isComplete(at: context.date)
@@ -623,6 +627,14 @@ private struct RestBanner: View {
                 Button("Skip", action: onSkip)
                     .font(.body.weight(.semibold))
                     .buttonStyle(.bordered)
+            }
+            .onChange(of: done) { _, isDone in
+                // On screen a notification is suppressed by the system anyway,
+                // and a banner over your own session would be noise — the tap
+                // is the whole message (#69).
+                guard isDone, buzzedFor != rest.setID else { return }
+                buzzedFor = rest.setID
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
