@@ -190,4 +190,70 @@ final class VoiceGrammarTests: XCTestCase {
         XCTAssertNotNil(load)
         XCTAssertNotEqual(load, Load(180), "the parser must not quietly correct it")
     }
+
+    // MARK: - Real phrasings that used to fail (#80)
+
+    /// Reported from the gym: the rep count came through and the weight and
+    /// RPE didn't. A word before the number was fatal — the parser gave up at
+    /// the first token that wasn't a numeral, so "log" ate the weight, while a
+    /// trailing "pounds" had always been harmless.
+    func testAWordBeforeTheWeightNoLongerEatsIt() throws {
+        let parsed = try XCTUnwrap(VoiceGrammar.parse("log 185 for 8 at 8"))
+        guard case .logSet(let load, let reps, let rpe) = parsed.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(load, Load(185))
+        XCTAssertEqual(reps, 8)
+        XCTAssertEqual(rpe, RPE(8))
+    }
+
+    /// A weight that lands where an RPE belongs is refused rather than dragged
+    /// onto the scale. It used to arrive as a confident RPE 10.
+    func testAWeightInTheRPESlotIsRefused() throws {
+        let parsed = try XCTUnwrap(VoiceGrammar.parse("8 reps at 185"))
+        guard case .logSet(_, let reps, let rpe) = parsed.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(reps, 8)
+        XCTAssertNil(rpe, "185 is not an RPE, and inventing one is worse than missing it")
+    }
+
+    /// A misheard RPE still snaps: "twelve" is a ten that went astray, and the
+    /// grid exists for exactly that.
+    func testANearMissRPEStillSnaps() throws {
+        let parsed = try XCTUnwrap(VoiceGrammar.parse("185 for 5 at twelve"))
+        guard case .logSet(_, _, let rpe) = parsed.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(rpe, RPE(10))
+    }
+
+    /// A weight in the rep slot is refused too — 185 reps is not a set.
+    func testAWeightInTheRepSlotIsRefused() throws {
+        let parsed = VoiceGrammar.parse("185 pounds 8 reps")
+        if case .logSet(_, let reps, _)? = parsed?.command {
+            XCTAssertNotEqual(reps, 185, "185 reps is a misparse, not a set")
+        }
+    }
+
+    /// Separate numbers stay separate: three of them are not one big one.
+    func testLooseNumbersDoNotMergeIntoOne() throws {
+        let parsed = try XCTUnwrap(VoiceGrammar.parse("185 8 8"))
+        guard case .logSet(let load, _, _) = parsed.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(load, Load(185), "used to add up to 201")
+    }
+
+    /// The hundreds shorthand still works, which is the reason digits could
+    /// merge in the first place.
+    func testHundredsShorthandSurvives() throws {
+        for (phrase, expected) in [("one 85 for 8", 185.0), ("two 25 for 5", 225.0)] {
+            let parsed = try XCTUnwrap(VoiceGrammar.parse(phrase))
+            guard case .logSet(let load, _, _) = parsed.command else {
+                return XCTFail("expected a set")
+            }
+            XCTAssertEqual(load, Load(expected), phrase)
+        }
+    }
 }

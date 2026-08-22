@@ -66,6 +66,23 @@ public enum VoiceGrammar {
         return parseSet(words)
     }
 
+    /// Reps a person actually performs. Beyond this it's a weight or a
+    /// mishearing wearing a rep count's clothes.
+    private static func plausibleReps(_ value: Double) -> Double? {
+        (1...100).contains(value) ? value : nil
+    }
+
+    /// Near enough to the RPE scale to be a mishearing of it.
+    ///
+    /// Wider than the scale on purpose: "at twelve" is a misheard ten and
+    /// should snap onto the grid, which is what `RPE(snapping:)` is for. But
+    /// snapping exists to tidy 8.3, not to drag 185 down to a confident-looking
+    /// 10 — so a number that plainly came from another field is refused rather
+    /// than rounded into a plausible lie.
+    private static func plausibleRPE(_ value: Double) -> Double? {
+        (4...12).contains(value) ? value : nil
+    }
+
     // MARK: - Tokenizing
 
     private static func tokenize(_ transcript: String) -> [String] {
@@ -145,8 +162,12 @@ public enum VoiceGrammar {
             guard !pending.isEmpty else { return }
             switch field {
             case .load: load = load ?? SpokenNumber.parse(pending)
-            case .reps: reps = reps ?? SpokenNumber.parse(pending)
-            case .rpe:  rpe = rpe ?? SpokenNumber.parseWithHalf(pending)
+            // Range-checked rather than accepted. A number that landed in the
+            // wrong field is common — "8 reps at 185" put a weight where an
+            // RPE goes — and absent is honest where invented is not. The
+            // confirm step (#22) can only save you from what it shows you.
+            case .reps: reps = reps ?? SpokenNumber.parse(pending).flatMap(plausibleReps)
+            case .rpe:  rpe = rpe ?? SpokenNumber.parseWithHalf(pending).flatMap(plausibleRPE)
             }
             pending = []
         }
