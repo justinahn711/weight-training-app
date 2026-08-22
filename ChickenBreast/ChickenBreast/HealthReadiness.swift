@@ -41,6 +41,12 @@ final class HealthReadiness {
         if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
             types.insert(sleep)
         }
+        // For bodyweight lifts (#71). Health already has it if any scale, watch
+        // or ring writes there — which means never asking someone to type their
+        // weight into a training app.
+        if let mass = HKQuantityType.quantityType(forIdentifier: .bodyMass) {
+            types.insert(mass)
+        }
         return types
     }
 
@@ -92,6 +98,36 @@ final class HealthReadiness {
     private func derivedRestingHR(asleep: [SleepInterval]) async -> [HealthSample] {
         guard !asleep.isEmpty else { return [] }
         return RestingHeartRate.perNight(heartRate: await heartRateSamples(), asleep: asleep)
+    }
+
+    /// Weigh-ins from Health, oldest first (#71).
+    ///
+    /// A series rather than the latest value, so a set logged in March can be
+    /// seeded from March's weight if it's ever backfilled. Read-only, like
+    /// everything else here.
+    func bodyweights(since cutoff: Date) async -> [BodyweightReading] {
+        guard isAvailable,
+              let type = HKQuantityType.quantityType(forIdentifier: .bodyMass) else { return [] }
+
+        let unit = HKUnit.pound()
+        let predicate = HKQuery.predicateForSamples(withStart: cutoff, end: Date())
+
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate,
+                                                   ascending: true)]
+            ) { _, results, _ in
+                let readings = (results as? [HKQuantitySample] ?? []).map {
+                    BodyweightReading(pounds: $0.quantity.doubleValue(for: unit),
+                                      recordedAt: $0.startDate)
+                }
+                continuation.resume(returning: readings)
+            }
+            store.execute(query)
+        }
     }
 
     // MARK: - Queries

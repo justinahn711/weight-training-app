@@ -286,6 +286,35 @@ public final class TrainingStore {
         return rows.filter { seen.insert($0.id).inserted }.map { $0.toDomain() }
     }
 
+    // MARK: - Bodyweight
+
+    /// Records a weigh-in (#71).
+    ///
+    /// One reading per day, replaced rather than accumulated: a scale stepped
+    /// on three times in a morning is one measurement, and keeping all three
+    /// would weight the series towards whichever day someone fidgeted.
+    public func record(_ reading: BodyweightReading, calendar: Calendar = .current) throws {
+        let existing = try context.fetch(FetchDescriptor<StoredBodyweight>())
+            .filter { calendar.isDate($0.recordedAt, inSameDayAs: reading.recordedAt) }
+        for row in existing { context.delete(row) }
+
+        context.insert(StoredBodyweight(reading))
+        try commit()
+    }
+
+    /// Every weigh-in, oldest first.
+    public func bodyweights() throws -> [BodyweightReading] {
+        try context.fetch(FetchDescriptor<StoredBodyweight>(
+            sortBy: [SortDescriptor(\.recordedAt)]
+        )).map { $0.toDomain() }
+    }
+
+    /// What the lifter weighed on a given day, as far as anything recorded
+    /// knows. Nil before the first weigh-in.
+    public func bodyweight(on date: Date) throws -> Double? {
+        try bodyweights().weight(on: date)
+    }
+
     // MARK: - Progress state
 
     /// Inserts or overwrites the state for this exercise. One row per exercise

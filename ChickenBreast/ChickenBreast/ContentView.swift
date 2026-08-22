@@ -249,7 +249,16 @@ struct ContentView: View {
     /// from having no data, which is fine — both mean no readiness line.
     private func loadReadiness() async {
         await health.requestAccess()
-        guard let store, let reading = await health.current() else { return }
+        guard let store else { return }
+
+        // Weigh-ins first: a bodyweight lift needs one to seed from, and it
+        // costs a query nobody notices (#71).
+        let cutoff = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
+        for weighIn in await health.bodyweights(since: cutoff) {
+            try? store.record(weighIn)
+        }
+
+        guard let reading = await health.current() else { return }
         readiness = reading
         digest = try? store.digest(readiness: reading)
     }
