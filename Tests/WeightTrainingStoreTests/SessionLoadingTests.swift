@@ -19,6 +19,18 @@ final class SessionLoadingTests: XCTestCase {
 
     private var incline: Exercise { ExerciseLibrary.push[0] }
 
+    /// Midday `days` ago.
+    ///
+    /// Anchored to the middle of the day rather than to `Date()`, because these
+    /// tests log several sets a few minutes apart and the store groups sets by
+    /// calendar day. Run within a few minutes of midnight, offsets from "now"
+    /// straddle two days and a session splits in half — which failed for real,
+    /// at 23:56, and would otherwise have looked like a bug in the app.
+    private func midday(daysAgo: Int) -> Date {
+        let today = Calendar.current.startOfDay(for: Date())
+        return today.addingTimeInterval(Double(-daysAgo) * 86_400 + 12 * 3_600)
+    }
+
     /// #16's done-when: opening push day fills every slot with a target.
     func testPushDayFillsEverySlotFromTheTemplate() throws {
         let session = try store.startSession(kind: .push)
@@ -48,9 +60,9 @@ final class SessionLoadingTests: XCTestCase {
         // Log a push session so one is on the books.
         let incline = ExerciseLibrary.all.first { $0.name == "Incline DB Press" }!
         try store.log(SetRecord(exerciseID: incline.id, load: Load(70), reps: 10,
-                                rpe: RPE(8), performedAt: Date().addingTimeInterval(-86_400)))
+                                rpe: RPE(8), performedAt: midday(daysAgo: 1)))
         try store.log(SetRecord(exerciseID: fly.id, load: Load(50), reps: 12,
-                                rpe: RPE(8), performedAt: Date().addingTimeInterval(-86_400)))
+                                rpe: RPE(8), performedAt: midday(daysAgo: 1)))
 
         XCTAssertEqual(try store.startSession(kind: .push).exercises.last?.exercise.name,
                        "Skull Crushers")
@@ -105,7 +117,7 @@ final class SessionLoadingTests: XCTestCase {
     }
 
     func testPreviousSessionBecomesLastPerformance() throws {
-        let lastWeek = Date().addingTimeInterval(-7 * 86_400)
+        let lastWeek = midday(daysAgo: 7)
         for (index, reps) in [11, 10, 8].enumerated() {
             try store.log(SetRecord(
                 exerciseID: incline.id, load: Load(70), reps: reps, rpe: RPE(8),
@@ -123,7 +135,7 @@ final class SessionLoadingTests: XCTestCase {
     /// by being force-quit. Sets logged earlier today have to come back as part
     /// of the session, not vanish while sitting safely on disk.
     func testTodaysSetsAreRehydratedIntoTheSession() throws {
-        let now = Date()
+        let now = midday(daysAgo: 0)
         let warmup = SetRecord(exerciseID: incline.id, load: Load(45), reps: 10,
                                isWarmup: true, performedAt: now.addingTimeInterval(-600))
         let working = SetRecord(exerciseID: incline.id, load: Load(70), reps: 12,
@@ -140,7 +152,7 @@ final class SessionLoadingTests: XCTestCase {
     /// ...and today's work must not also be reported as "last time", which
     /// would show the same sets twice under two different headings.
     func testTodaysSetsAreExcludedFromLastPerformance() throws {
-        let now = Date()
+        let now = midday(daysAgo: 0)
         let lastWeek = now.addingTimeInterval(-7 * 86_400)
         try store.log(SetRecord(exerciseID: incline.id, load: Load(65), reps: 12,
                                 rpe: RPE(8), performedAt: lastWeek))
