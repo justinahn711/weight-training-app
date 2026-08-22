@@ -1,0 +1,45 @@
+name: Tests
+
+# The package is pure Swift with no simulator dependency, which is the whole
+# point of keeping Core and Store free of UIKit — the suite runs anywhere a
+# Swift toolchain does, in a second and a half.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # A newer push supersedes an in-flight run on the same branch.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-tests:
+    name: swift test
+    # macOS because SwiftData sets the floor at macOS 14, and the Store target
+    # needs it.
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build --build-tests
+
+      - name: Test
+        run: swift test
+
+      # Guards the invariant that makes the suite fast and the domain portable:
+      # Core must not acquire a dependency on SwiftData, SwiftUI or HealthKit.
+      # A single import would move the reasoning behind a simulator boot.
+      - name: Core stays pure
+        run: |
+          if grep -rnE '^import (SwiftData|SwiftUI|UIKit|HealthKit|ActivityKit)' \
+              Sources/WeightTrainingCore; then
+            echo "::error::WeightTrainingCore must import Foundation only"
+            exit 1
+          fi
+          echo "Core imports Foundation only."
