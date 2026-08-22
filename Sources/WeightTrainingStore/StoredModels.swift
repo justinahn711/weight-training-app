@@ -272,6 +272,30 @@ public final class StoredDayTemplate {
     }
 }
 
+// MARK: - Bodyweight
+
+/// One weigh-in (#71).
+///
+/// Stored as a series rather than a single current weight, so a set is always
+/// judged against what the lifter weighed at the time. Overwriting one number
+/// would rewrite the history of every bodyweight lift each time the scale moved.
+@Model
+public final class StoredBodyweight {
+    public var id: UUID = UUID()
+    public var pounds: Double = 0
+    public var recordedAt: Date = Date()
+
+    public init(_ reading: BodyweightReading) {
+        self.id = UUID()
+        self.pounds = reading.pounds
+        self.recordedAt = reading.recordedAt
+    }
+
+    public func toDomain() -> BodyweightReading {
+        BodyweightReading(pounds: pounds, recordedAt: recordedAt)
+    }
+}
+
 /// Every entity the app persists. Kept in one place so the container and any
 /// future migration plan can't drift apart.
 public enum TrainingSchema {
@@ -280,5 +304,6 @@ public enum TrainingSchema {
         StoredSetLog.self,
         StoredProgressState.self,
         StoredDayTemplate.self,
+        StoredBodyweight.self,
     ]
 }

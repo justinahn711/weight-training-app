@@ -149,6 +149,27 @@ final class SessionViewModel {
 
     // MARK: - Weight and reps
 
+    /// What the lifter weighed most recently, for seeding a bodyweight lift.
+    ///
+    /// Read once when the session opens rather than per set: it can't change
+    /// mid-session, and a store round trip between sets is a round trip nobody
+    /// asked for.
+    private(set) var latestBodyweight: Double?
+
+    /// Seeds a bodyweight lift with the lifter's own weight (#71).
+    ///
+    /// Only when there's no target yet — a lift with history already knows what
+    /// it proposed last time, and that number already included bodyweight.
+    /// Without this, a first set of pull-ups starts at zero and logs as a set
+    /// that moved nothing.
+    func seedBodyweightIfNeeded() {
+        guard let current, current.exercise.isBodyweight,
+              current.prescription.load == nil,
+              pendingLoad == .zero,
+              let weight = latestBodyweight else { return }
+        pendingLoad = Load(weight)
+    }
+
     /// Steps the weight by the exercise's real increment — the next dumbbell
     /// up, 5 lb on a barbell — so the stepper can only produce loads the
     /// equipment can actually make.
@@ -516,6 +537,8 @@ final class SessionViewModel {
 
     /// Fills the caches the chips read from.
     func loadSuggestionContext() {
+        latestBodyweight = try? store.bodyweight(on: Date())
+        seedBodyweightIfNeeded()
         for exercise in session.exercises {
             historyCache[exercise.id] = (try? store.sets(forExercise: exercise.id)) ?? []
             if let state = try? store.progressState(forExercise: exercise.id) {
