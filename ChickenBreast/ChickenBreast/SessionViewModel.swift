@@ -382,6 +382,21 @@ final class SessionViewModel {
         }
     }
 
+    /// Adds a lift that didn't exist, then swaps to it (#76).
+    ///
+    /// Created and used in one move, because the only reason to invent a lift
+    /// mid-session is to do it now. It persists and syncs like any other, and
+    /// counts towards volume from its first set — the muscle report reads what
+    /// was trained, never what was planned.
+    func createAndSwap(to exercise: Exercise) {
+        do {
+            try store.create(exercise)
+            swap(to: exercise)
+        } catch {
+            failure = "Couldn't add that exercise: \(error.localizedDescription)"
+        }
+    }
+
     /// Swaps the lift filling the current slot.
     ///
     /// The replacement is rebuilt from disk so it arrives with its own target

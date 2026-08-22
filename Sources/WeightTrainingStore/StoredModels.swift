@@ -45,6 +45,9 @@ public enum StoreError: Error {
     /// A stored blob failed to decode — a schema change landed without a
     /// migration, or the file was written by a newer build.
     case corruptRecord(entity: String, id: UUID, underlying: Error)
+
+    /// A created lift is missing something it can't work without (#76).
+    case invalidExercise(reason: String)
 }
 
 /// Rebuilds an RPE from a stored double.

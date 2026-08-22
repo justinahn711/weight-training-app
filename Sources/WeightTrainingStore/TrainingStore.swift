@@ -133,6 +133,46 @@ public final class TrainingStore {
         try commit()
     }
 
+    /// Adds a lift the person invented (#76).
+    ///
+    /// Validated rather than trusted, because the two fields that matter are
+    /// the two a form makes easy to leave empty. A nameless lift is unusable in
+    /// the picker, and an untagged one is invisible to the volume report — the
+    /// insight that's meant to work whatever someone trains.
+    public func create(_ exercise: Exercise) throws {
+        let name = exercise.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw StoreError.invalidExercise(reason: "needs a name") }
+        guard exercise.muscles.contains(where: { $0.role == .primary }) else {
+            throw StoreError.invalidExercise(reason: "needs at least one primary muscle")
+        }
+        guard ExerciseLibrary.isSeeded(exercise.id) == false else {
+            throw StoreError.invalidExercise(reason: "that id belongs to the catalogue")
+        }
+
+        var trimmed = exercise
+        trimmed.name = name
+        try upsert(trimmed)
+    }
+
+    /// Removes a lift someone created.
+    ///
+    /// Catalogue lifts are refused. They're shared, seeding would reinstate one
+    /// on the next launch anyway, and "I don't do this" is a preference about a
+    /// person rather than a fact about the exercise.
+    ///
+    /// Logged sets are left on disk. The training happened, and deleting the
+    /// lift is not a claim that it didn't — though with no exercise to name
+    /// them, those sets stop appearing in history and volume until the lift
+    /// comes back.
+    @discardableResult
+    public func deleteExercise(id: UUID) throws -> Bool {
+        guard !ExerciseLibrary.isSeeded(id) else { return false }
+        guard let stored = try storedExercise(id: id) else { return false }
+        context.delete(stored)
+        try commit()
+        return true
+    }
+
     /// All exercises, alphabetical — the order the library picker wants.
     ///
     /// Uniqued by id on the way out. The schema can't enforce that any more
