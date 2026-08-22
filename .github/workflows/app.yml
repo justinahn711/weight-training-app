@@ -1,8 +1,10 @@
 name: App
 
-# Separate from the test workflow because it needs a matching Xcode and a
-# simulator SDK, which move faster than the runner images do. Failing here means
-# the app target broke, not that the domain did.
+# Separate from the test workflow because it needs a matching Xcode, and that
+# pins it to a specific runner image: macos-15 ships Xcode 16.4, where TrendsView
+# fails to compile because Swift Charts lacks the result builder it uses. The
+# domain suite has no such constraint, so keeping them apart means a runner image
+# lagging reads as "the app needs a newer Xcode" rather than "the domain broke".
 on:
   push:
     branches: [main]
@@ -19,6 +21,7 @@ concurrency:
 jobs:
   build:
     name: Build for simulator
+    # Xcode 26.6 — the app target needs it (see above).
     runs-on: macos-26
 
     steps:
