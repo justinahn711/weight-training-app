@@ -1,0 +1,40 @@
+name: App
+
+# Separate from the test workflow because it needs a matching Xcode and a
+# simulator SDK, which move faster than the runner images do. Failing here means
+# the app target broke, not that the domain did.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'ChickenBreast/**'
+      - 'Sources/**'
+      - '.github/workflows/app.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build for simulator
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      # No signing: a simulator build doesn't need it, and CI has no
+      # certificates. Device signing is verified locally, where the entitlements
+      # can be checked against a real profile.
+      - name: Build app and widget
+        run: |
+          xcodebuild \
+            -project ChickenBreast/ChickenBreast.xcodeproj \
+            -scheme ChickenBreast \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
