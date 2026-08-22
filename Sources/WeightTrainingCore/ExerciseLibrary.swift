@@ -16,6 +16,17 @@ public enum ExerciseLibrary {
     /// Every seeded lift, in the order a session tends to run.
     public static let all: [Exercise] = push + pull + legs
 
+    /// Whether this lift came from the catalogue rather than from the person
+    /// using the app (#76).
+    ///
+    /// Identity is enough to tell them apart, so nothing needs storing: seeded
+    /// ids are fixed literals and a created lift gets a fresh UUID. That also
+    /// means a created lift is invisible to seeding, which only ever inserts
+    /// catalogue ids — so deleting one stays deleted without a tombstone (#72).
+    public static func isSeeded(_ id: UUID) -> Bool { seededIDs.contains(id) }
+
+    private static let seededIDs: Set<UUID> = Set(all.map(\.id))
+
     // MARK: - Push
 
     public static let push: [Exercise] = [

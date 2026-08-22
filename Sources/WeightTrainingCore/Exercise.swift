@@ -27,6 +27,20 @@ public enum Equipment: String, Codable, CaseIterable, Sendable {
         self == .barbell || self == .plateLoaded
     }
 }
+public extension Equipment {
+    /// How it's described when someone is choosing one (#76).
+    var displayName: String {
+        switch self {
+        case .barbell:      return "Barbell"
+        case .dumbbell:     return "Dumbbell"
+        case .machineStack: return "Machine stack"
+        case .cable:        return "Cable"
+        case .plateLoaded:  return "Plate-loaded"
+        case .bodyweight:   return "Bodyweight"
+        }
+    }
+}
+
 
 /// A movement, together with everything needed to prescribe and score it.
 ///

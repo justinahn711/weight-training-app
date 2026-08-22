@@ -119,6 +119,10 @@ struct SessionView: View {
                 onPick: { exercise in
                     model.swap(to: exercise)
                     isSwapping = false
+                },
+                onCreate: { exercise in
+                    model.createAndSwap(to: exercise)
+                    isSwapping = false
                 }
             )
         }
@@ -406,8 +410,10 @@ private struct SwapSheet: View {
     let candidates: [Exercise]
     let search: (String) -> [Exercise]
     let onPick: (Exercise) -> Void
+    let onCreate: (Exercise) -> Void
 
     @State private var query = ""
+    @State private var isCreating = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -428,8 +434,17 @@ private struct SwapSheet: View {
                 Section("All exercises") {
                     let results = search(query)
                     if results.isEmpty {
-                        Text("Nothing matches “\(query)”")
-                            .foregroundStyle(.secondary)
+                        // Not finding it is exactly when you'd want to add it,
+                        // so the offer belongs here rather than behind a
+                        // toolbar button somewhere else (#76).
+                        Button {
+                            isCreating = true
+                        } label: {
+                            Label(
+                                query.isEmpty ? "Add an exercise" : "Add “\(query)”",
+                                systemImage: "plus.circle.fill"
+                            )
+                        }
                     } else {
                         ForEach(results) { exercise in
                             row(exercise)
@@ -438,6 +453,12 @@ private struct SwapSheet: View {
                 }
             }
             .searchable(text: $query, prompt: "Search exercises")
+            .sheet(isPresented: $isCreating) {
+                NewExerciseView(initialName: query) { exercise in
+                    onCreate(exercise)
+                    dismiss()
+                }
+            }
             .navigationTitle("Swap exercise")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

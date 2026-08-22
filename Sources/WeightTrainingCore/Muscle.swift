@@ -41,6 +41,16 @@ public enum Muscle: String, Codable, CaseIterable, Sendable {
 /// Only primary movers count as full hard sets in the volume guard; secondary
 /// involvement counts as a half set. Without this split, a push day full of
 /// pressing would report triceps volume that vastly overstates direct work.
+public extension Muscle {
+    /// `Rear delts` — for anywhere a person reads it rather than a machine.
+    var displayName: String {
+        let spaced = rawValue.replacingOccurrences(
+            of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression
+        ).lowercased()
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
+    }
+}
+
 public enum MuscleRole: String, Codable, Sendable {
     case primary
     case secondary
