@@ -29,7 +29,11 @@ enum SpokenNumber {
     /// - Returns: nil when the words contain no number at all.
     static func parse(_ words: [String]) -> Double? {
         var total: Double?
-        var index = 0
+        // Skip anything before the first number rather than giving up at it.
+        // A leading word is fatal otherwise — "log 185" parsed as nothing at
+        // all, losing the weight, while the trailing "185 pounds" was fine.
+        // People say "log", "okay", "set", and recognisers prepend strays.
+        var index = words.firstIndex { single($0) != nil } ?? words.count
 
         while index < words.count {
             let word = words[index]
@@ -50,6 +54,15 @@ enum SpokenNumber {
             }
 
             if let running = total {
+                // A transcribed numeral after a complete number is a separate
+                // number, not more of this one: "185 8 8" is a weight and two
+                // other things, never 201. The exception is hundreds shorthand
+                // — "one 85" is 185 — which shows up as a round hundred with a
+                // smaller numeral behind it.
+                let isDigits = Double(word) != nil
+                let isHundredsShorthand = running.truncatingRemainder(dividingBy: 100) == 0
+                    && value < 100
+                if isDigits && !isHundredsShorthand { break }
                 total = running + value
             } else if value < 10,
                       index + 1 < words.count,

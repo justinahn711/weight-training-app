@@ -300,6 +300,17 @@ struct SessionView: View {
                 onIncrement: { model.adjustLoad(by: 1) }
             )
 
+            // Building a weight the way it's built in the gym (#77). Only for
+            // apparatus that has been measured, since a running total on an
+            // unknown bar would be a guess presented as a number.
+            if !model.plateOptions.isEmpty {
+                PlateRow(
+                    plates: model.plateOptions,
+                    onAdd: { model.addPlate($0) },
+                    onClear: { model.clearToBar() }
+                )
+            }
+
             ChoiceRow(
                 caption: "Reps",
                 values: model.repChoices,
@@ -670,12 +681,102 @@ private struct RestBanner: View {
 /// keyboard never appears mid-set (#4). Stepping by the increment also means
 /// the control can only produce loads the equipment can actually make — a
 /// dumbbell rack has no 67.5, so the UI shouldn't offer one.
+
+/// Plates, as you'd pick them up (#77).
+///
+/// One tap per plate rather than one per increment: reaching 185 from an empty
+/// bar is a 45 and a 25, not twenty-eight nudges. Each tap adds the plate to
+/// every sleeve, because that's how a bar is loaded — a 45 on a two-sleeve
+/// barbell is 90 lb.
+private struct PlateRow: View {
+    let plates: [Double]
+    let onAdd: (Double) -> Void
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Add plates")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            HStack(spacing: 8) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(plates, id: \.self) { plate in
+                            Button { onAdd(plate) } label: {
+                                Text(label(plate))
+                                    .font(.callout.weight(.semibold).monospacedDigit())
+                                    // Sized for chalky hands, like the stepper.
+                                    .frame(minWidth: 54, minHeight: 44)
+                                    .background(.fill.tertiary,
+                                                in: RoundedRectangle(cornerRadius: 10))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+
+                // Pinned outside the scroll. Adding is only fast if starting
+                // over is too, and a reset you have to scroll to find is a
+                // reset you don't use — it was off the right edge entirely
+                // until a screenshot showed it.
+                Button(action: onClear) {
+                    Text("Bar")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 54, minHeight: 44)
+                        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func label(_ plate: Double) -> String {
+        plate == plate.rounded()
+            ? String(format: "%.0f", plate)
+            : String(format: "%.1f", plate)
+    }
+}
+
+/// Repeats a step while a button is held, speeding up as it goes (#77).
+///
+/// Starts slow enough that a held button doesn't overshoot on a short move, and
+/// ends fast enough that crossing a hundred pounds isn't a wait.
+@MainActor
+@Observable
+private final class StepRepeater {
+    private var task: Task<Void, Never>?
+
+    func start(_ step: @escaping () -> Void) {
+        stop()
+        task = Task {
+            var delay: UInt64 = 220_000_000
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled else { return }
+                step()
+                delay = max(60_000_000, delay - 30_000_000)
+            }
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+    }
+}
+
 private struct WeightStepper: View {
     let load: Load
     let increment: LoadIncrement
     let plates: String?
     let onDecrement: () -> Void
     let onIncrement: () -> Void
+
+    @State private var repeater = StepRepeater()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -707,6 +808,11 @@ private struct WeightStepper: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Held rather than tapped twenty-eight times (#77). Accelerates, so a
+        // long move is quick and a short one is still controllable.
+        .onLongPressGesture(minimumDuration: 0.4, pressing: { isPressing in
+            if isPressing { repeater.start(action) } else { repeater.stop() }
+        }, perform: {})
     }
 }
 

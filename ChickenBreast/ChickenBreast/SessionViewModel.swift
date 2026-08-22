@@ -162,6 +162,37 @@ final class SessionViewModel {
         pendingLoad = max(exercise.minimumLoad, Load(next))
     }
 
+    /// Adds one plate per sleeve, the way it goes on the bar (#77).
+    ///
+    /// A 45 on a two-sleeve barbell is 90 lb, not 45. Stepping there by the
+    /// increment takes twenty-eight taps to reach a working weight; this takes
+    /// the number of plates you'd actually pick up.
+    func addPlate(_ pounds: Double) {
+        guard let exercise = current?.exercise, let loading = exercise.loading else { return }
+        pendingLoad = Load(pendingLoad.pounds + pounds * Double(loading.sleeves))
+    }
+
+    /// Back to the empty apparatus, to build a weight up from scratch.
+    ///
+    /// The other half of plate entry: adding is fast only if starting over is
+    /// too, otherwise a mistake means stepping all the way back down.
+    func clearToBar() {
+        guard let exercise = current?.exercise, let loading = exercise.loading,
+              loading.isMeasured else { return }
+        pendingLoad = loading.minimumLoad
+    }
+
+    /// The plates worth offering for this lift, heaviest first.
+    ///
+    /// Empty unless the apparatus has been measured (#39) — without a base
+    /// weight the app doesn't know what the plates are being added to, and a
+    /// running total built on an unknown bar would be a guess presented as a
+    /// number.
+    var plateOptions: [Double] {
+        guard let loading = current?.exercise.loading, loading.isMeasured else { return [] }
+        return loading.availablePlates.sorted(by: >)
+    }
+
     func adjustReps(by delta: Int) {
         pendingReps = max(1, pendingReps + delta)
     }
