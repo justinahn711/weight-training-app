@@ -22,14 +22,41 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
     /// T-bar row.
     public var sleeves: Int
 
-    /// Plate sizes available in the gym, in pounds.
+    /// Plate sizes available in the gym, expressed in `unit`.
     public var availablePlates: [Double]
 
-    public init(baseWeight: Load?, sleeves: Int, availablePlates: [Double] = LoadingStyle.standardPlates) {
+    /// The unit this rack is marked in (#67).
+    ///
+    /// Plate math happens in this unit, never in the canonical pounds. A kg
+    /// gym's plates converted to pounds are 55.11, 44.09, 33.07… whose only
+    /// common divisor is a rounding artefact, and the reachability search
+    /// solves in units of that shared step — so converting would take a 200-
+    /// state problem and make it a 50,000-state one, blow the cap, and report
+    /// that a loadable weight cannot be built. Staying native keeps the
+    /// arithmetic exact and cheap in both worlds.
+    public var unit: MassUnit
+
+    public init(
+        baseWeight: Load?,
+        sleeves: Int,
+        availablePlates: [Double]? = nil,
+        unit: MassUnit = .pounds
+    ) {
         precondition(sleeves > 0, "an apparatus with no sleeves cannot be loaded")
         self.baseWeight = baseWeight
         self.sleeves = sleeves
-        self.availablePlates = availablePlates
+        self.unit = unit
+        self.availablePlates = availablePlates ?? unit.standardPlates
+    }
+
+    /// Rows written before #67 carry no unit and are pounds by definition.
+    /// This is what lets the change land without migrating anything.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.baseWeight = try container.decodeIfPresent(Load.self, forKey: .baseWeight)
+        self.sleeves = try container.decode(Int.self, forKey: .sleeves)
+        self.availablePlates = try container.decode([Double].self, forKey: .availablePlates)
+        self.unit = try container.decodeIfPresent(MassUnit.self, forKey: .unit) ?? .pounds
     }
 
     /// Plate sizes down to 2.5s, which are what make 5 lb barbell jumps
@@ -39,13 +66,18 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
     /// A 45 lb Olympic bar, plates on both sleeves.
     public static let olympicBarbell = LoadingStyle(baseWeight: Load(45), sleeves: 2)
 
+    /// The standard bar in a given world: 45 lb here, 20 kg elsewhere.
+    public static func standardBarbell(in unit: MassUnit) -> LoadingStyle {
+        LoadingStyle(baseWeight: unit.standardBar, sleeves: 2, unit: unit)
+    }
+
     /// A machine whose empty weight hasn't been measured yet.
     ///
     /// Loading still works — you can log what you lifted — but no plate
     /// breakdown is offered, because the app doesn't know what the number
     /// includes.
-    public static func unmeasuredMachine(sleeves: Int) -> LoadingStyle {
-        LoadingStyle(baseWeight: nil, sleeves: sleeves)
+    public static func unmeasuredMachine(sleeves: Int, unit: MassUnit = .pounds) -> LoadingStyle {
+        LoadingStyle(baseWeight: nil, sleeves: sleeves, unit: unit)
     }
 
     /// Whether a plate breakdown can honestly be produced.
@@ -64,11 +96,12 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
     /// loadable weight unbuildable is worse than no config at all.
     public func breakdown(for load: Load) -> PlateBreakdown? {
         guard let base = baseWeight, load >= base else { return nil }
-        let perSleeve = (load.pounds - base.pounds) / Double(sleeves)
+        // In the rack's own unit, not the canonical pounds — see `unit`.
+        let perSleeve = (load.value(in: unit) - base.value(in: unit)) / Double(sleeves)
         guard let counts = Self.plates(making: perSleeve, from: availablePlates) else {
             return nil
         }
-        return PlateBreakdown(bar: base, perSide: counts, sleeves: sleeves)
+        return PlateBreakdown(bar: base, perSide: counts, sleeves: sleeves, unit: unit)
     }
 
     /// Whether a load can be built exactly.
@@ -90,7 +123,8 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
         guard let base = baseWeight else { return load }
         guard load > base else { return base }
 
-        let perSleeve = (load.pounds - base.pounds) / Double(sleeves)
+        let baseNative = base.value(in: unit)
+        let perSleeve = (load.value(in: unit) - baseNative) / Double(sleeves)
         let reachable = Self.reachable(upTo: perSleeve + (availablePlates.max() ?? 0),
                                        from: availablePlates)
         guard !reachable.isEmpty else { return base }
@@ -100,22 +134,26 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
             let da = abs(a - target), db = abs(b - target)
             return da == db ? a < b : da < db
         }
-        return Load(base.pounds + Double(best ?? 0) / 100 * Double(sleeves))
+        return Load(baseNative + Double(best ?? 0) / 100 * Double(sleeves), unit)
     }
 
     // MARK: - Plate reachability
 
-    /// Pounds as hundredths, so plate arithmetic is exact integer work rather
-    /// than a pile of floating-point tolerances.
-    private static func cents(_ pounds: Double) -> Int {
-        Int((pounds * 100).rounded())
+    /// A plate value as hundredths of its own unit, so plate arithmetic is
+    /// exact integer work rather than a pile of floating-point tolerances.
+    ///
+    /// Hundredths is fine enough for both worlds — the smallest plate anyone
+    /// racks is 1.25 — and rounding here is also what absorbs the float dust a
+    /// pounds round trip leaves on a kg value.
+    private static func cents(_ value: Double) -> Int {
+        Int((value * 100).rounded())
     }
 
     /// The largest step every plate is a whole number of.
     ///
     /// Reachability is solved in these units rather than hundredths, which is
-    /// what keeps it cheap: the standard set shares a 2.5 lb step, so a 500 lb
-    /// sleeve is 200 states instead of 50,000. `nearestAchievable` sits on the
+    /// what keeps it cheap: the standard sets share a 2.5 lb / 1.25 kg step, so
+    /// a 500 lb sleeve is 200 states instead of 50,000. `nearestAchievable` sits on the
     /// progression engine's hot path and cannot afford the dense version.
     private static func step(of sizes: [Int]) -> Int {
         sizes.reduce(0) { gcd($0, $1) }

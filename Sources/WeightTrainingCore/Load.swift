@@ -1,6 +1,6 @@
 import Foundation
 
-/// A weight in pounds, as it would be said out loud.
+/// A weight, canonically in pounds, as it would be said out loud.
 ///
 /// The unit is deliberately *not* uniform across equipment, because lifters
 /// aren't either:
@@ -22,6 +22,24 @@ public struct Load: Hashable, Codable, Comparable, Sendable {
 
     public init(_ pounds: Double) {
         self.pounds = pounds
+    }
+
+    /// A weight given in whatever unit the lifter is working in (#67).
+    ///
+    /// Pounds stay canonical on the way in, so a load means the same thing
+    /// forever regardless of which unit was selected when it was logged.
+    public init(_ value: Double, _ unit: MassUnit) {
+        self.pounds = unit.pounds(from: value)
+    }
+
+    /// This weight, in the given unit.
+    public func value(in unit: MassUnit) -> Double {
+        unit.value(fromPounds: pounds)
+    }
+
+    /// `225 lb`, `102.5 kg`.
+    public func formatted(in unit: MassUnit) -> String {
+        unit.format(pounds: pounds)
     }
 
     public static let zero = Load(0)
@@ -49,12 +67,14 @@ extension Load: ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral {
 }
 
 extension Load: CustomStringConvertible {
-    /// Renders without a trailing `.0`, since most loads are whole numbers and
-    /// the session screen is read at arm's length.
+    /// Renders in pounds, without a trailing `.0`.
+    ///
+    /// Anything a lifter reads should go through `formatted(in:)` with the
+    /// unit they chose. This stays pound-only and is for debugging and tests,
+    /// where a fixed unit is the point — a description that shifted with a
+    /// setting would make failures read differently depending on state.
     public var description: String {
-        pounds == pounds.rounded()
-            ? String(format: "%.0f lb", pounds)
-            : String(format: "%.1f lb", pounds)
+        MassUnit.pounds.format(pounds: pounds)
     }
 }
 
@@ -67,11 +87,29 @@ extension Load: CustomStringConvertible {
 /// often 10 or 15 lb on a 100 lb setting. Both are far too coarse for "add
 /// weight when you hit your reps" to be a workable rule on its own.
 public struct LoadIncrement: Hashable, Codable, Sendable {
-    /// Smallest change in pounds, in the exercise's own units — the whole bar
+    /// Smallest change in pounds, in the exercise's own terms — the whole bar
     /// for a barbell, one hand for dumbbells.
     public var pounds: Double
 
+    /// The unit this increment is really expressed in (#67).
+    ///
+    /// Carried rather than derived because increments don't convert: a rack
+    /// that steps by 2.5 kg steps by 2.5 kg, and rendering that as the 5.51 lb
+    /// it converts to would describe a rack nobody has. The canonical value
+    /// stays in pounds so the arithmetic is uniform; this is what it gets
+    /// rendered and snapped in.
+    public var unit: MassUnit
+
     public init(pounds: Double) {
+        self.init(pounds: pounds, unit: .pounds)
+    }
+
+    /// An increment in the unit the equipment is actually marked in.
+    public init(_ value: Double, _ unit: MassUnit) {
+        self.init(pounds: unit.pounds(from: value), unit: unit)
+    }
+
+    public init(pounds: Double, unit: MassUnit) {
         // A zero or negative increment turns snapping into a no-op and makes
         // every load look achievable, which silently disables the guard that
         // stops the app proposing unbuildable weights. The #20 flow lets a
@@ -79,6 +117,25 @@ public struct LoadIncrement: Hashable, Codable, Sendable {
         // rather than merely discouraged.
         precondition(pounds > 0, "load increment must be positive, got \(pounds)")
         self.pounds = pounds
+        self.unit = unit
+    }
+
+    /// The step as it's marked on the equipment: `5` lb, `2.5` kg.
+    public var nativeValue: Double {
+        unit.value(fromPounds: pounds)
+    }
+
+    /// `5 lb`, `2.5 kg`.
+    public var formatted: String {
+        unit.format(pounds: pounds)
+    }
+
+    /// Rows written before #67 carry no unit and are pounds by definition,
+    /// which is also what makes this change need no migration.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.pounds = try container.decode(Double.self, forKey: .pounds)
+        self.unit = try container.decodeIfPresent(MassUnit.self, forKey: .unit) ?? .pounds
     }
 
     /// Barbell with 2.5 lb plates available: 2.5 per side.
