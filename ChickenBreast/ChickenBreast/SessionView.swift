@@ -625,6 +625,10 @@ private struct RestBanner: View {
     let rest: RestTimer
     let onSkip: () -> Void
 
+    @AppStorage(RestAlertSettings.timingKey) private var showsTiming = true
+
+    /// What the buzz did, once it has done it. See `RestAlertReport`.
+    @State private var report: RestAlertReport?
 
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
@@ -650,6 +654,12 @@ private struct RestBanner: View {
                         .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(done ? Color.green : Color.primary)
                         .contentTransition(.numericText())
+
+                    if showsTiming, let report {
+                        Text(report.line)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
                 }
 
                 Spacer()
@@ -674,18 +684,93 @@ private struct RestBanner: View {
         // Keyed by the set, so it re-arms for the next rest and cancels when a
         // set is undone or the rest is skipped — the view goes away with it.
         .task(id: rest.setID) {
-            let remaining = rest.endsAt.timeIntervalSinceNow
-            guard remaining > 0 else { return }
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
-            guard !Task.isCancelled else { return }
+            let deadline = rest.endsAt
+            guard deadline.timeIntervalSinceNow > 0 else { return }
+
+            // Two sleeps rather than one, because a single long `Task.sleep`
+            // is allowed to drift. The runtime gives a timer of that length a
+            // tolerance measured in seconds and lets the system coalesce it
+            // with whatever else it was already waking for — power well spent
+            // almost everywhere except here, where arriving seconds late is
+            // the entire complaint. A rest is minutes long, which is minutes
+            // for that drift to accumulate in.
+            //
+            // So: sleep coarsely to a second out, where drift costs nothing
+            // because nothing is waiting on it, then close the last second
+            // with `tolerance: .zero` — short enough that the system honours
+            // it rather than folding it into the next convenient wake.
+            let coarse = deadline.timeIntervalSinceNow - 1
+            if coarse > 0 {
+                try? await Task.sleep(for: .seconds(coarse))
+                guard !Task.isCancelled else { return }
+            }
+            let fine = deadline.timeIntervalSinceNow
+            if fine > 0 {
+                try? await Task.sleep(for: .seconds(fine), tolerance: .zero)
+                guard !Task.isCancelled else { return }
+            }
 
             // Backgrounding suspends this, so on return the sleep finishes
             // immediately and would buzz for a rest that ended ten minutes ago
             // — after the notification already said so. Only fire if it's
             // actually just happened.
-            guard rest.overrun(at: Date()) < 5 else { return }
-            RestAlert.buzz()
+            //
+            // The near misses get recorded rather than dropped, because a buzz
+            // held back for being six seconds late and a buzz that arrives six
+            // seconds late are the same thing from the bench, and this line is
+            // the only thing that can tell them apart.
+            let lateness = Date().timeIntervalSince(deadline)
+            guard lateness < 5 else {
+                report = RestAlertReport(lateness: lateness, call: nil, held: true)
+                return
+            }
+
+            // Posted before the buzz and again after it, so the line shows
+            // the lateness immediately and fills in the vibration time when
+            // the system reports back — a buzz that never completes leaves the
+            // ellipsis up, which is itself the answer.
+            let began = ContinuousClock.now
+            report = RestAlertReport(lateness: lateness, call: nil, held: false)
+            await RestAlert.buzz()
+            report = RestAlertReport(
+                lateness: lateness,
+                call: ContinuousClock.now - began,
+                held: false
+            )
         }
+    }
+}
+
+/// What the buzz actually did, rendered where it can be read off the phone.
+///
+/// #69 took four rounds because no build, test or log could distinguish a
+/// haptic that didn't fire from one that fired and wasn't felt — they are
+/// identical from the Mac and obvious from the bench. What broke the loop was
+/// putting the attempt on screen. This is the same trick pointed at what's
+/// left: the buzz is arriving, so the question is now how late, and whether
+/// the lateness is in the timer or in the vibration call itself.
+///
+/// `+0.03s · motor 380 ms` is the alert working. A large `+` is the timer
+/// drifting; a large `motor` is the vibration path itself stalling, which
+/// would be a different fix. Turn it off in Settings once it reads right.
+private struct RestAlertReport {
+
+    /// How far past the target the buzz went out.
+    let lateness: TimeInterval
+
+    /// How long the vibration took, or `nil` before the system has said.
+    let call: Duration?
+
+    /// Whether the buzz was suppressed for arriving too late to mean anything.
+    let held: Bool
+
+    var line: String {
+        let late = String(format: "%+.2fs", lateness)
+        if held { return "buzz held back \(late)" }
+        guard let call else { return "buzz \(late) · motor …" }
+        let milliseconds = Double(call.components.seconds) * 1000
+            + Double(call.components.attoseconds) / 1e15
+        return String(format: "buzz %@ · motor %.0f ms", late, milliseconds)
     }
 }
 
@@ -698,8 +783,21 @@ private struct RestBanner: View {
 /// `.success` tap is built for a phone in your hand and this one is face-up on
 /// a bench two feet away. The signal wasn't broken, it was too polite.
 enum RestAlert {
-    static func buzz() {
-        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+
+    /// Buzzes, and returns when the system says the vibration is done.
+    ///
+    /// The plain `AudioServicesPlaySystemSound` returns long before the motor
+    /// has moved — it hands the request to another process and comes straight
+    /// back — so timing that call measures the handoff and nothing else. The
+    /// completion form is the only handle on how long the vibration path
+    /// actually took, which is the half of the lateness the timer can't
+    /// explain.
+    static func buzz() async {
+        await withCheckedContinuation { continuation in
+            AudioServicesPlaySystemSoundWithCompletion(kSystemSoundID_Vibrate) {
+                continuation.resume()
+            }
+        }
     }
 }
 

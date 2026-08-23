@@ -36,17 +36,20 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
         // This method only runs while the app is in the foreground, and a rest
         // can only be running with the session on screen — leaving it ends the
         // session and cancels the alert. So reaching here for a rest means the
-        // banner is up and about to buzz, and the alert has nothing to add.
+        // banner is up and the phone is about to buzz.
         //
-        // Letting both through is worse than either alone: they land on the
-        // same instant, the system's alert takes the vibration motor first, and
-        // the buzz queues up behind it. It reads as the app telling you twice
-        // and being late the second time.
+        // Which makes the *sound* the part that has to go, not the whole
+        // notification. Letting both channels arrive with sound was worse than
+        // either alone: they land on the same instant, the system's alert takes
+        // the vibration motor first, and the buzz queues up behind it — it read
+        // as the app telling you twice and being late the second time. Dropping
+        // `.sound` leaves the two channels doing different jobs, the buzz
+        // tactile and the banner visual, with nothing to contend over.
         //
         // Away from the phone this method is never called and the notification
         // does the whole job, which is the split that was intended all along.
         if notification.request.identifier == RestNotification.identifier {
-            completionHandler([])
+            completionHandler([.banner, .list])
             return
         }
         completionHandler([.banner, .sound, .list])

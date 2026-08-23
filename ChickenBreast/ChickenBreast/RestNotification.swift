@@ -31,6 +31,14 @@ enum RestNotification {
     ///   measured in minutes — unlike the weekly digest, whose findings would
     ///   be stale by the time it arrived.
     static func schedule(for rest: RestTimer, exercise: String, next: String?) async {
+        // Turned off in Settings means no notification and no authorization
+        // prompt — asking for permission to do something the lifter has
+        // already declined is how an app trains someone to say no.
+        guard RestAlertSettings.notificationEnabled else {
+            cancel()
+            return
+        }
+
         let center = UNUserNotificationCenter.current()
         guard let granted = try? await center.requestAuthorization(options: [.alert, .sound]),
               granted else { return }
