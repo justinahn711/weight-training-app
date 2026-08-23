@@ -3,6 +3,7 @@
 //  ChickenBreast
 //
 
+import AudioToolbox
 import SwiftUI
 import UIKit
 import WeightTrainingCore
@@ -624,9 +625,10 @@ private struct RestBanner: View {
     let rest: RestTimer
     let onSkip: () -> Void
 
-    /// Which rest has already been announced, so the tap fires once and
-    /// re-arms for the next set rather than buzzing every second afterwards.
-    @State private var buzzedFor: UUID?
+    @AppStorage(RestAlertSettings.timingKey) private var showsTiming = true
+
+    /// What the buzz did, once it has done it. See `RestAlertReport`.
+    @State private var report: RestAlertReport?
 
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
@@ -652,6 +654,12 @@ private struct RestBanner: View {
                         .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(done ? Color.green : Color.primary)
                         .contentTransition(.numericText())
+
+                    if showsTiming, let report {
+                        Text(report.line)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
                 }
 
                 Spacer()
@@ -660,17 +668,152 @@ private struct RestBanner: View {
                     .font(.body.weight(.semibold))
                     .buttonStyle(.bordered)
             }
-            .onChange(of: done) { _, isDone in
-                // On screen a notification is suppressed by the system anyway,
-                // and a banner over your own session would be noise — the tap
-                // is the whole message (#69).
-                guard isDone, buzzedFor != rest.setID else { return }
-                buzzedFor = rest.setID
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            }
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
             .background(.fill.tertiary)
+        }
+        // Waits for the clock rather than watching the view.
+        //
+        // This was an `onChange` on the countdown inside the TimelineView, and
+        // it never fired: that closure is rebuilt every tick, so the change
+        // detection compares against state in a subtree that keeps being
+        // reconstructed. It compiled, read correctly, and did nothing — which
+        // is why the buzz was missing on a phone with notifications on and the
+        // session on screen (#69).
+        //
+        // Keyed by the set, so it re-arms for the next rest and cancels when a
+        // set is undone or the rest is skipped — the view goes away with it.
+        .task(id: rest.setID) {
+            let deadline = rest.endsAt
+            guard deadline.timeIntervalSinceNow > 0 else { return }
+
+            // Halve the wait, repeatedly, rather than sleeping to the
+            // deadline in one go.
+            //
+            // A long `Task.sleep` drifts late: the system takes a leeway
+            // proportional to the interval and coalesces the wake with
+            // whatever else it was already doing. Measured on the phone, a
+            // 179-second sleep came back 5.6 seconds past its mark — about 3%,
+            // and the whole of the complaint.
+            //
+            // Sleeping *near* the deadline and correcting the last second
+            // doesn't survive that, which is what the first attempt at this
+            // did: drift only runs one way, so an overshoot lands past the
+            // deadline and eats the correction window before it can be used.
+            // The margin has to be proportional too.
+            //
+            // So each pass sleeps half of what's left. Overshoot can only
+            // carry past the deadline if the leeway exceeds 100% of the
+            // interval, which is a different bug entirely — and the tolerance
+            // is pinned at zero besides, so this holds whether or not the
+            // system honours that. It converges in about ten wakes across a
+            // three-minute rest, which is nothing.
+            while true {
+                let remaining = deadline.timeIntervalSinceNow
+                guard remaining > 0 else { break }
+                // Under a second there's no margin worth reserving, and
+                // halving forever would never arrive.
+                let step = remaining > 1 ? remaining / 2 : remaining
+                try? await Task.sleep(for: .seconds(step), tolerance: .zero)
+                guard !Task.isCancelled else { return }
+            }
+
+            // Backgrounding suspends this, so on return the loop exits
+            // immediately and would buzz for a rest that ended ten minutes ago
+            // — after the notification already said so. Only fire if it's
+            // actually just happened.
+            //
+            // Ten seconds rather than five. Five was close enough to the drift
+            // being fixed here that a buzz measured at +4.65s passed by a
+            // third of a second, and the failure is asymmetric: a late buzz is
+            // worse than an on-time one, but silence is worse than both, and
+            // the case this guard exists for is minutes out, not seconds.
+            //
+            // The near misses get recorded rather than dropped, because a buzz
+            // held back for being six seconds late and a buzz that arrives six
+            // seconds late are the same thing from the bench, and this line is
+            // the only thing that can tell them apart.
+            let lateness = Date().timeIntervalSince(deadline)
+            guard lateness < 10 else {
+                report = RestAlertReport(lateness: lateness, call: nil, held: true)
+                return
+            }
+
+            // Posted before the buzz and again after it, so the line shows
+            // the lateness immediately and fills in the vibration time when
+            // the system reports back — a buzz that never completes leaves the
+            // ellipsis up, which is itself the answer.
+            let began = ContinuousClock.now
+            report = RestAlertReport(lateness: lateness, call: nil, held: false)
+            await RestAlert.buzz()
+            report = RestAlertReport(
+                lateness: lateness,
+                call: ContinuousClock.now - began,
+                held: false
+            )
+        }
+    }
+}
+
+/// What the buzz actually did, rendered where it can be read off the phone.
+///
+/// #69 took four rounds because no build, test or log could distinguish a
+/// haptic that didn't fire from one that fired and wasn't felt — they are
+/// identical from the Mac and obvious from the bench. What broke the loop was
+/// putting the attempt on screen. This is the same trick pointed at what's
+/// left: the buzz is arriving, so the question is now how late, and whether
+/// the lateness is in the timer or in the vibration call itself.
+///
+/// `+0.00s · motor 564 ms` is the alert working, measured on the phone once
+/// the timer drift was fixed. Both halves are now known-good baselines: a
+/// large `+` is the wait drifting again, a large `motor` is the vibration path
+/// stalling, and those are different bugs with different fixes. A large `+` is the timer
+/// drifting; a large `motor` is the vibration path itself stalling, which
+/// would be a different fix. Turn it off in Settings once it reads right.
+private struct RestAlertReport {
+
+    /// How far past the target the buzz went out.
+    let lateness: TimeInterval
+
+    /// How long the vibration took, or `nil` before the system has said.
+    let call: Duration?
+
+    /// Whether the buzz was suppressed for arriving too late to mean anything.
+    let held: Bool
+
+    var line: String {
+        let late = String(format: "%+.2fs", lateness)
+        if held { return "buzz held back \(late)" }
+        guard let call else { return "buzz \(late) · motor …" }
+        let milliseconds = Double(call.components.seconds) * 1000
+            + Double(call.components.attoseconds) / 1e15
+        return String(format: "buzz %@ · motor %.0f ms", late, milliseconds)
+    }
+}
+
+/// The buzz that says rest is over, when the session is being watched.
+///
+/// A full vibration rather than a taptic tap, which is a deliberate step down
+/// in refinement. `UINotificationFeedbackGenerator` turned out to be firing
+/// correctly the whole time — tracing the attempt on screen showed it reaching
+/// the call, on time, every rest — and it still went unnoticed, because a
+/// `.success` tap is built for a phone in your hand and this one is face-up on
+/// a bench two feet away. The signal wasn't broken, it was too polite.
+enum RestAlert {
+
+    /// Buzzes, and returns when the system says the vibration is done.
+    ///
+    /// The plain `AudioServicesPlaySystemSound` returns long before the motor
+    /// has moved — it hands the request to another process and comes straight
+    /// back — so timing that call measures the handoff and nothing else. The
+    /// completion form is the only handle on how long the vibration path
+    /// actually took, which is the half of the lateness the timer can't
+    /// explain.
+    static func buzz() async {
+        await withCheckedContinuation { continuation in
+            AudioServicesPlaySystemSoundWithCompletion(kSystemSoundID_Vibrate) {
+                continuation.resume()
+            }
         }
     }
 }

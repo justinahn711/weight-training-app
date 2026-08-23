@@ -29,6 +29,7 @@ struct ContentView: View {
     @State private var readiness: Readiness?
     @State private var days: [TrainingDay] = []
     @State private var showingHistory = false
+    @State private var showingSettings = false
 
     var body: some View {
         NavigationStack {
@@ -54,6 +55,9 @@ struct ContentView: View {
                     Button("Volume", systemImage: "chart.bar") { showingVolume = true }
                         .disabled(volume == nil)
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Settings", systemImage: "gearshape") { showingSettings = true }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("History", systemImage: "calendar") { showingHistory = true }
                         .disabled(days.isEmpty)
@@ -63,6 +67,9 @@ struct ContentView: View {
                 if let volume {
                     VolumeView(report: volume)
                 }
+            }
+            .navigationDestination(isPresented: $showingSettings) {
+                SettingsView()
             }
             .navigationDestination(isPresented: $showingTrends) {
                 TrendsView(trends: trends)

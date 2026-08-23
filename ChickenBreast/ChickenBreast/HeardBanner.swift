@@ -20,6 +20,10 @@ struct HeardBanner: View {
     let onCommit: () -> Void
     let onCancel: () -> Void
 
+    /// Retained for the same reason as the rest banner's: a generator made
+    /// inline is gone before the engine has started.
+    @State private var haptics = UIImpactFeedbackGenerator(style: .medium)
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
@@ -71,7 +75,7 @@ struct HeardBanner: View {
         .onAppear {
             // A tap you can feel, so the phone can stay in your pocket-adjacent
             // spot on the bench rather than being watched.
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            haptics.impactOccurred()
         }
     }
 
