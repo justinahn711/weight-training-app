@@ -33,9 +33,22 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler:
             @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        // A banner over your own session was called noise once, and it would be
-        // — if the haptic worked. It doesn't, and a set you didn't start is
-        // louder than a banner you did.
+        // This method only runs while the app is in the foreground, and a rest
+        // can only be running with the session on screen — leaving it ends the
+        // session and cancels the alert. So reaching here for a rest means the
+        // banner is up and about to buzz, and the alert has nothing to add.
+        //
+        // Letting both through is worse than either alone: they land on the
+        // same instant, the system's alert takes the vibration motor first, and
+        // the buzz queues up behind it. It reads as the app telling you twice
+        // and being late the second time.
+        //
+        // Away from the phone this method is never called and the notification
+        // does the whole job, which is the split that was intended all along.
+        if notification.request.identifier == RestNotification.identifier {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound, .list])
     }
 }

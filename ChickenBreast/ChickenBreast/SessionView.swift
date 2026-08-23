@@ -3,7 +3,6 @@
 //  ChickenBreast
 //
 
-import AVFoundation
 import AudioToolbox
 import SwiftUI
 import UIKit
@@ -626,19 +625,6 @@ private struct RestBanner: View {
     let rest: RestTimer
     let onSkip: () -> Void
 
-    /// Held rather than made at the moment of use.
-    ///
-    /// A generator built inline is released the instant the call returns, and
-    /// the Taptic Engine is asked to start from cold by an object that no
-    /// longer exists. Keeping one for the life of the banner is what the API
-    /// asks for, and it's what makes `prepare()` mean anything.
-    @State private var haptics = UINotificationFeedbackGenerator()
-
-    /// TEMPORARY, for #69. A haptic that doesn't fire reports nothing — no
-    /// error, no return value — so three fixes have shipped green and changed
-    /// nothing on the phone. This puts the attempt on screen where it can be
-    /// read without a Mac attached. Delete once the cause is known.
-    @State private var trace: [String] = []
 
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
@@ -664,12 +650,6 @@ private struct RestBanner: View {
                         .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(done ? Color.green : Color.primary)
                         .contentTransition(.numericText())
-
-                    if !trace.isEmpty {
-                        Text(trace.joined(separator: " · "))
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                    }
                 }
 
                 Spacer()
@@ -694,66 +674,32 @@ private struct RestBanner: View {
         // Keyed by the set, so it re-arms for the next rest and cancels when a
         // set is undone or the rest is skipped — the view goes away with it.
         .task(id: rest.setID) {
-            guard rest.endsAt.timeIntervalSinceNow > 0 else { return }
-            note("armed")
-
-            // Wake the Taptic Engine just before it's needed, not at the end.
-            //
-            // A rest is the one stretch where nobody touches the phone, so by
-            // the time the clock runs out the engine has been idle for two or
-            // three minutes and a request arriving cold is dropped rather than
-            // queued. `prepare()` holds it ready for a moment, which is why
-            // this sleeps to the last second or two first and then again to
-            // the target.
-            await sleep(until: rest.endsAt.addingTimeInterval(-Self.warmup))
-            guard !Task.isCancelled else { return }
-            haptics.prepare()
-            note("warm")
-
-            await sleep(until: rest.endsAt)
+            let remaining = rest.endsAt.timeIntervalSinceNow
+            guard remaining > 0 else { return }
+            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
             guard !Task.isCancelled else { return }
 
             // Backgrounding suspends this, so on return the sleep finishes
             // immediately and would buzz for a rest that ended ten minutes ago
             // — after the notification already said so. Only fire if it's
             // actually just happened.
-            let overrun = rest.overrun(at: Date())
-            guard overrun < 5 else {
-                note("late+\(Int(overrun))")
-                return
-            }
-
-            // The two conditions that make the call a silent no-op, recorded at
-            // the moment of the call rather than assumed.
-            let category = AVAudioSession.sharedInstance().category == .record
-            let saving = ProcessInfo.processInfo.isLowPowerModeEnabled
-            note("fire\(category ? " rec" : "")\(saving ? " lpm" : "")")
-
-            haptics.notificationOccurred(.success)
-
-            // A second channel, deliberately cruder. If this one is felt and
-            // the generator above isn't, the fault is `UIFeedbackGenerator`
-            // rather than anything about when the code runs.
-            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
-            note("done")
+            guard rest.overrun(at: Date()) < 5 else { return }
+            RestAlert.buzz()
         }
     }
+}
 
-    /// Appends to the on-screen trace. TEMPORARY, with `trace`.
-    @MainActor
-    private func note(_ step: String) {
-        trace.append(step)
-        trace = trace.suffix(6)
-    }
-
-    /// How long before the target the engine is warmed. `prepare()` only holds
-    /// for a short window, so this is deliberately close to the end.
-    private static let warmup: TimeInterval = 2
-
-    private func sleep(until date: Date) async {
-        let seconds = date.timeIntervalSinceNow
-        guard seconds > 0 else { return }
-        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+/// The buzz that says rest is over, when the session is being watched.
+///
+/// A full vibration rather than a taptic tap, which is a deliberate step down
+/// in refinement. `UINotificationFeedbackGenerator` turned out to be firing
+/// correctly the whole time — tracing the attempt on screen showed it reaching
+/// the call, on time, every rest — and it still went unnoticed, because a
+/// `.success` tap is built for a phone in your hand and this one is face-up on
+/// a bench two feet away. The signal wasn't broken, it was too polite.
+enum RestAlert {
+    static func buzz() {
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
     }
 }
 
