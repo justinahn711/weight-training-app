@@ -142,6 +142,8 @@ final class VoiceRecognizer {
         request = nil
         task = nil
         if case .listening = state { state = .idle }
+        // Hand the session back. See `deactivateAudioSession`.
+        deactivateAudioSession()
     }
 
     /// Clears the last understood command once it's been acted on, so it can't
@@ -157,5 +159,25 @@ final class VoiceRecognizer {
         // stopping it to log a set is its own kind of rude.
         try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+    }
+
+    /// Gives the audio session back when the microphone stops.
+    ///
+    /// Stopping the engine is not the same as releasing the session, and
+    /// holding a `.record` session has a consequence that isn't visible
+    /// anywhere: iOS mutes the Taptic Engine while an app is set up to record,
+    /// so the microphone doesn't pick up its own buzzing. The effect is that
+    /// one tap on the mic silently disables every haptic in the app for the
+    /// rest of the launch — including the one that says rest is over (#69),
+    /// which is the whole message when the session is on screen and the
+    /// notification is suppressed.
+    ///
+    /// It also leaves the lifter's music ducked for a session that ended.
+    private func deactivateAudioSession() {
+        // Throws if IO hasn't finished winding down. The engine is already
+        // stopped by the time this runs, and a session that outlives one stop
+        // is released by the next one.
+        try? AVAudioSession.sharedInstance()
+            .setActive(false, options: .notifyOthersOnDeactivation)
     }
 }

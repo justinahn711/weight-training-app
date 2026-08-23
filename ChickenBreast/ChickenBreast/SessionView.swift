@@ -624,6 +624,13 @@ private struct RestBanner: View {
     let rest: RestTimer
     let onSkip: () -> Void
 
+    /// Held rather than made at the moment of use.
+    ///
+    /// A generator built inline is released the instant the call returns, and
+    /// the Taptic Engine is asked to start from cold by an object that no
+    /// longer exists. Keeping one for the life of the banner is what the API
+    /// asks for, and it's what makes `prepare()` mean anything.
+    @State private var haptics = UINotificationFeedbackGenerator()
 
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
@@ -673,9 +680,21 @@ private struct RestBanner: View {
         // Keyed by the set, so it re-arms for the next rest and cancels when a
         // set is undone or the rest is skipped — the view goes away with it.
         .task(id: rest.setID) {
-            let remaining = rest.endsAt.timeIntervalSinceNow
-            guard remaining > 0 else { return }
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            guard rest.endsAt.timeIntervalSinceNow > 0 else { return }
+
+            // Wake the Taptic Engine just before it's needed, not at the end.
+            //
+            // A rest is the one stretch where nobody touches the phone, so by
+            // the time the clock runs out the engine has been idle for two or
+            // three minutes and a request arriving cold is dropped rather than
+            // queued. `prepare()` holds it ready for a moment, which is why
+            // this sleeps to the last second or two first and then again to
+            // the target.
+            await sleep(until: rest.endsAt.addingTimeInterval(-Self.warmup))
+            guard !Task.isCancelled else { return }
+            haptics.prepare()
+
+            await sleep(until: rest.endsAt)
             guard !Task.isCancelled else { return }
 
             // Backgrounding suspends this, so on return the sleep finishes
@@ -683,8 +702,18 @@ private struct RestBanner: View {
             // — after the notification already said so. Only fire if it's
             // actually just happened.
             guard rest.overrun(at: Date()) < 5 else { return }
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            haptics.notificationOccurred(.success)
         }
+    }
+
+    /// How long before the target the engine is warmed. `prepare()` only holds
+    /// for a short window, so this is deliberately close to the end.
+    private static let warmup: TimeInterval = 2
+
+    private func sleep(until date: Date) async {
+        let seconds = date.timeIntervalSinceNow
+        guard seconds > 0 else { return }
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 }
 
