@@ -3,6 +3,8 @@
 //  ChickenBreast
 //
 
+import AVFoundation
+import AudioToolbox
 import SwiftUI
 import UIKit
 import WeightTrainingCore
@@ -632,6 +634,12 @@ private struct RestBanner: View {
     /// asks for, and it's what makes `prepare()` mean anything.
     @State private var haptics = UINotificationFeedbackGenerator()
 
+    /// TEMPORARY, for #69. A haptic that doesn't fire reports nothing — no
+    /// error, no return value — so three fixes have shipped green and changed
+    /// nothing on the phone. This puts the attempt on screen where it can be
+    /// read without a Mac attached. Delete once the cause is known.
+    @State private var trace: [String] = []
+
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
             let done = rest.isComplete(at: context.date)
@@ -656,6 +664,12 @@ private struct RestBanner: View {
                         .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(done ? Color.green : Color.primary)
                         .contentTransition(.numericText())
+
+                    if !trace.isEmpty {
+                        Text(trace.joined(separator: " · "))
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Spacer()
@@ -681,6 +695,7 @@ private struct RestBanner: View {
         // set is undone or the rest is skipped — the view goes away with it.
         .task(id: rest.setID) {
             guard rest.endsAt.timeIntervalSinceNow > 0 else { return }
+            note("armed")
 
             // Wake the Taptic Engine just before it's needed, not at the end.
             //
@@ -693,6 +708,7 @@ private struct RestBanner: View {
             await sleep(until: rest.endsAt.addingTimeInterval(-Self.warmup))
             guard !Task.isCancelled else { return }
             haptics.prepare()
+            note("warm")
 
             await sleep(until: rest.endsAt)
             guard !Task.isCancelled else { return }
@@ -701,9 +717,33 @@ private struct RestBanner: View {
             // immediately and would buzz for a rest that ended ten minutes ago
             // — after the notification already said so. Only fire if it's
             // actually just happened.
-            guard rest.overrun(at: Date()) < 5 else { return }
+            let overrun = rest.overrun(at: Date())
+            guard overrun < 5 else {
+                note("late+\(Int(overrun))")
+                return
+            }
+
+            // The two conditions that make the call a silent no-op, recorded at
+            // the moment of the call rather than assumed.
+            let category = AVAudioSession.sharedInstance().category == .record
+            let saving = ProcessInfo.processInfo.isLowPowerModeEnabled
+            note("fire\(category ? " rec" : "")\(saving ? " lpm" : "")")
+
             haptics.notificationOccurred(.success)
+
+            // A second channel, deliberately cruder. If this one is felt and
+            // the generator above isn't, the fault is `UIFeedbackGenerator`
+            // rather than anything about when the code runs.
+            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+            note("done")
         }
+    }
+
+    /// Appends to the on-screen trace. TEMPORARY, with `trace`.
+    @MainActor
+    private func note(_ step: String) {
+        trace.append(step)
+        trace = trace.suffix(6)
     }
 
     /// How long before the target the engine is warmed. `prepare()` only holds
