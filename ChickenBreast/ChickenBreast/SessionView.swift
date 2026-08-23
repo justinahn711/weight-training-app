@@ -687,40 +687,54 @@ private struct RestBanner: View {
             let deadline = rest.endsAt
             guard deadline.timeIntervalSinceNow > 0 else { return }
 
-            // Two sleeps rather than one, because a single long `Task.sleep`
-            // is allowed to drift. The runtime gives a timer of that length a
-            // tolerance measured in seconds and lets the system coalesce it
-            // with whatever else it was already waking for — power well spent
-            // almost everywhere except here, where arriving seconds late is
-            // the entire complaint. A rest is minutes long, which is minutes
-            // for that drift to accumulate in.
+            // Halve the wait, repeatedly, rather than sleeping to the
+            // deadline in one go.
             //
-            // So: sleep coarsely to a second out, where drift costs nothing
-            // because nothing is waiting on it, then close the last second
-            // with `tolerance: .zero` — short enough that the system honours
-            // it rather than folding it into the next convenient wake.
-            let coarse = deadline.timeIntervalSinceNow - 1
-            if coarse > 0 {
-                try? await Task.sleep(for: .seconds(coarse))
-                guard !Task.isCancelled else { return }
-            }
-            let fine = deadline.timeIntervalSinceNow
-            if fine > 0 {
-                try? await Task.sleep(for: .seconds(fine), tolerance: .zero)
+            // A long `Task.sleep` drifts late: the system takes a leeway
+            // proportional to the interval and coalesces the wake with
+            // whatever else it was already doing. Measured on the phone, a
+            // 179-second sleep came back 5.6 seconds past its mark — about 3%,
+            // and the whole of the complaint.
+            //
+            // Sleeping *near* the deadline and correcting the last second
+            // doesn't survive that, which is what the first attempt at this
+            // did: drift only runs one way, so an overshoot lands past the
+            // deadline and eats the correction window before it can be used.
+            // The margin has to be proportional too.
+            //
+            // So each pass sleeps half of what's left. Overshoot can only
+            // carry past the deadline if the leeway exceeds 100% of the
+            // interval, which is a different bug entirely — and the tolerance
+            // is pinned at zero besides, so this holds whether or not the
+            // system honours that. It converges in about ten wakes across a
+            // three-minute rest, which is nothing.
+            while true {
+                let remaining = deadline.timeIntervalSinceNow
+                guard remaining > 0 else { break }
+                // Under a second there's no margin worth reserving, and
+                // halving forever would never arrive.
+                let step = remaining > 1 ? remaining / 2 : remaining
+                try? await Task.sleep(for: .seconds(step), tolerance: .zero)
                 guard !Task.isCancelled else { return }
             }
 
-            // Backgrounding suspends this, so on return the sleep finishes
+            // Backgrounding suspends this, so on return the loop exits
             // immediately and would buzz for a rest that ended ten minutes ago
             // — after the notification already said so. Only fire if it's
             // actually just happened.
+            //
+            // Ten seconds rather than five. Five was close enough to the drift
+            // being fixed here that a buzz measured at +4.65s passed by a
+            // third of a second, and the failure is asymmetric: a late buzz is
+            // worse than an on-time one, but silence is worse than both, and
+            // the case this guard exists for is minutes out, not seconds.
             //
             // The near misses get recorded rather than dropped, because a buzz
             // held back for being six seconds late and a buzz that arrives six
             // seconds late are the same thing from the bench, and this line is
             // the only thing that can tell them apart.
             let lateness = Date().timeIntervalSince(deadline)
-            guard lateness < 5 else {
+            guard lateness < 10 else {
                 report = RestAlertReport(lateness: lateness, call: nil, held: true)
                 return
             }
@@ -750,7 +764,8 @@ private struct RestBanner: View {
 /// left: the buzz is arriving, so the question is now how late, and whether
 /// the lateness is in the timer or in the vibration call itself.
 ///
-/// `+0.03s · motor 380 ms` is the alert working. A large `+` is the timer
+/// `+0.03s · motor 566 ms` is the alert working — that motor figure is
+/// measured and normal, so a healthy line differs only in the `+`. A large `+` is the timer
 /// drifting; a large `motor` is the vibration path itself stalling, which
 /// would be a different fix. Turn it off in Settings once it reads right.
 private struct RestAlertReport {
