@@ -764,8 +764,10 @@ private struct RestBanner: View {
 /// left: the buzz is arriving, so the question is now how late, and whether
 /// the lateness is in the timer or in the vibration call itself.
 ///
-/// `+0.03s · motor 566 ms` is the alert working — that motor figure is
-/// measured and normal, so a healthy line differs only in the `+`. A large `+` is the timer
+/// `+0.00s · motor 564 ms` is the alert working, measured on the phone once
+/// the timer drift was fixed. Both halves are now known-good baselines: a
+/// large `+` is the wait drifting again, a large `motor` is the vibration path
+/// stalling, and those are different bugs with different fixes. A large `+` is the timer
 /// drifting; a large `motor` is the vibration path itself stalling, which
 /// would be a different fix. Turn it off in Settings once it reads right.
 private struct RestAlertReport {

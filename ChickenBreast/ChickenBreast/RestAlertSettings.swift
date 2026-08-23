@@ -25,9 +25,13 @@ enum RestAlertSettings {
     static let timingKey = "rest-alert-timing"
 
     /// Both default on. The notification is the channel that survives the
-    /// phone being away, which is the case #69 exists for; the timing readout
-    /// is on because the lateness it measures is still being chased, and it
-    /// costs one line of caption text to leave visible.
+    /// phone being away, which is the case #69 exists for.
+    ///
+    /// The timing readout stays on now that it reads `+0.00s`, because it cost
+    /// four rounds to learn that this alert has no other way of telling the
+    /// truth about itself — a line of caption text is a cheap regression test
+    /// for the one bug class no build can catch. Switch it off in Settings
+    /// once watching it stops being interesting.
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             notificationKey: true,
