@@ -624,9 +624,6 @@ private struct RestBanner: View {
     let rest: RestTimer
     let onSkip: () -> Void
 
-    /// Which rest has already been announced, so the tap fires once and
-    /// re-arms for the next set rather than buzzing every second afterwards.
-    @State private var buzzedFor: UUID?
 
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
@@ -660,17 +657,33 @@ private struct RestBanner: View {
                     .font(.body.weight(.semibold))
                     .buttonStyle(.bordered)
             }
-            .onChange(of: done) { _, isDone in
-                // On screen a notification is suppressed by the system anyway,
-                // and a banner over your own session would be noise — the tap
-                // is the whole message (#69).
-                guard isDone, buzzedFor != rest.setID else { return }
-                buzzedFor = rest.setID
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            }
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
             .background(.fill.tertiary)
+        }
+        // Waits for the clock rather than watching the view.
+        //
+        // This was an `onChange` on the countdown inside the TimelineView, and
+        // it never fired: that closure is rebuilt every tick, so the change
+        // detection compares against state in a subtree that keeps being
+        // reconstructed. It compiled, read correctly, and did nothing — which
+        // is why the buzz was missing on a phone with notifications on and the
+        // session on screen (#69).
+        //
+        // Keyed by the set, so it re-arms for the next rest and cancels when a
+        // set is undone or the rest is skipped — the view goes away with it.
+        .task(id: rest.setID) {
+            let remaining = rest.endsAt.timeIntervalSinceNow
+            guard remaining > 0 else { return }
+            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+
+            // Backgrounding suspends this, so on return the sleep finishes
+            // immediately and would buzz for a rest that ended ten minutes ago
+            // — after the notification already said so. Only fire if it's
+            // actually just happened.
+            guard rest.overrun(at: Date()) < 5 else { return }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
     }
 }
