@@ -36,17 +36,29 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
     /// arithmetic exact and cheap in both worlds.
     public var unit: MassUnit
 
+    /// Whether this lift just uses whatever the gym has, or was given a rack of
+    /// its own (#73).
+    ///
+    /// True means the plates and unit are the gym's to change, and a new plate
+    /// set propagates here without being asked. False means somebody sat down
+    /// and described this apparatus specifically — a rack with no 35s, a
+    /// machine that only takes 25s — and a gym-level change must not quietly
+    /// undo that.
+    public var usesGymRack: Bool
+
     public init(
         baseWeight: Load?,
         sleeves: Int,
         availablePlates: [Double]? = nil,
-        unit: MassUnit = .pounds
+        unit: MassUnit = .pounds,
+        usesGymRack: Bool = true
     ) {
         precondition(sleeves > 0, "an apparatus with no sleeves cannot be loaded")
         self.baseWeight = baseWeight
         self.sleeves = sleeves
         self.unit = unit
         self.availablePlates = availablePlates ?? unit.standardPlates
+        self.usesGymRack = usesGymRack
     }
 
     /// Rows written before #67 carry no unit and are pounds by definition.
@@ -57,6 +69,15 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
         self.sleeves = try container.decode(Int.self, forKey: .sleeves)
         self.availablePlates = try container.decode([Double].self, forKey: .availablePlates)
         self.unit = try container.decodeIfPresent(MassUnit.self, forKey: .unit) ?? .pounds
+
+        // Rows written before #73 recorded no opinion either, so it has to be
+        // inferred — and the safe direction is to assume anything unusual was
+        // deliberate. A row holding the plain pound rack is indistinguishable
+        // from never having been configured and follows the gym; a row holding
+        // anything else was customised by someone and is left alone.
+        self.usesGymRack =
+            try container.decodeIfPresent(Bool.self, forKey: .usesGymRack)
+            ?? (self.availablePlates == MassUnit.pounds.standardPlates)
     }
 
     /// Plate sizes down to 2.5s, which are what make 5 lb barbell jumps

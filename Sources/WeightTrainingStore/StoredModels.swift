@@ -68,6 +68,15 @@ public final class StoredExercise {
     public var name: String = ""
     public var equipmentRaw: String = Equipment.barbell.rawValue
     public var incrementPounds: Double = LoadIncrement.barbell.pounds
+
+    /// What unit the increment is really marked in (#67).
+    ///
+    /// The magnitude stays in pounds like every other stored weight; this is
+    /// only how it gets rendered and stepped. Without it a 2.5 kg stack comes
+    /// back from disk as 5.51 lb and the app starts proposing weights the pin
+    /// cannot make. Rows written before #67 have no value here and default to
+    /// pounds, which is what they were.
+    public var incrementUnitRaw: String = MassUnit.pounds.rawValue
     public var needsWarmupRamp: Bool = false
 
     /// JSON `[MuscleInvolvement]`.
@@ -86,6 +95,7 @@ public final class StoredExercise {
         self.name = exercise.name
         self.equipmentRaw = exercise.equipment.rawValue
         self.incrementPounds = exercise.increment.pounds
+        self.incrementUnitRaw = exercise.increment.unit.rawValue
         self.needsWarmupRamp = exercise.needsWarmupRamp
         self.musclesData = encoded(exercise.muscles)
         self.progressionRuleData = encoded(exercise.progressionRule)
@@ -98,6 +108,7 @@ public final class StoredExercise {
         name = exercise.name
         equipmentRaw = exercise.equipment.rawValue
         incrementPounds = exercise.increment.pounds
+        incrementUnitRaw = exercise.increment.unit.rawValue
         needsWarmupRamp = exercise.needsWarmupRamp
         musclesData = encoded(exercise.muscles)
         progressionRuleData = encoded(exercise.progressionRule)
@@ -111,7 +122,10 @@ public final class StoredExercise {
                 name: name,
                 muscles: try decoded([MuscleInvolvement].self, from: musclesData),
                 equipment: Equipment(rawValue: equipmentRaw) ?? .barbell,
-                increment: LoadIncrement(pounds: incrementPounds),
+                increment: LoadIncrement(
+                    pounds: incrementPounds,
+                    unit: MassUnit(rawValue: incrementUnitRaw) ?? .pounds
+                ),
                 progressionRule: try decoded(ProgressionRule.self, from: progressionRuleData),
                 needsWarmupRamp: needsWarmupRamp,
                 // Empty means "not plate-loaded", which is different from
@@ -296,6 +310,65 @@ public final class StoredBodyweight {
     }
 }
 
+// MARK: - Gym
+
+/// The lifter's gym: unit, plate rack, bar (#73, #67).
+///
+/// A single row, kept at a fixed id rather than "whichever one exists", so two
+/// devices that both write one before ever syncing produce the same identity
+/// and collapse into one in `deduplicate()` instead of leaving the app with two
+/// gyms and no way to choose. Unlike every other entity here, the duplicates
+/// genuinely conflict — each device has a different opinion about the rack — so
+/// the merge needs `updatedAt` to break the tie.
+@Model
+public final class StoredGymConfig {
+    /// The one row. There is exactly one gym until a gym picker exists (#73),
+    /// and pinning the id is what makes "exactly one" survive sync.
+    public static let singletonID = UUID(uuidString: "60F1D1E9-4E7C-4E3E-9D6C-2C1B7A9E5A01")!
+
+    public var id: UUID = StoredGymConfig.singletonID
+    public var unitRaw: String = MassUnit.pounds.rawValue
+    /// JSON `[Double]`, plate sizes in `unitRaw`.
+    public var platesData: Data = Data()
+    public var barPounds: Double = MassUnit.pounds.standardBar.pounds
+
+    /// When this was last written, used to settle a sync conflict.
+    public var updatedAt: Date = Date()
+
+    public init(_ config: GymConfig, updatedAt: Date = Date()) {
+        self.id = StoredGymConfig.singletonID
+        self.unitRaw = config.unit.rawValue
+        self.platesData = encoded(config.availablePlates)
+        self.barPounds = config.barWeight.pounds
+        self.updatedAt = updatedAt
+    }
+
+    public func update(from config: GymConfig, at date: Date = Date()) {
+        unitRaw = config.unit.rawValue
+        platesData = encoded(config.availablePlates)
+        barPounds = config.barWeight.pounds
+        updatedAt = date
+    }
+
+    public func toDomain() throws -> GymConfig {
+        let unit = MassUnit(rawValue: unitRaw) ?? .pounds
+        do {
+            return GymConfig(
+                unit: unit,
+                // Empty means a row written without plates rather than a gym
+                // with none, which is not a thing — fall back to the standard
+                // rack for the unit rather than to an unloadable bar.
+                availablePlates: platesData.isEmpty
+                    ? unit.standardPlates
+                    : try decoded([Double].self, from: platesData),
+                barWeight: Load(barPounds)
+            )
+        } catch {
+            throw StoreError.corruptRecord(entity: "GymConfig", id: id, underlying: error)
+        }
+    }
+}
+
 /// Every entity the app persists. Kept in one place so the container and any
 /// future migration plan can't drift apart.
 public enum TrainingSchema {
@@ -305,5 +378,6 @@ public enum TrainingSchema {
         StoredProgressState.self,
         StoredDayTemplate.self,
         StoredBodyweight.self,
+        StoredGymConfig.self,
     ]
 }
