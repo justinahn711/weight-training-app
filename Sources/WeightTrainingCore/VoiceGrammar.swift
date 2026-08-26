@@ -55,15 +55,29 @@ public enum VoiceGrammar {
     /// Words that mean an RPE follows.
     private static let rpeMarkers: Set<String> = ["at", "rpe", "@"]
 
-    public static func parse(_ transcript: String) -> VoiceParse? {
+    /// Spoken unit names, and what they mean (#67).
+    ///
+    /// Both worlds are always understood, whichever the gym is set to. Saying
+    /// the unit out loud is the one unambiguous way to mean it, and refusing to
+    /// hear "sixty kilos" because the app is in pounds would turn a clear
+    /// utterance into a 60 lb set.
+    private static let unitWords: [String: MassUnit] = [
+        "kg": .kilograms, "kgs": .kilograms, "kilo": .kilograms,
+        "kilos": .kilograms, "kilogram": .kilograms, "kilograms": .kilograms,
+        "lb": .pounds, "lbs": .pounds, "pound": .pounds, "pounds": .pounds,
+    ]
+
+    /// - Parameter unit: what an unqualified number means — the gym's unit.
+    ///   "sixty" in a metric gym is 60 kg; a spoken unit still overrides it.
+    public static func parse(_ transcript: String, in unit: MassUnit = .pounds) -> VoiceParse? {
         let words = tokenize(transcript)
         guard !words.isEmpty else { return nil }
 
         if let note = parseNote(words) { return note }
         if let simple = parseSimpleCommand(words) { return simple }
         if let timer = parseTimer(words) { return timer }
-        if let adjust = parseAdjustment(words) { return adjust }
-        return parseSet(words)
+        if let adjust = parseAdjustment(words, in: unit) { return adjust }
+        return parseSet(words, in: unit)
     }
 
     /// Reps a person actually performs. Beyond this it's a weight or a
@@ -92,6 +106,20 @@ public enum VoiceGrammar {
             .replacingOccurrences(of: "@", with: " at ")
             .components(separatedBy: CharacterSet(charactersIn: " ,.-"))
             .filter { !$0.isEmpty }
+            .flatMap(splittingUnitSuffix)
+    }
+
+    /// Dictation writes "60kg" as one token about as often as two, so a unit
+    /// stuck to the end of a number is peeled off rather than failing to parse.
+    private static func splittingUnitSuffix(_ word: String) -> [String] {
+        guard let firstLetter = word.firstIndex(where: { $0.isLetter }),
+              firstLetter != word.startIndex,
+              word[word.startIndex..<firstLetter].allSatisfy({ $0.isNumber || $0 == "." })
+        else { return [word] }
+
+        let suffix = String(word[firstLetter...])
+        guard unitWords[suffix] != nil else { return [word] }
+        return [String(word[word.startIndex..<firstLetter]), suffix]
     }
 
     // MARK: - Forms
@@ -130,7 +158,7 @@ public enum VoiceGrammar {
     }
 
     /// "add five", "drop ten", "up ten", "down five".
-    private static func parseAdjustment(_ words: [String]) -> VoiceParse? {
+    private static func parseAdjustment(_ words: [String], in unit: MassUnit) -> VoiceParse? {
         guard let first = words.first else { return nil }
         let direction: Double
         switch first {
@@ -139,17 +167,28 @@ public enum VoiceGrammar {
         default: return nil
         }
 
-        guard let amount = SpokenNumber.parse(Array(words.dropFirst())), amount > 0 else {
-            return nil
+        // "add five kilos" in a pound gym still means five kilos.
+        var rest = Array(words.dropFirst())
+        var spoken = unit
+        if let last = rest.last, let named = unitWords[last] {
+            spoken = named
+            rest.removeLast()
         }
-        return VoiceParse(command: .adjustLoad(by: Load(direction * amount)))
+
+        guard let amount = SpokenNumber.parse(rest), amount > 0 else { return nil }
+        return VoiceParse(command: .adjustLoad(by: Load(direction * amount, spoken)))
     }
 
     /// The main form: "one eighty five for five at eight", and its fragments.
-    private static func parseSet(_ words: [String]) -> VoiceParse? {
+    private static func parseSet(_ words: [String], in unit: MassUnit) -> VoiceParse? {
         var load: Double?
         var reps: Double?
         var rpe: Double?
+
+        /// What the load was said in. Starts as the gym's and is overridden the
+        /// moment a unit is spoken.
+        var loadUnit = unit
+        var namedUnit = false
 
         // Walk the phrase, letting each marker say which field the *next*
         // number belongs to. Markers come in two shapes and both are used:
@@ -173,6 +212,16 @@ public enum VoiceGrammar {
         }
 
         for word in words {
+            if let spoken = unitWords[word] {
+                // A unit ends the number it follows, and says what it meant.
+                // "reps" is checked first below, so "rep"/"lb" can't collide.
+                if expecting == .load {
+                    loadUnit = spoken
+                    namedUnit = true
+                    flush(into: .load)
+                }
+                continue
+            }
             if word == "reps" || word == "rep" {
                 // Trailing form: the number already said was the rep count.
                 if !pending.isEmpty, reps == nil {
@@ -200,11 +249,12 @@ public enum VoiceGrammar {
 
         // A bare number with no grammar around it is the ambiguous case: it
         // could be a weight, reps, or a misheard word. Shown, never committed.
-        let isBare = words.count == 1 && load != nil
+        // Naming the unit *is* grammar, so "sixty kilos" is not bare.
+        let isBare = words.count == 1 && load != nil && !namedUnit
 
         return VoiceParse(
             command: .logSet(
-                load: load.map { Load($0) },
+                load: load.map { Load($0, loadUnit) },
                 reps: reps.map { Int($0) },
                 rpe: rpe.flatMap { RPE($0) ?? RPE(snapping: $0) }
             ),
