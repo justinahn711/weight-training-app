@@ -298,7 +298,7 @@ struct DayDetailView: View {
                         Text(performed.exercise.name)
                         Spacer()
                         if let top = performed.topSet {
-                            Text("top \(top.load) × \(top.reps)")
+                            Text("top \(top.load.formatted(in: GymSettings.shared.unit)) × \(top.reps)")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -387,7 +387,11 @@ private struct EditSetView: View {
                     // can't produce a weight the equipment can't be set to
                     // (#20, #39).
                     Stepper(value: $pounds, in: 0...2000, step: exercise.increment.pounds) {
-                        LabeledContent("Weight", value: "\(format(pounds)) lb")
+                        // Stepped in pounds because that is what is stored, but
+                        // read in the unit the lifter uses (#67) — the step
+                        // itself is the equipment's own, so the numbers land
+                        // where the equipment does.
+                        LabeledContent("Weight", value: format(pounds))
                     }
                     Stepper(value: $reps, in: 1...50) {
                         LabeledContent("Reps", value: "\(reps)")
@@ -448,10 +452,8 @@ private struct EditSetView: View {
         }
     }
 
-    private func format(_ value: Double) -> String {
-        value == value.rounded()
-            ? String(format: "%.0f", value)
-            : String(format: "%.1f", value)
+    private func format(_ pounds: Double) -> String {
+        GymSettings.shared.unit.format(pounds: pounds)
     }
 }
 
@@ -460,7 +462,7 @@ private struct SetRow: View {
 
     var body: some View {
         HStack {
-            Text("\(set.load) × \(set.reps)")
+            Text("\(set.load.formatted(in: GymSettings.shared.unit)) × \(set.reps)")
                 .font(.body.monospacedDigit())
                 .foregroundStyle(set.isWarmup ? .secondary : .primary)
             if set.isWarmup {

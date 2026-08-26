@@ -252,6 +252,10 @@ extension TrainingStore {
                 since: calendar.date(byAdding: .day, value: -7, to: now) ?? now
             ),
             readiness: readiness,
+            // The store is the one place that knows the gym, so it is where
+            // the digest's unit comes from rather than a parameter every
+            // caller would have to remember (#67).
+            unit: try gymConfig().unit,
             now: now,
             calendar: calendar
         )

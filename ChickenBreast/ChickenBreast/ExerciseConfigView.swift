@@ -23,28 +23,48 @@ struct ExerciseConfigView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var incrementPounds: Double
+    /// Everything on this screen is typed and read in the unit the equipment
+    /// is marked in — the lift's own if it has one, otherwise the gym's (#67).
+    /// Correcting a machine means reading numbers off it, so the numbers here
+    /// have to be the ones printed on the machine.
+    private let unit: MassUnit
+
+    @State private var incrementValue: Double
     @State private var isMeasured: Bool
-    @State private var basePounds: Double
+    @State private var baseValue: Double
     @State private var sleeves: Int
     @State private var plates: Set<Double>
 
     /// Increments that actually occur: fractional plates, standard plates, and
-    /// the coarse steps machine stacks use.
-    private static let incrementChoices: [Double] = [2.5, 5, 10, 15, 20, 25]
+    /// the coarse steps machine stacks use. Chosen per world rather than
+    /// converted — a metric stack's notches are 2.5 and 5 kg, not 2.27.
+    private static func incrementChoices(in unit: MassUnit) -> [Double] {
+        unit == .pounds ? [2.5, 5, 10, 15, 20, 25] : [1.25, 2.5, 5, 7.5, 10, 15]
+    }
 
     /// Plate sizes worth offering. A gym either has a size or doesn't, so this
     /// is a set of toggles rather than a count of each.
-    private static let plateChoices: [Double] = [45, 35, 25, 15, 10, 5, 2.5, 1.25]
+    private static func plateChoices(in unit: MassUnit) -> [Double] {
+        unit == .pounds
+            ? [45, 35, 25, 15, 10, 5, 2.5, 1.25]
+            : [25, 20, 15, 10, 5, 2.5, 1.25]
+    }
 
     init(exercise: Exercise, onSave: @escaping (LoadIncrement, LoadingStyle?) -> Void) {
         self.exercise = exercise
         self.onSave = onSave
-        _incrementPounds = State(initialValue: exercise.increment.pounds)
+        let unit = exercise.loading?.unit ?? GymSettings.shared.unit
+        self.unit = unit
+        _incrementValue = State(initialValue: exercise.increment.nativeValue)
         _isMeasured = State(initialValue: exercise.loading?.isMeasured ?? false)
-        _basePounds = State(initialValue: exercise.loading?.baseWeight?.pounds ?? 45)
+        _baseValue = State(
+            initialValue: exercise.loading?.baseWeight?.value(in: unit)
+                ?? unit.standardBar.value(in: unit)
+        )
         _sleeves = State(initialValue: exercise.loading?.sleeves ?? 2)
-        _plates = State(initialValue: Set(exercise.loading?.availablePlates ?? LoadingStyle.standardPlates))
+        _plates = State(
+            initialValue: Set(exercise.loading?.availablePlates ?? unit.standardPlates)
+        )
     }
 
     /// Whether this lift is built from plates at all. A cable stack has no
@@ -57,10 +77,10 @@ struct ExerciseConfigView: View {
                 Section {
                     ChoiceRow(
                         caption: "Smallest change",
-                        values: Self.incrementChoices,
-                        isSelected: { $0 == incrementPounds },
-                        label: { Self.format($0) },
-                        onSelect: { incrementPounds = $0 }
+                        values: Self.incrementChoices(in: unit),
+                        isSelected: { $0 == incrementValue },
+                        label: { format($0) },
+                        onSelect: { incrementValue = $0 }
                     )
                 } header: {
                     Text("Increment")
@@ -77,11 +97,15 @@ struct ExerciseConfigView: View {
                             // under it: LabeledContent stacks multiple children,
                             // which reads as the number belonging to the next
                             // row down.
-                            Stepper(value: $basePounds, in: 0...200, step: 2.5) {
+                            Stepper(
+                                value: $baseValue,
+                                in: 0...(unit == .pounds ? 200 : 100),
+                                step: unit == .pounds ? 2.5 : 1.25
+                            ) {
                                 HStack {
                                     Text("Empty weight")
                                     Spacer(minLength: 12)
-                                    Text("\(Self.format(basePounds)) lb")
+                                    Text(format(baseValue, withSymbol: true))
                                         .monospacedDigit()
                                         .foregroundStyle(.secondary)
                                 }
@@ -103,9 +127,9 @@ struct ExerciseConfigView: View {
 
                     if isMeasured {
                         Section {
-                            ForEach(Self.plateChoices, id: \.self) { plate in
+                            ForEach(Self.plateChoices(in: unit), id: \.self) { plate in
                                 Toggle(isOn: binding(for: plate)) {
-                                    Text("\(Self.format(plate)) lb")
+                                    Text(format(plate, withSymbol: true))
                                 }
                             }
                         } header: {
@@ -142,24 +166,32 @@ struct ExerciseConfigView: View {
     }
 
     private func save() {
-        let increment = LoadIncrement(pounds: incrementPounds)
+        let increment = LoadIncrement(incrementValue, unit)
+        let chosen = plates.sorted(by: >)
         // Only plate-built lifts carry a loading style; nothing else has a base
         // weight to record, and inventing one would start rendering plate lines
         // for a cable stack.
         let loading: LoadingStyle? = isPlateBuilt
             ? LoadingStyle(
-                baseWeight: isMeasured ? Load(basePounds) : nil,
+                baseWeight: isMeasured ? Load(baseValue, unit) : nil,
                 sleeves: sleeves,
-                availablePlates: plates.sorted(by: >)
+                availablePlates: chosen,
+                unit: unit,
+                // Picking a rack that differs from the gym's is what makes this
+                // lift an exception, and exceptions are left alone when the gym
+                // changes (#73). Leaving it matching means it keeps following.
+                usesGymRack: chosen == GymSettings.shared.config.availablePlates
               )
             : nil
         onSave(increment, loading)
         dismiss()
     }
 
-    private static func format(_ pounds: Double) -> String {
-        pounds == pounds.rounded()
-            ? String(format: "%.0f", pounds)
-            : String(format: "%.1f", pounds)
+    /// A value already in `unit`, so this only tidies the decimal.
+    private func format(_ value: Double, withSymbol: Bool = false) -> String {
+        let number = value == value.rounded()
+            ? String(format: "%.0f", value)
+            : String(format: "%.1f", value)
+        return withSymbol ? "\(number) \(unit.symbol)" : number
     }
 }

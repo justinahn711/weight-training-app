@@ -13,6 +13,10 @@ import WeightTrainingCore
 /// Sized to be read at arm's length while resting, which is the whole design
 /// constraint — the phone is on a bench two feet away, not in your hand.
 struct SessionView: View {
+    /// The gym the app is rendering in, so a weight on this screen is in
+    /// the unit the lifter's rack is marked in (#67).
+    private var gym: GymSettings { .shared }
+
     @State var model: SessionViewModel
     @State private var isSwapping = false
     @State private var isConfiguring = false
@@ -184,20 +188,17 @@ struct SessionView: View {
     /// One line describing what the app currently assumes, so the button says
     /// what tapping it would change rather than just "Settings".
     private func configSummary(_ exercise: SessionExercise) -> String {
-        let step = exercise.exercise.increment.pounds
-        let stepText = step == step.rounded()
-            ? String(format: "%.0f", step)
-            : String(format: "%.1f", step)
+        // The increment is rendered in the unit it was marked in rather than
+        // the gym's, because that is what it means: a stack measured at 15 lb
+        // is a 15 lb stack even in a gym that has since gone metric (#67).
+        let stepText = exercise.exercise.increment.formatted
         guard let loading = exercise.exercise.loading else {
-            return "Steps of \(stepText) lb"
+            return "Steps of \(stepText)"
         }
         guard let base = loading.baseWeight else {
-            return "Steps of \(stepText) lb · not weighed"
+            return "Steps of \(stepText) · not weighed"
         }
-        let baseText = base.pounds == base.pounds.rounded()
-            ? String(format: "%.0f", base.pounds)
-            : String(format: "%.1f", base.pounds)
-        return "Steps of \(stepText) lb · empty \(baseText) lb"
+        return "Steps of \(stepText) · empty \(base.formatted(in: loading.unit))"
     }
 
     private func context(_ exercise: SessionExercise) -> some View {
@@ -209,7 +210,7 @@ struct SessionView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
-                Text(exercise.prescription.displayLine)
+                Text(exercise.prescription.displayLine(in: gym.unit))
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(exercise.prescription.isColdStart ? .secondary : .primary)
             }
@@ -219,7 +220,7 @@ struct SessionView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
-                Text(exercise.lastPerformance?.displayLine ?? "No history yet")
+                Text(exercise.lastPerformance?.displayLine(in: gym.unit) ?? "No history yet")
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
@@ -364,6 +365,8 @@ struct SessionView: View {
 /// One logged set. Warmups are visually demoted — they're kept in the same list
 /// so the day reads in document order, but they never count.
 private struct SetRow: View {
+    private var gym: GymSettings { .shared }
+
     let number: Int
     let set: SetRecord
 
@@ -374,7 +377,7 @@ private struct SetRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 22, alignment: .trailing)
 
-            Text("\(set.load) × \(set.reps)")
+            Text("\(set.load.formatted(in: gym.unit)) × \(set.reps)")
                 .font(.title3.weight(.medium).monospacedDigit())
 
             Spacer()
@@ -495,6 +498,8 @@ private struct SwapSheet: View {
 /// Styled as an outline rather than a filled control on purpose: it must not
 /// read as the primary action. The blue button below is what logs a set.
 private struct SuggestionChip: View {
+    private var gym: GymSettings { .shared }
+
     let suggestion: Suggestion
     let onAccept: () -> Void
     let onDismiss: () -> Void
@@ -503,7 +508,7 @@ private struct SuggestionChip: View {
         HStack(spacing: 10) {
             Button(action: onAccept) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(suggestion.title)
+                    Text(suggestion.title(in: gym.unit))
                         .font(.subheadline.weight(.semibold))
                     Text(suggestion.reason)
                         .font(.caption2)
@@ -541,6 +546,8 @@ private struct SuggestionChip: View {
 /// is tappable and logs exactly what it shows, so ramping never means dialling
 /// the stepper up and back down.
 private struct WarmupBlock: View {
+    private var gym: GymSettings { .shared }
+
     let ramp: [WarmupSet]
     @Binding var isExpanded: Bool
     let breakdown: (Load) -> PlateBreakdown?
@@ -584,7 +591,7 @@ private struct WarmupBlock: View {
                         onLog(rung)
                     } label: {
                         HStack(spacing: 12) {
-                            Text("\(rung.load) × \(rung.reps)")
+                            Text("\(rung.load.formatted(in: gym.unit)) × \(rung.reps)")
                                 .font(.body.weight(.medium).monospacedDigit())
                             if let plates = breakdown(rung.load)?.displayLine {
                                 Text(plates)
@@ -913,6 +920,8 @@ private final class StepRepeater {
 }
 
 private struct WeightStepper: View {
+    private var gym: GymSettings { .shared }
+
     let load: Load
     let increment: LoadIncrement
     let plates: String?
@@ -925,11 +934,11 @@ private struct WeightStepper: View {
         HStack(spacing: 0) {
             button("minus", action: onDecrement)
             VStack(spacing: 0) {
-                Text(load.description)
+                Text(load.formatted(in: gym.unit))
                     .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                Text(plates ?? "\(Load(increment.pounds)) steps")
+                Text(plates ?? "\(increment.formatted) steps")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

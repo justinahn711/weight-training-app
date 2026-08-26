@@ -109,7 +109,7 @@ final class SessionViewModel {
                 let name = current.exercise.name
                 let next = current.prescription.isColdStart
                     ? nil
-                    : current.prescription.displayLine
+                    : current.prescription.displayLine(in: GymSettings.shared.unit)
                 Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
             }
             publishActivity()
@@ -382,7 +382,7 @@ final class SessionViewModel {
         }
         let state = SessionActivityAttributes.ContentState(
             exerciseName: current.exercise.name,
-            targetLine: current.prescription.displayLine,
+            targetLine: current.prescription.displayLine(in: GymSettings.shared.unit),
             setsLogged: current.workingSets.count,
             exerciseID: current.exercise.id,
             targetPounds: current.prescription.load?.pounds,

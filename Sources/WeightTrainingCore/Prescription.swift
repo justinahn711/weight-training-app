@@ -40,9 +40,15 @@ public struct Prescription: Hashable, Sendable {
     }
 
     /// The target as one line, read at arm's length between sets.
-    public var displayLine: String {
+    ///
+    /// Pound-only, for tests and debugging. Anything a lifter reads goes
+    /// through `displayLine(in:)` with the unit their gym is marked in (#67).
+    public var displayLine: String { displayLine(in: .pounds) }
+
+    /// The target in the unit the lifter thinks in.
+    public func displayLine(in unit: MassUnit) -> String {
         guard let load else { return "First time — just log it" }
-        return "\(load) × \(reps) @ \(rpe)"
+        return "\(load.formatted(in: unit)) × \(reps) @ \(rpe)"
     }
 }
 
@@ -85,14 +91,18 @@ public struct LastPerformance: Hashable, Sendable {
     ///
     /// Load is stated once when every set used the same weight, which is the
     /// normal case for straight sets and keeps the line short.
-    public var displayLine: String {
+    public var displayLine: String { displayLine(in: .pounds) }
+
+    /// The same line, in the unit the lifter thinks in (#67).
+    public func displayLine(in unit: MassUnit) -> String {
         guard !sets.isEmpty else { return "—" }
         let reps = sets.map { String($0.reps) }.joined(separator: ", ")
         let loads = Set(sets.map(\.load))
         if loads.count == 1, let load = loads.first {
-            return "\(load) × \(reps)"
+            return "\(load.formatted(in: unit)) × \(reps)"
         }
-        return sets.map { "\($0.load) × \($0.reps)" }.joined(separator: ", ")
+        return sets.map { "\($0.load.formatted(in: unit)) × \($0.reps)" }
+            .joined(separator: ", ")
     }
 
     /// The heaviest working set, which is what progression actually turns on.

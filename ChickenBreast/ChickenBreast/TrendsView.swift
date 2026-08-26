@@ -51,7 +51,7 @@ private struct TrendRow: View {
                     Text(latest.e1RM.rounded.description)
                         .font(.title2.bold().monospacedDigit())
                 }
-                Text(trend.summary)
+                Text(trend.summary(in: GymSettings.shared.unit))
                     .font(.subheadline)
                     .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
             }
