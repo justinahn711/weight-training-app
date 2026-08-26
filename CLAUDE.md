@@ -82,8 +82,8 @@ same files.
 Drive it with `/standup` (what to work on), `/ship <issue>` (one issue to a
 gated draft PR), `/gate <pr>` (verify work that already exists).
 
-The gate that is actually enforced is `hooks/pre-push`. Wire it up once per
-clone and **once per worktree**:
+The gate that is actually enforced is `hooks/pre-push`. Wire it up once per clone —
+linked worktrees share `.git/config`, so that covers all of them:
 
 ```sh
 git config core.hooksPath hooks

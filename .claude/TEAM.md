@@ -103,7 +103,7 @@ Branch protection is unavailable here — private repo, free plan; the API
 returns 403. So the gate is local:
 
 ```sh
-git config core.hooksPath hooks     # once per clone and per worktree
+git config core.hooksPath hooks     # once per clone; covers every worktree
 ```
 
 `hooks/pre-push` runs the fast suite and the purity grep before anything

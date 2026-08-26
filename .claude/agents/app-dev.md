@@ -30,7 +30,7 @@ cd ~/"Weight training App"
 git fetch origin main
 git worktree add .claude/worktrees/<issue>-<slug> -b feat/<issue>-<slug> origin/main
 cd .claude/worktrees/<issue>-<slug>
-git config core.hooksPath hooks     # the pre-push gate; per worktree
+git config core.hooksPath hooks     # once per clone, not per worktree
 ```
 
 Never `git checkout` in the main tree — a sibling agent is probably working

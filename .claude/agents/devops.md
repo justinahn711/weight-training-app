@@ -56,15 +56,20 @@ returns 403 on both `/protection` and `/rulesets`. So the enforced gate is
 `hooks/pre-push`, which runs the fast suite and the purity grep before anything
 leaves the machine.
 
-It only works if it is wired up, and `core.hooksPath` is per-clone **and per
-worktree**:
+It only works if it is wired up:
 
 ```sh
 git config core.hooksPath hooks
 ```
 
-Every new worktree needs that line. If you see a push that should have been
-stopped, check this before suspecting the hook.
+**Once per clone, not per worktree.** Linked worktrees share `.git/config`, and
+the path is relative, so it resolves against each worktree's own top level —
+one setup, and every worktree runs the `hooks/` on the branch it has checked
+out. That is also why an older branch without a `hooks/` directory silently
+runs no hook rather than erroring, which is the one way this gate can be
+absent without announcing itself. If a push that should have been stopped went
+through, check `git config --get core.hooksPath` and whether `hooks/pre-push`
+exists on that branch before suspecting the hook's logic.
 
 `git push --no-verify` is denied in `.claude/settings.json` so an agent cannot
 route around the hook. If you are ever tempted to add an exception, the honest
