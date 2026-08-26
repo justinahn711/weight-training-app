@@ -120,3 +120,26 @@ final class GymConfigurationTests: XCTestCase {
         XCTAssertEqual(try store.gymConfig().unit, .kilograms)
     }
 }
+
+extension GymConfigurationTests {
+
+    /// A lift created in a metric gym starts metric, rather than showing a
+    /// 5 lb step until the next launch's reconcile catches up.
+    func testALiftCreatedInAMetricGymStartsMetric() throws {
+        try store.saveGymConfig(.standard(in: .kilograms))
+
+        let created = Exercise(
+            name: "Pendlay Row",
+            muscles: [.primary(.lats)],
+            equipment: .barbell,
+            progressionRule: .doubleProgression(range: RepRange(5, 8))
+        )
+        try store.create(created)
+
+        let read = try XCTUnwrap(try store.exercise(id: created.id))
+        XCTAssertEqual(read.increment.unit, .kilograms)
+        XCTAssertEqual(read.increment.nativeValue, 2.5, accuracy: 0.0001)
+        XCTAssertEqual(read.loading?.unit, .kilograms)
+        XCTAssertEqual(read.loading?.baseWeight?.value(in: .kilograms) ?? 0, 20, accuracy: 0.0001)
+    }
+}

@@ -109,14 +109,24 @@ struct NewExerciseView: View {
         var muscles: [MuscleInvolvement] = [.primary(primary)]
         muscles += secondary.sorted { $0.rawValue < $1.rawValue }.map { .secondary($0) }
 
-        onCreate(Exercise(
+        let created = Exercise(
             name: trimmedName,
             muscles: muscles,
             equipment: equipment,
             // Double progression, like nearly everything else in the library —
             // add reps until the top of the range, then add weight.
             progressionRule: .doubleProgression(range: repRange)
-        ))
+        )
+
+        // `Exercise` defaults to the pound world, because that is all its
+        // initialiser can know. A new lift belongs to the gym it was created
+        // in, and waiting for the next launch's reconcile to say so would show
+        // a 5 lb step on a metric rack in the meantime (#67, #73).
+        var racked = created
+        let gym = GymSettings.shared.config
+        racked.increment = gym.defaultIncrement(for: equipment)
+        racked.loading = created.loading.map { gym.applied(to: $0) }
+        onCreate(racked)
         dismiss()
     }
 }
