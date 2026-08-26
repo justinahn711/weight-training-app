@@ -42,6 +42,8 @@ struct TrendsView: View {
 }
 
 private struct TrendRow: View {
+    private var gym: GymSettings { .shared }
+
     let trend: E1RMTrend
 
     var body: some View {
@@ -51,7 +53,7 @@ private struct TrendRow: View {
                     Text(latest.e1RM.rounded.description)
                         .font(.title2.bold().monospacedDigit())
                 }
-                Text(trend.summary(in: GymSettings.shared.unit))
+                Text(trend.summary(in: gym.unit))
                     .font(.subheadline)
                     .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
             }
@@ -69,14 +71,17 @@ private struct TrendRow: View {
 
     private var chart: some View {
         Chart(trend.points) { point in
+            // Plotted in the lifter's unit, not the stored one. An axis
+            // reading 225 under a summary reading "+10 kg" describes the same
+            // lift twice in two languages (#67).
             LineMark(
                 x: .value("Date", point.date),
-                y: .value("e1RM", point.e1RM.pounds)
+                y: .value(gym.unit.symbol, point.e1RM.value(in: gym.unit))
             )
             .interpolationMethod(.monotone)
             PointMark(
                 x: .value("Date", point.date),
-                y: .value("e1RM", point.e1RM.pounds)
+                y: .value(gym.unit.symbol, point.e1RM.value(in: gym.unit))
             )
             .symbolSize(40)
         }
