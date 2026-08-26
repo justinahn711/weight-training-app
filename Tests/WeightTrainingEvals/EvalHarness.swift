@@ -127,6 +127,21 @@ public struct Expectation {
         }
     }
 
+    /// A deload must be *offered*, whether or not the lifter takes it. The
+    /// app proposes and the lifter decides, so an ignored chip is a real
+    /// outcome and the engine still has to keep behaving.
+    public static func offersDeload(within sessions: Int) -> Expectation {
+        Expectation("offers a deload within \(sessions) sessions") { trace in
+            guard let first = trace.sessions.first(where: { $0.deload != nil }) else {
+                return result("offers a deload within \(sessions) sessions", false,
+                              "never offered one")
+            }
+            return result("offers a deload within \(sessions) sessions",
+                          first.index < sessions,
+                          "first offer at session \(first.index)")
+        }
+    }
+
     public static var neverDeloads: Expectation {
         Expectation("never deloads") { trace in
             result("never deloads", trace.deloads.isEmpty,
@@ -282,14 +297,23 @@ public struct EvalReport {
         trace.sessions.map { session in
             let reps = session.performed.filter { !$0.isWarmup }.map { String($0.reps) }
                 .joined(separator: "/")
-            let deload = session.tookDeload ? "  ⟵ took deload" : ""
-            return String(format: "  %2d  %-9@ × %-8@ %@%@",
-                          session.index, session.prescribed.description as NSString,
-                          reps as NSString,
-                          ProgressionResult(state: session.stateAfter, change: session.change)
-                              .summary as NSString,
-                          deload as NSString)
+            let index = String(session.index).leftPadded(to: 3)
+            let load = session.prescribed.description.padded(to: 9)
+            let summary = ProgressionResult(state: session.stateAfter, change: session.change)
+                .summary
+            let deload = session.tookDeload ? "   <- took deload" : ""
+            return "\(index)  \(load) x \(reps.padded(to: 8)) \(summary)\(deload)"
         }.joined(separator: "\n")
+    }
+}
+
+private extension String {
+    func padded(to width: Int) -> String {
+        count >= width ? self : self + String(repeating: " ", count: width - count)
+    }
+
+    func leftPadded(to width: Int) -> String {
+        count >= width ? self : String(repeating: " ", count: width - count) + self
     }
 }
 
