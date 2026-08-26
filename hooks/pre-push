@@ -1,0 +1,66 @@
+#!/bin/sh
+# The gate.
+#
+# Branch protection is unavailable on this repo — private, free plan; the API
+# returns 403 on /protection and /rulesets. So the thing that stops a broken
+# push is local, and it has to be, which means it must also be fast enough that
+# nobody is tempted to skip it. The domain suite runs in about a second and a
+# half precisely because Core imports Foundation only, so both checks below are
+# cheap and the second one is what keeps the first one cheap.
+#
+# Wire it up per clone AND per worktree:
+#
+#     git config core.hooksPath hooks
+#
+# `git push --no-verify` is denied in .claude/settings.json so an agent cannot
+# route around this. If a check fails, fix the code — never the hook.
+
+set -e
+
+# Nothing to verify when the push only deletes refs.
+only_deletes=1
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    [ "$local_sha" = "0000000000000000000000000000000000000000" ] || only_deletes=0
+done
+[ "$only_deletes" = "1" ] && exit 0
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+printf '\npre-push: Core imports Foundation only... '
+if grep -rnE '^import (SwiftData|SwiftUI|UIKit|HealthKit|ActivityKit)' \
+        Sources/WeightTrainingCore; then
+    printf '\n\n  FAIL — WeightTrainingCore must import Foundation only.\n\n'
+    printf '  A single one of these moves the reasoning behind a simulator\n'
+    printf '  boot and costs the fast suite. The change belongs in\n'
+    printf '  WeightTrainingStore or the app target.\n\n'
+    exit 1
+fi
+printf 'ok\n'
+
+printf 'pre-push: swift test... '
+if ! output=$(swift test 2>&1); then
+    printf 'FAIL\n\n'
+    printf '%s\n' "$output" | grep -E 'error:|failed|XCTAssert|Test Case.*failed' | head -30
+    printf '\n  Full output: swift test\n\n'
+    exit 1
+fi
+
+# Report the XCTest total, not the last line. `swift test` ends with the
+# swift-testing runner's own summary, which says "0 tests in 0 suites" because
+# every test here is XCTest — tailing the output makes a full green suite read
+# as though nothing ran, which is the exact failure this hook exists to catch.
+count=$(printf '%s\n' "$output" \
+    | grep -A1 "Test Suite 'All tests' passed" \
+    | grep -oE 'Executed [0-9]+ tests' | grep -oE '[0-9]+' | tail -1)
+
+if [ -z "$count" ] || [ "$count" -eq 0 ]; then
+    printf 'FAIL\n\n'
+    printf '  swift test exited 0 but ran no tests. That is not a pass —\n'
+    printf '  check the target list in Package.swift before pushing.\n\n'
+    exit 1
+fi
+printf 'ok — %s tests\n' "$count"
+
+printf '\n'
+exit 0

@@ -7,7 +7,6 @@
       "Bash(xcodebuild:*)",
       "Bash(xcrun:*)",
       "Bash(open -a Simulator)",
-
       "Bash(git status:*)",
       "Bash(git log:*)",
       "Bash(git diff:*)",
@@ -24,13 +23,14 @@
       "Bash(git cherry-pick:*)",
       "Bash(git restore:*)",
       "Bash(git rev-parse:*)",
-
+      "Bash(git worktree:*)",
+      "Bash(git config core.hooksPath hooks)",
       "Bash(gh pr:*)",
       "Bash(gh issue:*)",
       "Bash(gh run:*)",
       "Bash(gh workflow:*)",
       "Bash(gh repo view:*)",
-
+      "Bash(gh api:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(head:*)",
@@ -66,7 +66,10 @@
       "Bash(rm -rf:*)",
       "Bash(sudo:*)",
       "Bash(defaults write:*)",
-      "Bash(networksetup -setairportpower:*)"
+      "Bash(networksetup -setairportpower:*)",
+      "Bash(git push --no-verify:*)",
+      "Bash(git commit --no-verify:*)",
+      "Bash(gh pr merge:*)"
     ]
   }
 }
