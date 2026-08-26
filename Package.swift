@@ -20,5 +20,11 @@ let package = Package(
         // never drags SwiftData into a test or a preview that doesn't need it.
         .target(name: "WeightTrainingStore", dependencies: ["WeightTrainingCore"]),
         .testTarget(name: "WeightTrainingStoreTests", dependencies: ["WeightTrainingStore"]),
+
+        // Round-trip evals for the backup (#87, #88). Separate from the store
+        // unit tests because they ask a different question: not "does this
+        // history come back" but "does every shape of history come back",
+        // checked as properties over a corpus.
+        .testTarget(name: "WeightTrainingStoreEvals", dependencies: ["WeightTrainingStore"]),
     ]
 )
