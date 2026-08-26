@@ -6,7 +6,7 @@ import Foundation
 /// a set of pull-ups computed against today's weight would quietly rewrite last
 /// year's training every time the scale moves, and the shape can't be
 /// retrofitted cheaply once anyone has history (#71).
-public struct BodyweightReading: Hashable, Sendable, Comparable {
+public struct BodyweightReading: Hashable, Codable, Sendable, Comparable {
     public let pounds: Double
     public let recordedAt: Date
 
