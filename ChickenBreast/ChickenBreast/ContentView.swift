@@ -69,7 +69,7 @@ struct ContentView: View {
                 }
             }
             .navigationDestination(isPresented: $showingSettings) {
-                SettingsView()
+                SettingsView(store: store, sync: sync)
             }
             .navigationDestination(isPresented: $showingTrends) {
                 TrendsView(trends: trends)
