@@ -23,12 +23,22 @@ extension TrainingStore {
         )
     }
 
-    /// Every progress state, uniqued by exercise the way the read paths are.
+    /// Every progress state, uniqued by exercise the way the read paths are,
+    /// and in a fixed order.
+    ///
+    /// The order is the point of the sort, not the order itself — SwiftData
+    /// promises nothing without a descriptor, and every other accessor here
+    /// picks one (`allSets` by date, `exercises` by name, `bodyweights` by
+    /// date). Left unsorted, a phone restored from a backup re-exports the
+    /// same history as a *different file*: same rows, shuffled. That defeats
+    /// the one cheap way to check a backup is honest — export twice and diff —
+    /// and this is the only array in the archive it happened to.
     func allProgressStates() throws -> [ProgressState] {
         var seen: Set<UUID> = []
         return try modelContext.fetch(FetchDescriptor<StoredProgressState>())
             .map { $0.toDomain() }
             .filter { seen.insert($0.exerciseID).inserted }
+            .sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
     }
 
     // MARK: - Restore (#88)
