@@ -43,12 +43,31 @@ half still owes — into `app-dev`'s prompt.
 
 ## 3. Gate it
 
-Once the coder has pushed and opened a draft PR, run the gates. `test` and
-`devops` are independent — spawn them in one block. Add `eval` only when the
-diff touches progression, suggestion, deload, readiness or e1RM logic:
+Once the coder has pushed and opened a draft PR, run the gates.
+
+**Every gate must run in the coder's worktree, and you have to say so.** The
+coder ran with `isolation: "worktree"`, so its diff is on a branch under
+`.claude/worktrees/` that is checked out nowhere else. A gate spawned without a
+path follows its own brief to `~/Weight training App`, runs the suite against
+whatever the main tree has checked out, and posts a green verdict on code it
+never executed — an unrun rung reading as a pass, which is the failure this
+whole pipeline exists to prevent.
+
+Get the path from the coder's report or from `git worktree list`, confirm it is
+on the right branch, and open every gate prompt with it:
 
 ```sh
-git diff origin/main...HEAD --stat -- Sources/WeightTrainingCore
+git worktree list                       # find the coder's tree
+git -C <worktree> rev-parse --abbrev-ref HEAD    # confirm the branch
+```
+
+> Work in `<worktree>`, which is on `feat/<issue>-<slug>`. Do not use the main
+> checkout — it is on another branch and does not contain this diff.
+
+Decide whether `eval` applies from that tree, never from your own:
+
+```sh
+git -C <worktree> diff origin/main...HEAD --stat -- Sources/WeightTrainingCore
 ```
 
 - `test` — rungs 1–4, plus coverage for anything the diff could have broken silently

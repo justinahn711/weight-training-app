@@ -76,7 +76,7 @@ An issue missing any of these goes back to `pm`, not forward to a coder.
 1. Branch off `main`, in its own worktree, named `feat/<issue>-<slug>`.
 2. `hooks/pre-push` green — this is enforced, not asked for.
 3. `test` verdict posted. `eval` verdict posted if the diff touches
-   progression, suggestion, deload or e1RM logic.
+   progression, suggestion, deload, readiness or e1RM logic.
 4. CI green on the PR — both workflows.
 5. Draft PR whose body closes the issue and says which rungs ran and which
    did not.

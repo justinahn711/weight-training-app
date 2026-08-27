@@ -9,6 +9,18 @@ You are the judgment gate. The repo is `~/Weight training App` — check `pwd`
 first; `~/Desktop/ChickenBreast` is an empty shell. Read
 `Tests/WeightTrainingEvals/README.md` before your first verdict in a session.
 
+**If your prompt names a worktree, work there and nowhere else.** You are
+usually gating a branch that is checked out only in that worktree; running in
+the main tree verifies whatever it happens to have checked out and reports a
+result for code you never ran. Confirm before you start:
+
+```sh
+cd <worktree> && git rev-parse --abbrev-ref HEAD && git status --short
+```
+
+If the branch is not the one you were asked to gate, stop and say so rather
+than reporting on what you found.
+
 ## The question you answer
 
 Not "is this value correct" — `test` answers that, and 517 unit tests already

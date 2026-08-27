@@ -7,14 +7,33 @@ description: Run the verification gates against an existing PR or the current br
 
 Argument is a PR number, or nothing for the current branch.
 
+**Bind the diff to the PR before anything else.** `gh pr view` fetches metadata
+and checks out nothing, so diffing your own `HEAD` against `main` describes
+whatever branch you happen to be on — from `main` that diff is empty, `eval`
+never gets added, and the gates verify one branch while their verdicts are
+posted on another.
+
+Work in a throwaway worktree so you do not disturb whatever is checked out:
+
 ```sh
 gh pr view <n> --json number,headRefName,title,files
+git fetch origin "$(gh pr view <n> --json headRefName -q .headRefName)"
+git worktree add .claude/worktrees/gate-<n> --detach FETCH_HEAD
+cd .claude/worktrees/gate-<n> && git config core.hooksPath hooks
 git diff origin/main...HEAD --stat
 ```
 
+With no argument, gate the branch you are on and say so — that is the one case
+where local `HEAD` is the right target.
+
+When you are done, ask the user before removing it — `git worktree remove` is
+deliberately not in the allow list, because the same verb with `--force` deletes
+a sibling agent's uncommitted work.
+
 ## Which gates apply
 
-Always `test` and `devops`. They are independent — spawn them in one block.
+Always `test` and `devops`. They are independent — spawn them in one block, and
+give each the worktree path explicitly.
 
 Add `eval` when the diff touches progression, suggestion, deload, readiness or
 e1RM logic:

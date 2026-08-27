@@ -3,37 +3,76 @@
 #
 # Branch protection is unavailable on this repo — private, free plan; the API
 # returns 403 on /protection and /rulesets. So the thing that stops a broken
-# push is local, and it has to be, which means it must also be fast enough that
-# nobody is tempted to skip it. The domain suite runs in about a second and a
-# half precisely because Core imports Foundation only, so both checks below are
-# cheap and the second one is what keeps the first one cheap.
+# push is local, and it has to be fast enough that nobody is tempted to skip
+# it. The domain suite runs in about a second and a half precisely because Core
+# imports Foundation only, so both checks below are cheap and the second one is
+# what keeps the first one cheap.
 #
-# Wire it up per clone AND per worktree:
+# Wire it up ONCE PER CLONE, not per worktree:
 #
 #     git config core.hooksPath hooks
 #
-# `git push --no-verify` is denied in .claude/settings.json so an agent cannot
-# route around this. If a check fails, fix the code — never the hook.
+# Linked worktrees share .git/config, and the path is relative, so it resolves
+# against each worktree's own top level. A branch predating hooks/ runs no hook
+# at all rather than erroring — the one way this gate goes absent silently.
+#
+# --no-verify is blocked by a PreToolUse hook (hooks/block-gate-bypass.sh), not
+# just the deny list, because permission patterns are prefix matches and the
+# flag can be written last. If a check fails, fix the code — never the hook.
 
 set -e
 
-# Nothing to verify when the push only deletes refs.
+# Collect the refs being pushed. Skip when the push only deletes.
 only_deletes=1
+pushes_head=0
+head_sha=$(git rev-parse HEAD)
 while read -r _local_ref local_sha _remote_ref _remote_sha; do
-    [ "$local_sha" = "0000000000000000000000000000000000000000" ] || only_deletes=0
+    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+    only_deletes=0
+    [ "$local_sha" = "$head_sha" ] && pushes_head=1
 done
 [ "$only_deletes" = "1" ] && exit 0
 
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
+# Everything below tests the WORKING TREE. That only describes what is being
+# pushed if the pushed commit is HEAD and the tracked files are clean —
+# otherwise a broken commit can ship green while its fix sits uncommitted, or
+# one branch's result gets reported for another.
+if [ "$pushes_head" = "0" ]; then
+    printf '\n  FAIL — pushing a commit that is not HEAD.\n\n'
+    printf '  This hook tests the checked-out tree, so it cannot speak to what\n'
+    printf '  you are pushing. Check out the branch (or push from its worktree)\n'
+    printf '  and try again.\n\n'
+    exit 1
+fi
+
+if ! git diff --quiet HEAD 2>/dev/null; then
+    printf '\n  FAIL — tracked files are modified.\n\n'
+    printf '  The suite would test your working tree, not the commit being\n'
+    printf '  pushed, so a broken commit can pass here while its fix sits\n'
+    printf '  uncommitted. Commit or stash first. (Untracked files are fine.)\n\n'
+    git diff --name-only HEAD | sed 's/^/    /'
+    printf '\n'
+    exit 1
+fi
+
+# Core imports Foundation only. Written as an allowlist rather than a list of
+# banned frameworks, because a denylist misses every form that still pulls the
+# framework in: `import struct SwiftUI.Color`, `@preconcurrency import
+# SwiftData`, an indented import, or any framework nobody thought to enumerate.
 printf '\npre-push: Core imports Foundation only... '
-if grep -rnE '^import (SwiftData|SwiftUI|UIKit|HealthKit|ActivityKit)' \
-        Sources/WeightTrainingCore; then
-    printf '\n\n  FAIL — WeightTrainingCore must import Foundation only.\n\n'
-    printf '  A single one of these moves the reasoning behind a simulator\n'
-    printf '  boot and costs the fast suite. The change belongs in\n'
-    printf '  WeightTrainingStore or the app target.\n\n'
+offenders=$(grep -rnE '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*[[:space:]]+)*import[[:space:]]' \
+        Sources/WeightTrainingCore \
+    | grep -vE 'import([[:space:]]+(struct|class|enum|protocol|func|var|let|typealias))?[[:space:]]+Foundation([.[:space:]]|$)' \
+    || true)
+if [ -n "$offenders" ]; then
+    printf 'FAIL\n\n'
+    printf '%s\n' "$offenders" | sed 's/^/    /'
+    printf '\n  WeightTrainingCore must import Foundation only. Any of these\n'
+    printf '  moves the reasoning behind a simulator boot and costs the fast\n'
+    printf '  suite — the change belongs in WeightTrainingStore or the app.\n\n'
     exit 1
 fi
 printf 'ok\n'
@@ -53,14 +92,14 @@ fi
 # XCTest — tailing it makes a full green suite look like nothing ran, the exact
 # failure this hook exists to catch.
 #
-# Both runners are linked, so count both. Reading only the XCTest total would
-# turn a future migration to swift-testing into a false block that points at
-# Package.swift, and reading only swift-testing's would report 0 today.
+# Both runners are linked, so count both, and match the singular forms too:
+# XCTest writes "Executed 1 test" and swift-testing "Test run with 1 test",
+# so a plural-only pattern reports a green one-test suite as zero.
 xctest=$(printf '%s\n' "$output" \
     | grep -A1 "Test Suite 'All tests' passed" \
-    | grep -oE 'Executed [0-9]+ tests' | grep -oE '[0-9]+' | tail -1)
+    | grep -oE 'Executed [0-9]+ tests?' | grep -oE '[0-9]+' | tail -1)
 swifttesting=$(printf '%s\n' "$output" \
-    | grep -oE 'Test run with [0-9]+ tests' | grep -oE '[0-9]+' | tail -1)
+    | grep -oE 'Test run with [0-9]+ tests?' | grep -oE '[0-9]+' | tail -1)
 count=$(( ${xctest:-0} + ${swifttesting:-0} ))
 
 if [ "$count" -eq 0 ]; then
@@ -71,7 +110,5 @@ if [ "$count" -eq 0 ]; then
     printf '  `swift test` by hand before pushing.\n\n'
     exit 1
 fi
-printf 'ok — %s tests\n' "$count"
-
-printf '\n'
+printf 'ok — %s tests\n\n' "$count"
 exit 0
