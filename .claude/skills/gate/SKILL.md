@@ -13,11 +13,14 @@ whatever branch you happen to be on — from `main` that diff is empty, `eval`
 never gets added, and the gates verify one branch while their verdicts are
 posted on another.
 
-Work in a throwaway worktree so you do not disturb whatever is checked out:
+Fetch `main` in the same breath — every diff below is against `origin/main`,
+and a stale one puts commits the PR does not contain into the change you hand
+the gates. Work in a throwaway worktree so you do not disturb what is checked
+out:
 
 ```sh
 gh pr view <n> --json number,headRefName,title,files
-git fetch origin "$(gh pr view <n> --json headRefName -q .headRefName)"
+git fetch origin main "$(gh pr view <n> --json headRefName -q .headRefName)"
 git worktree add .claude/worktrees/gate-<n> --detach FETCH_HEAD
 cd .claude/worktrees/gate-<n> && git config core.hooksPath hooks
 git diff origin/main...HEAD --stat

@@ -1,41 +1,58 @@
 #!/bin/sh
 # Deny any Bash command that would skip the pre-push gate or rewrite history.
 #
-# The permission deny list cannot do this on its own: its patterns are
-# command-PREFIX matches, so `Bash(git push --no-verify:*)` catches
-# `git push --no-verify origin main` and misses `git push origin main
-# --no-verify`, which then falls through to the `Bash(git push:*)` allow and
-# runs. Same for `git commit ... --no-verify` and `git push ... --force`.
+# The permission deny list cannot do this alone: its patterns are command-PREFIX
+# matches, so `Bash(git push --no-verify:*)` catches `git push --no-verify
+# origin main` and misses `git push origin main --no-verify`, which then falls
+# through to the `Bash(git push:*)` allow and runs. A PreToolUse hook sees the
+# whole command string, so flag position stops mattering.
 #
-# A PreToolUse hook sees the whole command string, so flag position stops
-# mattering. Reads the hook payload on stdin, emits a deny decision as JSON.
+# This script FAILS CLOSED. A guardrail that exits 0 when its own dependency is
+# missing is worse than none, because nothing announces that it stopped working.
 
-command=$(jq -r '.tool_input.command // empty' 2>/dev/null)
+# Fail closed: no jq, no parse, no permission.
+if ! command -v jq >/dev/null 2>&1; then
+    echo "block-gate-bypass: jq not found — cannot inspect the command, refusing." >&2
+    exit 2
+fi
+
+payload=$(cat)
+if ! command=$(printf '%s' "$payload" | jq -er '.tool_input.command // ""' 2>/dev/null); then
+    echo "block-gate-bypass: unparseable hook payload, refusing." >&2
+    exit 2
+fi
 [ -z "$command" ] && exit 0
 
 deny() {
-    jq -n --arg reason "$1" '{
-        hookSpecificOutput: {
-            hookEventName: "PreToolUse",
-            permissionDecision: "deny",
-            permissionDecisionReason: $reason
-        }
-    }'
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
     exit 0
 }
+has() { printf '%s' "$command" | grep -qE "$1"; }
 
-case "$command" in
-    *--no-verify*)
-        deny "Blocked: --no-verify skips hooks/pre-push, which is the only enforced gate on this repo (branch protection is unavailable on a private free plan). If the suite or the purity grep fails, fix the code — that is what the gate is for. See .claude/TEAM.md." ;;
-esac
+# 1. --no-verify, anywhere, on any command.
+if has '(^|[[:space:]])--no-verify([[:space:]]|=|$)'; then
+    deny "Blocked: --no-verify skips hooks/pre-push, the only enforced gate on this repo (branch protection is unavailable on a private free plan). If the suite or the purity check fails, fix the code. See .claude/TEAM.md."
+fi
 
-# Force-push only matters on a push; -f means other things elsewhere.
-case "$command" in
-    *"git push"*)
-        case "$command" in
-            *" --force"*|*" -f "*|*" -f")
-                deny "Blocked: force-pushing rewrites published history. No agent force-pushes here — if a branch needs rewinding, say what and why and let the user do it." ;;
-        esac ;;
-esac
+# 2. core.hooksPath mutation. `git -c core.hooksPath=/dev/null push` and
+#    `git config --unset core.hooksPath` both remove the gate outright, and the
+#    second one persists for every worktree in the clone. The documented setup
+#    command is the single permitted form.
+if has 'core\.hooksPath'; then
+    if ! printf '%s' "$command" | grep -qE '^[[:space:]]*git[[:space:]]+config[[:space:]]+core\.hooksPath[[:space:]]+hooks[[:space:]]*$'; then
+        deny "Blocked: changing core.hooksPath disables hooks/pre-push — for this command, or for every worktree in the clone if it is written to config. The only permitted form is the documented setup: git config core.hooksPath hooks"
+    fi
+fi
+
+# 3. Force-push, in each of its spellings. Only on a push; -f means other
+#    things elsewhere, and a refspec leading + is a force push with no flag.
+if has '(^|[[:space:]])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+push([[:space:]]|$)'; then
+    if has '(^|[[:space:]])--force([[:space:]]|=|$)' \
+    || has '(^|[[:space:]])--force-with-lease' \
+    || has '(^|[[:space:]])-[a-zA-Z]*f[a-zA-Z]*([[:space:]]|$)' \
+    || has '(^|[[:space:]])\+[^[:space:]]*:'; then
+        deny "Blocked: force-pushing rewrites published history. No agent force-pushes here — if a branch needs rewinding, say what and why and let the user do it."
+    fi
+fi
 
 exit 0

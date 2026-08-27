@@ -22,16 +22,24 @@
 
 set -e
 
-# Collect the refs being pushed. Skip when the push only deletes.
-only_deletes=1
-pushes_head=0
+# Collect the refs being pushed.
+#
+# EVERY branch ref in the push must be HEAD, not merely one of them: the checks
+# below test the working tree once, so `git push --all` or `git push origin
+# HEAD other-branch` would otherwise carry one branch's green verdict onto an
+# untested one. Deletions have nothing to test; tags point at a tag object that
+# is never equal to HEAD, so requiring it of them would hard-fail every
+# `git push --follow-tags` with advice that cannot help.
+branches=0
+all_are_head=1
 head_sha=$(git rev-parse HEAD)
-while read -r _local_ref local_sha _remote_ref _remote_sha; do
+while read -r local_ref local_sha _remote_ref _remote_sha; do
     [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
-    only_deletes=0
-    [ "$local_sha" = "$head_sha" ] && pushes_head=1
+    case "$local_ref" in refs/tags/*) continue ;; esac
+    branches=$((branches + 1))
+    [ "$local_sha" = "$head_sha" ] || all_are_head=0
 done
-[ "$only_deletes" = "1" ] && exit 0
+[ "$branches" -eq 0 ] && exit 0
 
 root=$(git rev-parse --show-toplevel)
 cd "$root"
@@ -40,7 +48,7 @@ cd "$root"
 # pushed if the pushed commit is HEAD and the tracked files are clean —
 # otherwise a broken commit can ship green while its fix sits uncommitted, or
 # one branch's result gets reported for another.
-if [ "$pushes_head" = "0" ]; then
+if [ "$all_are_head" = "0" ]; then
     printf '\n  FAIL — pushing a commit that is not HEAD.\n\n'
     printf '  This hook tests the checked-out tree, so it cannot speak to what\n'
     printf '  you are pushing. Check out the branch (or push from its worktree)\n'
@@ -58,21 +66,10 @@ if ! git diff --quiet HEAD 2>/dev/null; then
     exit 1
 fi
 
-# Core imports Foundation only. Written as an allowlist rather than a list of
-# banned frameworks, because a denylist misses every form that still pulls the
-# framework in: `import struct SwiftUI.Color`, `@preconcurrency import
-# SwiftData`, an indented import, or any framework nobody thought to enumerate.
 printf '\npre-push: Core imports Foundation only... '
-offenders=$(grep -rnE '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*[[:space:]]+)*import[[:space:]]' \
-        Sources/WeightTrainingCore \
-    | grep -vE 'import([[:space:]]+(struct|class|enum|protocol|func|var|let|typealias))?[[:space:]]+Foundation([.[:space:]]|$)' \
-    || true)
-if [ -n "$offenders" ]; then
+if ! purity=$(sh "$root/hooks/check-core-purity.sh" 2>&1); then
     printf 'FAIL\n\n'
-    printf '%s\n' "$offenders" | sed 's/^/    /'
-    printf '\n  WeightTrainingCore must import Foundation only. Any of these\n'
-    printf '  moves the reasoning behind a simulator boot and costs the fast\n'
-    printf '  suite — the change belongs in WeightTrainingStore or the app.\n\n'
+    printf '%s\n\n' "$purity"
     exit 1
 fi
 printf 'ok\n'

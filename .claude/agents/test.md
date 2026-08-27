@@ -36,7 +36,7 @@ below and proves something the one below cannot.
 |---|---|---|
 | 1. Domain suite | `swift test` | The reasoning is right. ~1.5s, 517 tests. |
 | 2. Evals | `swift test --filter WeightTrainingEvals` | A *sequence* of decisions stays sane. Run it, but the verdict on it is `eval`'s. |
-| 3. Core purity | the grep in `.github/workflows/tests.yml` | Core still imports Foundation only. |
+| 3. Core purity | `hooks/check-core-purity.sh` | Core still imports Foundation only. |
 | 4. Simulator build | `xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj -scheme ChickenBreast -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` | The app and widget compile. Needs Xcode 26+; 16.4 fails on `TrendsView`. |
 | 5. The phone | install and lift | Haptics, APNs sync, Health, anything about *feel*. **You cannot run this.** |
 

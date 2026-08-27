@@ -90,7 +90,7 @@ Verification climbs in order; stop at the first rung that fails.
 |---|---|---|
 | 1 | `swift test` | The reasoning is right. ~1.5s. |
 | 2 | `swift test --filter WeightTrainingEvals` | A *sequence* of decisions stays sane. |
-| 3 | the grep in `.github/workflows/tests.yml` | Core still imports Foundation only. |
+| 3 | `hooks/check-core-purity.sh` | Core still imports Foundation only. |
 | 4 | `xcodebuild ... -destination 'generic/platform=iOS Simulator'` | App and widget compile. Xcode 26+. |
 | 5 | install and lift | Haptics, APNs sync, Health, anything about *feel*. |
 
@@ -106,6 +106,12 @@ returns 403. So the gate is local:
 git config core.hooksPath hooks     # once per clone; covers every worktree
 ```
 
+**The gate only exists on branches that contain `hooks/`.** Git runs no hook
+when the directory is missing, and says nothing about it — so a branch created
+before this landed is ungated until it rebases onto `main`. That covers the
+branches in flight right now. Check with `ls hooks/` before trusting a green
+push on an older branch.
+
 `hooks/pre-push` runs the fast suite and the purity grep before anything
 leaves the machine. `git push --no-verify` is in the deny list in
 `.claude/settings.json` so an agent cannot route around it.
@@ -117,6 +123,8 @@ making the repo public or upgrading to Pro unlocks required status checks on
 ## Turning that off
 
 The team stops short of merging on purpose. To let it merge its own green PRs,
-add `gh pr merge` to the allow list and say so in `pm`'s brief. Do that only
+**remove** `Bash(gh pr merge:*)` from the *deny* list in
+`.claude/settings.json` and say so in `pm`'s brief. Adding an allow entry does
+nothing on its own — deny wins over allow. Do that only
 once you have watched a few cycles land correctly — the cost of a bad merge to
 `main` here is a day, and the cost of reading a diff is a minute.
