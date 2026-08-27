@@ -46,7 +46,6 @@
       "Bash(mkdir:*)",
       "Bash(cp:*)",
       "Bash(mv:*)",
-      "Bash(python3:*)",
       "Bash(plutil:*)",
       "Bash(sqlite3:*)",
       "Bash(codesign:*)",
