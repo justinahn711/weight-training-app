@@ -1,88 +1,61 @@
 ---
 name: ship
-description: Take one GitHub issue from ready to a gated draft PR — assign the right coding agent, run the correctness, judgment and CI gates, and post the verdicts. Use when told to implement, build, fix or ship a specific issue number.
+description: Take one GitHub issue from ready to a gated draft PR — one builder, then the review and eval gates, then the evidence manifest. Use when told to implement, build, fix or ship a specific issue number.
 ---
 
 # Ship an issue
 
-Argument is an issue number. Read `.claude/TEAM.md` first if you have not this
-session.
+Argument is an issue number.
 
 ## 1. Check it is ready
 
 ```sh
 gh issue view <n> --json number,title,body,labels
-gh pr list --state open --json number,headRefName,title
+gh pr list --state open --json number,headRefName,labels
 ```
 
-Ready means: acceptance criteria, exactly one `area:` label, and a named rung.
-**If any is missing, stop and hand it to `pm`** — do not infer the acceptance
-criteria yourself. An agent that invents the criteria then meets them has
-proven nothing.
+Ready means outcome, acceptance criteria, **non-goals**, one `area:` label, and
+a named rung. **If any is missing, stop and hand it back** — an agent that
+invents the acceptance criteria and then meets them has proven nothing.
 
 **Check the collision rule before assigning.** If an in-flight PR carries the
-same `area:` label, say so and stop. Two agents in the same files is a merge
-conflict you pay for at the end, not parallelism.
+same `area:` label, say so and stop.
 
-## 2. Assign one coder
+## 2. One builder
 
-| The change is in | Agent |
-|---|---|
-| Progression, suggestions, e1RM, deload, readiness, plate math, pure reasoning | `core-dev` |
-| Persistence, CloudKit, SwiftUI, the widget, the Xcode project | `app-dev` |
+Pick the mode by the paths the change will touch — Core reasoning →
+`builder-core`; persistence, screens, widget, project → `builder-app`. Spawn
+with `isolation: "worktree"`.
 
-Spawn it with `isolation: "worktree"` so it gets its own branch off `main` and
-cannot disturb whatever is checked out in the main tree.
-
-**If the issue spans both layers — most substantial ones do — run them in
-sequence on one branch, `core-dev` first, never in parallel.** Core has no
-dependencies and its suite runs in 1.5 seconds; the app layer depends on it and
-needs a simulator build. Building the dependency second means discovering its
-shape twice. Pass `core-dev`'s handoff — what Core now exposes, what the app
-half still owes — into `app-dev`'s prompt.
+**A cross-layer issue is still one builder at a time, Core first.** Most
+substantial issues are cross-layer; #67 and #87–89 both were. Core has no
+dependencies and a 1.5s suite, the app layer depends on it and needs a
+simulator build, so building the dependency second means discovering its shape
+twice. Hand the second mode what the first exposed.
 
 ## 3. Gate it
 
-Once the coder has pushed and opened a draft PR, run the gates.
-
-**Every gate must run in the coder's worktree, and you have to say so.** The
-coder ran with `isolation: "worktree"`, so its diff is on a branch under
-`.claude/worktrees/` that is checked out nowhere else. A gate spawned without a
-path follows its own brief to `~/Weight training App`, runs the suite against
-whatever the main tree has checked out, and posts a green verdict on code it
-never executed — an unrun rung reading as a pass, which is the failure this
-whole pipeline exists to prevent.
-
-Get the path from the coder's report or from `git worktree list`, confirm it is
-on the right branch, and open every gate prompt with it:
+Once the builder has pushed a draft PR, spawn `reviewer` — and `evaluator` too
+when the diff touches progression, suggestion, deload, readiness or e1RM:
 
 ```sh
-git worktree list                       # find the coder's tree
-git -C <worktree> rev-parse --abbrev-ref HEAD    # confirm the branch
+git -C <worktree> diff origin/main...HEAD --name-only -- Sources/WeightTrainingCore
 ```
 
-> Work in `<worktree>`, which is on `feat/<issue>-<slug>`. Do not use the main
-> checkout — it is on another branch and does not contain this diff.
+**Give every gate the worktree path explicitly.** The builder ran with worktree
+isolation, so its diff is checked out nowhere else; a gate spawned without a
+path follows `CLAUDE.md` to the main checkout, runs the suite against whatever
+is there, and posts a green verdict on code it never executed.
 
-Decide whether `eval` applies from that tree, never from your own:
+**Never let the builder gate its own work.** The value of the gate is a second
+reader with different instructions.
 
-```sh
-git -C <worktree> diff origin/main...HEAD --stat -- Sources/WeightTrainingCore
-```
+## 4. Manifest, then stop
 
-- `test` — rungs 1–4, plus coverage for anything the diff could have broken silently
-- `eval` — invariants and expectations over a season
-- `devops` — CI green on both workflows, and triage if not
+Fill `.github/pull_request_template.md` from the command output — not from the
+builder's summary, and not from memory. Every rung gets a row; `NOT RUN` is a
+value.
 
-**Never let a coder gate its own work.** The whole value of the gate is that a
-second reader with different instructions looks at it.
-
-## 4. Post the verdicts and stop
-
-Each gate's verdict goes on the PR as a comment, in its own voice. Then relay
-to the user: what landed, which rungs ran, **which did not**, and what is left
-that only the phone can settle.
-
-**You do not merge.** The PR stays a draft. An invariant breach from `eval` or a
-failed rung from `test` goes back to the coder — with the failing case in the
-domain's terms — and the gate re-runs. Everything else is the user's call.
+**You do not merge.** A failed rung or an invariant breach goes back to the
+builder with the failing case in the domain's terms, and the gate re-runs.
+Everything else is the user's call.
