@@ -71,6 +71,24 @@ No haptics, no APNs (so no push-driven sync), and no Health data. CloudKit
 export *does* work there if signed into iCloud. Anything involving recovery,
 push, or feel needs the phone.
 
+## The team
+
+Six agents build this app — a `pm` that owns the board, `core-dev` and
+`app-dev` split along the Core/Store seam above, and `test`, `eval` and
+`devops` as gates. `.claude/TEAM.md` is the charter: who may touch what, the
+definition of ready and done, and the rule that keeps two coders out of the
+same files.
+
+Drive it with `/standup` (what to work on), `/ship <issue>` (one issue to a
+gated draft PR), `/gate <pr>` (verify work that already exists).
+
+The gate that is actually enforced is `hooks/pre-push`. Wire it up once per clone —
+linked worktrees share `.git/config`, so that covers all of them:
+
+```sh
+git config core.hooksPath hooks
+```
+
 ## Commands
 
 ```sh

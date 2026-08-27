@@ -21,3 +21,6 @@ xcuserdata/
 # Environment
 .env
 .env.local
+
+# Agent worktrees
+.claude/worktrees/
