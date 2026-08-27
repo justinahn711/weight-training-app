@@ -46,18 +46,29 @@ if ! output=$(swift test 2>&1); then
     exit 1
 fi
 
-# Report the XCTest total, not the last line. `swift test` ends with the
-# swift-testing runner's own summary, which says "0 tests in 0 suites" because
-# every test here is XCTest — tailing the output makes a full green suite read
-# as though nothing ran, which is the exact failure this hook exists to catch.
-count=$(printf '%s\n' "$output" \
+# Count the tests that actually ran, and refuse to call zero a pass.
+#
+# Don't tail the output. `swift test` ends with the swift-testing runner's
+# summary, which today reads "0 tests in 0 suites" because every test here is
+# XCTest — tailing it makes a full green suite look like nothing ran, the exact
+# failure this hook exists to catch.
+#
+# Both runners are linked, so count both. Reading only the XCTest total would
+# turn a future migration to swift-testing into a false block that points at
+# Package.swift, and reading only swift-testing's would report 0 today.
+xctest=$(printf '%s\n' "$output" \
     | grep -A1 "Test Suite 'All tests' passed" \
     | grep -oE 'Executed [0-9]+ tests' | grep -oE '[0-9]+' | tail -1)
+swifttesting=$(printf '%s\n' "$output" \
+    | grep -oE 'Test run with [0-9]+ tests' | grep -oE '[0-9]+' | tail -1)
+count=$(( ${xctest:-0} + ${swifttesting:-0} ))
 
-if [ -z "$count" ] || [ "$count" -eq 0 ]; then
+if [ "$count" -eq 0 ]; then
     printf 'FAIL\n\n'
-    printf '  swift test exited 0 but ran no tests. That is not a pass —\n'
-    printf '  check the target list in Package.swift before pushing.\n\n'
+    printf '  swift test exited 0 but reported no tests. That is not a pass.\n'
+    printf '  Either the target list in Package.swift is wrong, or the output\n'
+    printf '  format changed and this hook can no longer read it — check\n'
+    printf '  `swift test` by hand before pushing.\n\n'
     exit 1
 fi
 printf 'ok — %s tests\n' "$count"
