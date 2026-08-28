@@ -59,19 +59,27 @@ public struct E1RMTrend: Hashable, Sendable, Identifiable {
 
     /// `+12 lb over 5 sessions`, or an honest admission that there isn't a
     /// trend yet.
-    public var summary: String {
+    public var summary: String { summary(in: .pounds) }
+
+    /// The same, in the unit the lifter thinks in (#67).
+    ///
+    /// "Flat" is decided in the display unit rather than in pounds, because
+    /// that is the question being asked: a change too small to show at this
+    /// precision is one the lifter cannot see, and reporting `+0 kg over 5
+    /// sessions` instead of "flat" would be a distinction without a difference.
+    public func summary(in unit: MassUnit) -> String {
         guard isMeaningful, let change else {
             let remaining = sessionsUntilMeaningful
             return remaining == 1
                 ? "One more session to see a trend"
                 : "\(remaining) more sessions to see a trend"
         }
-        let pounds = change.pounds
-        let rounded = abs(pounds) < 0.05 ? 0 : pounds
+        let value = unit.value(fromPounds: change.pounds)
+        let rounded = abs(value) < 0.05 ? 0 : (value * 10).rounded() / 10
         let sign = rounded > 0 ? "+" : ""
         let amount = rounded == rounded.rounded()
-            ? String(format: "%@%.0f lb", sign, rounded)
-            : String(format: "%@%.1f lb", sign, rounded)
+            ? String(format: "%@%.0f %@", sign, rounded, unit.symbol)
+            : String(format: "%@%.1f %@", sign, rounded, unit.symbol)
         return rounded == 0
             ? "Flat over \(points.count) sessions"
             : "\(amount) over \(points.count) sessions"

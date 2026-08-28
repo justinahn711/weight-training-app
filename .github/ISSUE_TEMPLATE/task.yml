@@ -1,0 +1,49 @@
+name: Task
+description: A change with acceptance criteria an agent can build against
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What the lifter gets. In the app's terms, not the code's.
+    validations: {required: true}
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: What is observably true when this is done.
+    validations: {required: true}
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: >
+        What this must not expand into. A PR that also fixes something
+        unrelated is one nobody can review or revert cleanly.
+    validations: {required: true}
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: >
+        Also the collision key — two in-flight issues never share one.
+      options: [data, ui, insight, progression, voice, infra]
+    validations: {required: true}
+  - type: dropdown
+    id: rung
+    attributes:
+      label: Verification rung
+      description: Which layer settles this. Rung 5 cannot be closed by an agent.
+      options:
+        - "1 — swift test"
+        - "2 — scenario evals"
+        - "3 — Core purity"
+        - "4 — simulator build"
+        - "5 — the phone"
+    validations: {required: true}
+  - type: checkboxes
+    id: device
+    attributes:
+      label: Device check
+      options:
+        - label: Needs the phone (haptics, push sync, Health, or anything about feel)

@@ -35,10 +35,15 @@ jobs:
       # Guards the invariant that makes the suite fast and the domain portable:
       # Core must not acquire a dependency on SwiftData, SwiftUI or HealthKit.
       # A single import would move the reasoning behind a simulator boot.
+      #
+      # Shares one script with hooks/pre-push. The rule used to be written out
+      # in both places and they drifted — the hook was tightened and this was
+      # not, while every agent brief points at *this* step as rung 3, so the
+      # documented check was the weaker one.
       - name: Core stays pure
         run: |
-          if grep -rnE '^import (SwiftData|SwiftUI|UIKit|HealthKit|ActivityKit)' \
-              Sources/WeightTrainingCore; then
+          if ! out=$(sh hooks/check-core-purity.sh 2>&1); then
+            echo "$out"
             echo "::error::WeightTrainingCore must import Foundation only"
             exit 1
           fi

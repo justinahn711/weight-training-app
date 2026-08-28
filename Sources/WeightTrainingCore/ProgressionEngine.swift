@@ -51,23 +51,30 @@ public struct ProgressionResult: Hashable, Sendable {
     }
 
     /// One line, phrased the way it will be read on a suggestion chip.
-    public var summary: String {
+    /// Pound-only; see `summary(in:)`.
+    public var summary: String { summary(in: .pounds) }
+
+    /// The same line in the lifter's unit (#67). Every weight in a rationale
+    /// has to match the weight on the chip beside it, or the explanation
+    /// argues with the number it is explaining.
+    public func summary(in unit: MassUnit) -> String {
         switch change {
         case .addedReps(let reps):
             return "Go for \(reps) reps"
         case .earnedTowardLoad(let hits, let required):
             return "Hit the top \(hits) of \(required) times — repeat it"
         case .addedLoad(let from, let to):
-            return "Earned it: \(from) → \(to)"
+            return "Earned it: \(from.formatted(in: unit)) → \(to.formatted(in: unit))"
         case .heldForEffort(let rpe):
             return "Top of the range at \(rpe) — repeat before adding weight"
         case .heldAfterMiss(let reps):
             return "Fell short at \(reps) — hold and rebuild"
         case .adjustedLoad(let from, let to, let delta):
             let direction = to > from ? "easier" : "harder"
-            return "\(String(format: "%.1f", abs(delta))) RPE \(direction) than target: \(from) → \(to)"
+            return "\(String(format: "%.1f", abs(delta))) RPE \(direction) than target: "
+                + "\(from.formatted(in: unit)) → \(to.formatted(in: unit))"
         case .onTarget(let load):
-            return "On target — stay at \(load)"
+            return "On target — stay at \(load.formatted(in: unit))"
         case .noEffortReported:
             return "No RPE logged — holding steady"
         case .noWorkingSets:

@@ -46,12 +46,15 @@ public struct Suggestion: Identifiable, Hashable, Sendable {
         }
     }
 
-    /// The headline — what would change.
-    public var title: String {
+    /// The headline — what would change. Pound-only; see `title(in:)`.
+    public var title: String { title(in: .pounds) }
+
+    /// The headline in the lifter's unit (#67).
+    public func title(in unit: MassUnit) -> String {
         switch kind {
-        case .load(let load):   return load.description
+        case .load(let load):   return load.formatted(in: unit)
         case .reps(let reps):   return "\(reps) reps"
-        case .deload(let load): return "Deload to \(load)"
+        case .deload(let load): return "Deload to \(load.formatted(in: unit))"
         case .swap(_, let name): return "Swap to \(name)"
         }
     }
