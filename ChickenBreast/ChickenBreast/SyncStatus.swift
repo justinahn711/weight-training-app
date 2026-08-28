@@ -229,3 +229,117 @@ struct SyncBadge: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+/// The deliberate answer to "is my training backed up right now" (#89).
+///
+/// `SyncBadge` and this are not redundant: the badge interrupts, this one
+/// answers. The badge stays silent while everything is fine, which is right on
+/// a screen you're reading for your next set and useless when you came
+/// specifically to check.
+///
+/// The states that matter are the quiet ones. A phone never signed into iCloud
+/// sits at `.noAccount` from its first session and looks completely normal —
+/// months of training can accumulate on one device with nothing on screen that
+/// reads as wrong.
+struct SyncSection: View {
+    let status: SyncStatus
+
+    var body: some View {
+        Section {
+            LabeledContent {
+                Text(headline).foregroundStyle(tint)
+            } label: {
+                Label("iCloud", systemImage: symbol)
+            }
+
+            switch status.lastExport {
+            case .succeeded(let date):
+                LabeledContent("Last sent up", value: date.formatted(.relative(presentation: .named)))
+            case .failed(_, let date):
+                LabeledContent("Last attempt", value: date.formatted(.relative(presentation: .named)))
+            case .none:
+                EmptyView()
+            }
+
+            if let lastImport = status.lastImport {
+                LabeledContent(
+                    "Last received",
+                    value: lastImport.formatted(.relative(presentation: .named))
+                )
+            }
+
+            if let setupFailure = status.setupFailure {
+                detail("Sync didn't start: \(setupFailure)")
+            }
+
+            // Ranked below setup, which explains it: when setup never
+            // completed no export was attempted, so this line would be
+            // describing a consequence and pointing at the wrong thing.
+            if status.setupFailure == nil, case .failed(let reason, _) = status.lastExport {
+                detail("iCloud didn't accept the last save: \(reason)")
+            }
+        } header: {
+            Text("Sync")
+        } footer: {
+            Text(footer)
+        }
+    }
+
+    private func detail(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+    }
+
+    private var headline: String {
+        switch status.state {
+        case .checking:   return "Checking…"
+        case .syncing:    return "On"
+        case .noAccount:  return "This phone only"
+        case .restricted: return "Restricted"
+        case .failed:     return "Unavailable"
+        }
+    }
+
+    private var symbol: String {
+        switch status.state {
+        case .checking:               return "icloud"
+        case .syncing:                return "checkmark.icloud"
+        case .noAccount, .restricted: return "icloud.slash"
+        case .failed:                 return "exclamationmark.icloud"
+        }
+    }
+
+    private var tint: Color {
+        switch status.state {
+        case .checking:               return .secondary
+        case .syncing:                return .green
+        case .noAccount, .restricted: return .orange
+        case .failed:                 return .orange
+        }
+    }
+
+    /// Kept honest about which problems are problems.
+    ///
+    /// An unreachable iCloud in a gym basement is normal and not worth
+    /// alarming about; a save iCloud refused is not, and is the case that
+    /// otherwise looks identical to working sync. Collapsing both to a red
+    /// mark would train the reader to ignore the one that matters.
+    private var footer: String {
+        switch status.state {
+        case .checking:
+            return "Asking iCloud whether it can see this device."
+        case .syncing:
+            if case .failed = status.lastExport {
+                return "iCloud is reachable but refused the last save, so recent training may exist only on this phone. Export a backup."
+            }
+            return "Training on this phone reaches your other devices. iCloud is one account holding one copy, though — export a backup for anything you'd hate to lose."
+        case .noAccount:
+            return "Training is saved on this phone only, and nothing is leaving it. Sign into iCloud in the Settings app to sync — and export a backup either way."
+        case .restricted:
+            return "iCloud is turned off for this device by a profile or parental controls. Export a backup to keep a copy."
+        case .failed:
+            return "Can't reach iCloud right now. That's normal in a basement and usually fixes itself; if it persists, export a backup."
+        }
+    }
+}

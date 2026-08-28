@@ -8,17 +8,29 @@ import UserNotifications
 import WeightTrainingCore
 import WeightTrainingStore
 
-/// The few things about the app that are a preference rather than a rule.
+/// The few things about the app that are a preference rather than a rule, and
+/// the two questions about your data that need somewhere to be asked.
 ///
 /// Deliberately small. Almost everything this app does is derived from logged
 /// sets and shouldn't be configurable — a setting for it would be a second
 /// source of truth. What lands here is the handful of choices that depend on
 /// the room rather than the training: where the phone is during rest, and how
 /// loudly it's allowed to say so.
+///
+/// Backup (#87, #88) and sync state (#89) sit here for a different reason.
+/// They aren't preferences at all; they're the answers to "is my training
+/// safe", and this is where someone goes looking for them.
 struct SettingsView: View {
-    /// Nil only if the store failed to open, in which case the gym section has
-    /// nothing to write to and is left out rather than shown doing nothing.
+    /// Nil only when the store failed to open. That is the one case where
+    /// there is nothing to export and nowhere to restore to, and equally the
+    /// case where the gym section has nothing to write to — both are left out
+    /// rather than shown doing nothing.
     let store: TrainingStore?
+    let sync: SyncStatus
+
+    /// Threaded through to `BackupSection` so a restore can rebuild the
+    /// screens derived from the data it just replaced.
+    var onRestored: () -> Void = {}
 
     @AppStorage(RestAlertSettings.notificationKey) private var notification = true
     @AppStorage(RestAlertSettings.timingKey) private var timing = true
@@ -71,6 +83,17 @@ struct SettingsView: View {
             } footer: {
                 Text("Adds a line to the rest banner reporting how late the buzz went out. Useful while that's still being chased; noise once it isn't.")
             }
+
+            if let store {
+                BackupSection(onRestored: onRestored, store: store)
+
+                // Inside the same guard as backup, because the only thing that
+                // ever refreshes it needs the store. Shown without one it sits
+                // on "Checking…" forever — telling the person who came here to
+                // ask whether sync works precisely nothing, in the one case
+                // where it definitely doesn't.
+                SyncSection(status: sync)
+            }
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
@@ -81,6 +104,12 @@ struct SettingsView: View {
             authorization = await UNUserNotificationCenter.current()
                 .notificationSettings()
                 .authorizationStatus
+        }
+        // Asked again on the way in, because this is the screen someone opens
+        // to check rather than to be told. A state computed at launch and left
+        // there would answer a question about a different moment.
+        .task {
+            if let store { await sync.refresh(store: store) }
         }
     }
 
