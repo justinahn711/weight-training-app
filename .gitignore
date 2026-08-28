@@ -22,5 +22,5 @@ xcuserdata/
 .env
 .env.local
 
-# Claude Code worktrees
+# Agent worktrees
 .claude/worktrees/
