@@ -11,13 +11,25 @@ public enum Equipment: String, Codable, CaseIterable, Sendable {
     case bodyweight
 
     public var defaultIncrement: LoadIncrement {
+        defaultIncrement(in: .pounds)
+    }
+
+    /// The default step in a gym marked in `unit` (#67).
+    ///
+    /// Chosen per world, not converted. A kilogram gym's bar moves in 2.5 kg,
+    /// its stacks in 5 kg — real markings on real equipment. Running the pound
+    /// defaults through a multiplier would produce 2.27 kg and 4.54 kg, steps
+    /// no plate or pin can make.
+    public func defaultIncrement(in unit: MassUnit) -> LoadIncrement {
         switch self {
-        case .barbell:      return .barbell
-        case .plateLoaded:  return .plateLoaded
-        case .dumbbell:     return .dumbbell
-        case .machineStack: return .stackDefault
-        case .cable:        return .stackDefault
-        case .bodyweight:   return LoadIncrement(pounds: 2.5)
+        case .barbell, .plateLoaded:
+            return LoadIncrement(unit.barbellStep, unit)
+        case .dumbbell:
+            return LoadIncrement(unit.dumbbellStep, unit)
+        case .machineStack, .cable:
+            return LoadIncrement(unit.stackStep, unit)
+        case .bodyweight:
+            return LoadIncrement(unit == .pounds ? 2.5 : 1.25, unit)
         }
     }
 

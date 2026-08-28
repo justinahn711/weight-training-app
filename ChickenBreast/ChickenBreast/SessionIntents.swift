@@ -29,7 +29,10 @@ struct LogTargetSetIntent: LiveActivityIntent {
     static var openAppWhenRun: Bool = false
 
     @Parameter(title: "Exercise") var exerciseID: String
-    @Parameter(title: "Pounds") var pounds: Double
+    /// Titled by what it is rather than by its unit: the value is the stored
+    /// canonical pounds, and a system-facing label saying "Pounds" would be a
+    /// unit claim in front of a lifter whose gym is metric (#67).
+    @Parameter(title: "Weight") var pounds: Double
     @Parameter(title: "Reps") var reps: Int
     @Parameter(title: "RPE") var rpe: Double?
 

@@ -69,7 +69,7 @@ struct ContentView: View {
                 }
             }
             .navigationDestination(isPresented: $showingSettings) {
-                SettingsView()
+                SettingsView(store: store)
             }
             .navigationDestination(isPresented: $showingTrends) {
                 TrendsView(trends: trends)
@@ -103,6 +103,10 @@ struct ContentView: View {
         .onChange(of: sync.lastImport) { _, _ in
             guard let store else { return }
             try? store.deduplicate()
+            // A gym changed on another device arrives the same way, and has to
+            // reach this device's lifts before anything renders a plate line.
+            try? store.reconcileGym()
+            GymSettings.shared.refresh(from: store)
             refresh()
         }
     }
@@ -285,6 +289,12 @@ struct ContentView: View {
             try opened.deduplicate()
             try opened.seedLibraryIfNeeded()
             try opened.seedTemplatesIfNeeded()
+            // After the seeds, so a freshly seeded library lands on the gym's
+            // rack rather than the pound default (#73). Also the only thing
+            // that re-racks this device after another one changed the gym: the
+            // gym row syncs, but what each lift inherits from it does not.
+            try opened.reconcileGym()
+            GymSettings.shared.refresh(from: opened)
             cycle = try opened.cyclePosition()
             volume = try opened.volumeReport()
             trends = try opened.e1RMTrends()

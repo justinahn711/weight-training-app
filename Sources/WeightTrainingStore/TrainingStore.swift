@@ -151,6 +151,16 @@ public final class TrainingStore {
 
         var trimmed = exercise
         trimmed.name = name
+
+        // A lift created here belongs to the gym it was created in. `Exercise`
+        // defaults to the pound world because its initialiser cannot know
+        // better, and the store is the one place that does (#67, #73). Only on
+        // create: an edit carries a deliberate configuration, and re-racking
+        // that would undo the correction being saved.
+        let gym = try gymConfig()
+        trimmed.increment = gym.applied(to: trimmed.increment, for: trimmed.equipment)
+        trimmed.loading = trimmed.loading.map { gym.applied(to: $0) }
+
         try upsert(trimmed)
     }
 

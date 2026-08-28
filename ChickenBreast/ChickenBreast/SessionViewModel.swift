@@ -109,7 +109,7 @@ final class SessionViewModel {
                 let name = current.exercise.name
                 let next = current.prescription.isColdStart
                     ? nil
-                    : current.prescription.displayLine
+                    : current.prescription.displayLine(in: GymSettings.shared.unit)
                 Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
             }
             publishActivity()
@@ -188,9 +188,16 @@ final class SessionViewModel {
     /// A 45 on a two-sleeve barbell is 90 lb, not 45. Stepping there by the
     /// increment takes twenty-eight taps to reach a working weight; this takes
     /// the number of plates you'd actually pick up.
-    func addPlate(_ pounds: Double) {
+    /// `plate` is in the apparatus's own unit, the way `availablePlates` and
+    /// the buttons express it — a 20 in a metric gym is 20 kg. Converting here
+    /// rather than at the call site keeps the one place that turns a marked
+    /// plate size into canonical pounds next to the arithmetic that uses it:
+    /// this read them as pounds and put 38.1 kg on a bar the lifter had
+    /// loaded to 60.
+    func addPlate(_ plate: Double) {
         guard let exercise = current?.exercise, let loading = exercise.loading else { return }
-        pendingLoad = Load(pendingLoad.pounds + pounds * Double(loading.sleeves))
+        let perSleeve = loading.unit.pounds(from: plate)
+        pendingLoad = Load(pendingLoad.pounds + perSleeve * Double(loading.sleeves))
     }
 
     /// Back to the empty apparatus, to build a weight up from scratch.
@@ -382,7 +389,7 @@ final class SessionViewModel {
         }
         let state = SessionActivityAttributes.ContentState(
             exerciseName: current.exercise.name,
-            targetLine: current.prescription.displayLine,
+            targetLine: current.prescription.displayLine(in: GymSettings.shared.unit),
             setsLogged: current.workingSets.count,
             exerciseID: current.exercise.id,
             targetPounds: current.prescription.load?.pounds,

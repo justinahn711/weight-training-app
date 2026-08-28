@@ -257,3 +257,81 @@ final class VoiceGrammarTests: XCTestCase {
         }
     }
 }
+
+/// Hearing a unit that was said out loud, and defaulting to the gym's (#67, #21).
+final class VoiceUnitTests: XCTestCase {
+
+    func testAnUnqualifiedNumberMeansTheGymsUnit() throws {
+        let parse = try XCTUnwrap(VoiceGrammar.parse("sixty for eight", in: .kilograms))
+        guard case .logSet(let load, let reps, _) = parse.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(load?.value(in: .kilograms) ?? 0, 60, accuracy: 0.0001)
+        XCTAssertEqual(reps, 8)
+    }
+
+    /// The issue's own example.
+    func testSixtyKilos() throws {
+        let parse = try XCTUnwrap(VoiceGrammar.parse("sixty kilos for eight"))
+        guard case .logSet(let load, let reps, _) = parse.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(load?.value(in: .kilograms) ?? 0, 60, accuracy: 0.0001)
+        XCTAssertEqual(reps, 8)
+    }
+
+    /// Both worlds are always understood, whichever the gym is set to —
+    /// refusing "two twenty five pounds" in a metric gym would log 225 kg.
+    func testASpokenUnitOverridesTheGym() throws {
+        let parse = try XCTUnwrap(
+            VoiceGrammar.parse("two twenty five pounds for five", in: .kilograms)
+        )
+        guard case .logSet(let load, _, _) = parse.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(load?.pounds ?? 0, 225, accuracy: 0.0001)
+    }
+
+    /// Dictation writes it stuck together about as often as not.
+    func testAUnitStuckToTheNumber() throws {
+        let parse = try XCTUnwrap(VoiceGrammar.parse("60kg for 8"))
+        guard case .logSet(let load, let reps, _) = parse.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(load?.value(in: .kilograms) ?? 0, 60, accuracy: 0.0001)
+        XCTAssertEqual(reps, 8)
+    }
+
+    func testAnAdjustmentIsHeardInTheUnitSaid() throws {
+        let parse = try XCTUnwrap(VoiceGrammar.parse("add five kilos", in: .pounds))
+        guard case .adjustLoad(let by) = parse.command else {
+            return XCTFail("expected an adjustment")
+        }
+        XCTAssertEqual(by.value(in: .kilograms), 5, accuracy: 0.0001)
+    }
+
+    func testAnUnqualifiedAdjustmentUsesTheGym() throws {
+        let parse = try XCTUnwrap(VoiceGrammar.parse("add five", in: .kilograms))
+        guard case .adjustLoad(let by) = parse.command else {
+            return XCTFail("expected an adjustment")
+        }
+        XCTAssertEqual(by.value(in: .kilograms), 5, accuracy: 0.0001)
+    }
+
+    /// Naming the unit is grammar, so it lifts the utterance out of the
+    /// shown-but-never-committed case a bare number falls into (#22).
+    func testNamingTheUnitMakesABareNumberConfident() throws {
+        XCTAssertFalse(try XCTUnwrap(VoiceGrammar.parse("sixty")).isConfident)
+        XCTAssertTrue(try XCTUnwrap(VoiceGrammar.parse("sixty kilos")).isConfident)
+    }
+
+    /// "rep" and "lb" must not collide: reps still win.
+    func testRepsStillParseWithUnitsInTheVocabulary() throws {
+        let parse = try XCTUnwrap(VoiceGrammar.parse("185 for 5 reps"))
+        guard case .logSet(let load, let reps, _) = parse.command else {
+            return XCTFail("expected a set")
+        }
+        XCTAssertEqual(load?.pounds ?? 0, 185, accuracy: 0.0001)
+        XCTAssertEqual(reps, 5)
+    }
+}

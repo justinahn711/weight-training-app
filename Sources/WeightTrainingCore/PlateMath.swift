@@ -1,6 +1,9 @@
 import Foundation
 
 /// A count of one plate size on one side of the bar.
+///
+/// `plate` is in the rack's own unit — a `25` on a kg rack is 25 kg, not the
+/// pounds it converts to. `PlateBreakdown.unit` says which world it is.
 public struct PlateCount: Hashable, Sendable {
     public let plate: Double
     public let count: Int
@@ -23,12 +26,16 @@ public struct PlateBreakdown: Hashable, Sendable {
     /// What the plates actually add up to, which is the load that can be built.
     public let total: Load
 
-    public init(bar: Load, perSide: [PlateCount], sleeves: Int = 2) {
+    /// The unit the plate numbers are marked in.
+    public let unit: MassUnit
+
+    public init(bar: Load, perSide: [PlateCount], sleeves: Int = 2, unit: MassUnit = .pounds) {
         self.bar = bar
         self.perSide = perSide
         self.sleeves = sleeves
+        self.unit = unit
         let perSleeve = perSide.reduce(0) { $0 + $1.plate * Double($1.count) }
-        self.total = Load(bar.pounds + perSleeve * Double(sleeves))
+        self.total = Load(bar.value(in: unit) + perSleeve * Double(sleeves), unit)
     }
 
     public var isBarOnly: Bool { perSide.isEmpty }

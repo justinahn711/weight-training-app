@@ -20,5 +20,13 @@ let package = Package(
         // never drags SwiftData into a test or a preview that doesn't need it.
         .target(name: "WeightTrainingStore", dependencies: ["WeightTrainingCore"]),
         .testTarget(name: "WeightTrainingStoreTests", dependencies: ["WeightTrainingStore"]),
+
+        // Scenario evals. Separate from the unit suite because they answer a
+        // different question — not "is this value correct" but "does a season
+        // of these decisions add up to sensible coaching" — and because
+        // keeping them addressable by name means a plateau can be reproduced
+        // with `swift test --filter WeightTrainingEvals` while the fast suite
+        // stays the thing you run on every save.
+        .testTarget(name: "WeightTrainingEvals", dependencies: ["WeightTrainingCore"]),
     ]
 )

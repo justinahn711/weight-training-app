@@ -123,7 +123,7 @@ final class VoiceRecognizer {
             Task { @MainActor in
                 if let result {
                     self.transcript = result.bestTranscription.formattedString
-                    self.parsed = VoiceGrammar.parse(self.transcript)
+                    self.parsed = VoiceGrammar.parse(self.transcript, in: GymSettings.shared.unit)
                 }
                 if error != nil || result?.isFinal == true {
                     self.stop()
