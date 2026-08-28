@@ -28,6 +28,10 @@ struct SettingsView: View {
     let store: TrainingStore?
     let sync: SyncStatus
 
+    /// Threaded through to `BackupSection` so a restore can rebuild the
+    /// screens derived from the data it just replaced.
+    var onRestored: () -> Void = {}
+
     @AppStorage(RestAlertSettings.notificationKey) private var notification = true
     @AppStorage(RestAlertSettings.timingKey) private var timing = true
 
@@ -81,10 +85,15 @@ struct SettingsView: View {
             }
 
             if let store {
-                BackupSection(store: store)
-            }
+                BackupSection(onRestored: onRestored, store: store)
 
-            SyncSection(status: sync)
+                // Inside the same guard as backup, because the only thing that
+                // ever refreshes it needs the store. Shown without one it sits
+                // on "Checking…" forever — telling the person who came here to
+                // ask whether sync works precisely nothing, in the one case
+                // where it definitely doesn't.
+                SyncSection(status: sync)
+            }
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)

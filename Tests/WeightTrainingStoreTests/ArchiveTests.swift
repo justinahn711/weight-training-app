@@ -344,6 +344,54 @@ final class ArchiveTests: XCTestCase {
         XCTAssertTrue(report.isEmpty)
         XCTAssertEqual(try store.archive(exportedAt: midday()), before)
     }
+
+
+    // MARK: - Restore must not lose what is already here
+
+    /// A restore onto a fresh device used to re-rack every lift to pounds.
+    ///
+    /// The archive carried no gym, so a reinstall landed on the default pound
+    /// gym and `reconcileGym()` rewrote the increment and loading of every lift
+    /// that follows it (#67, #73) — a kilogram lifter got their history back
+    /// with the numbers converted out from under it.
+    func testArchiveCarriesTheGymAndRestoreBringsItBack() throws {
+        try seedHistory()
+        try store.saveGymConfig(GymConfig(unit: .kilograms))
+
+        let backup = try store.archive()
+        XCTAssertEqual(
+            backup.gymConfig?.unit, .kilograms,
+            "the file has to carry the unit its numbers were read in"
+        )
+
+        let fresh = try TrainingStore.inMemory()
+        XCTAssertEqual(try fresh.gymConfig().unit, .pounds, "a new store starts in pounds")
+
+        let report = try fresh.restore(from: backup)
+        XCTAssertTrue(report.restoredGym)
+        XCTAssertEqual(try fresh.gymConfig().unit, .kilograms)
+
+        // And the reconcile that runs at launch now agrees with the file
+        // rather than converting it away.
+        try fresh.reconcileGym()
+        XCTAssertEqual(try fresh.gymConfig().unit, .kilograms)
+    }
+
+    /// A file written before the gym was archived still opens, and leaves this
+    /// device's gym alone rather than resetting it.
+    func testArchiveWithoutAGymLeavesTheLocalOneAlone() throws {
+        try seedHistory()
+        var backup = try store.archive()
+        backup.gymConfig = nil
+
+        let fresh = try TrainingStore.inMemory()
+        try fresh.saveGymConfig(GymConfig(unit: .kilograms))
+        let report = try fresh.restore(from: backup)
+
+        XCTAssertFalse(report.restoredGym)
+        XCTAssertEqual(try fresh.gymConfig().unit, .kilograms)
+    }
+
 }
 
 private extension TrainingStore {

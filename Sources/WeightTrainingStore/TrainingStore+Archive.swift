@@ -19,16 +19,29 @@ extension TrainingStore {
             sets: try allSets(),
             progressStates: try allProgressStates(),
             dayTemplates: try dayTemplates(),
-            bodyweights: try bodyweights()
+            bodyweights: try bodyweights(),
+            gymConfig: try gymConfig()
         )
     }
 
-    /// Every progress state, uniqued by exercise the way the read paths are.
+    /// Every progress state, uniqued by exercise the way the read paths are:
+    /// the one that saw the later session wins.
+    ///
+    /// First-seen would have been an arbitrary pick, because fetch order is
+    /// unspecified — so an export taken inside the window where CloudKit has
+    /// delivered a duplicate could capture the stale target and wind that lift
+    /// back when the file was restored. `storedState(for:)` and
+    /// `deduplicate()` both use this rule; now this does too.
     func allProgressStates() throws -> [ProgressState] {
-        var seen: Set<UUID> = []
-        return try modelContext.fetch(FetchDescriptor<StoredProgressState>())
-            .map { $0.toDomain() }
-            .filter { seen.insert($0.exerciseID).inserted }
+        var freshest: [UUID: ProgressState] = [:]
+        for state in try modelContext.fetch(FetchDescriptor<StoredProgressState>()).map({ $0.toDomain() }) {
+            if let seen = freshest[state.exerciseID],
+               (seen.lastPerformedAt ?? .distantPast) >= (state.lastPerformedAt ?? .distantPast) {
+                continue
+            }
+            freshest[state.exerciseID] = state
+        }
+        return Array(freshest.values)
     }
 
     // MARK: - Restore (#88)
@@ -46,9 +59,17 @@ extension TrainingStore {
     /// duplicates had already been on disk — and on a synced device they would
     /// mirror outward in that window. Cheaper and safer to not create them.
     ///
-    /// Everything lands in one `save`, because a restore is one event: a
+    /// The merges land in one `save`, because a restore is one event: a
     /// per-row commit would leave a half-imported store behind if it failed
-    /// partway, and would take minutes on a real history.
+    /// partway, and would take minutes on a real history. A failure rolls the
+    /// staged changes back rather than leaving them pending for the next write
+    /// to commit.
+    ///
+    /// The exception is `upsert(archive.exercises)`, which commits on its own
+    /// before the rest runs — so a failure after it leaves the lifts restored
+    /// and nothing else. That is recoverable by restoring again, which is why
+    /// it is tolerable, but it is not the single atomic write the rest of this
+    /// paragraph describes.
     @discardableResult
     public func restore(
         from archive: TrainingArchive,
@@ -64,26 +85,49 @@ extension TrainingStore {
         try upsert(archive.exercises)
         report.exercises = archive.exercises.count
 
-        report.dayTemplates = try merge(
-            archive.dayTemplates,
-            key: \DayTemplate.id,
-            storedKey: \StoredDayTemplate.id,
-            make: StoredDayTemplate.init,
-            update: { $0.update(from: $1) }
-        )
+        do {
 
-        report.sets = try merge(
-            archive.sets,
-            key: \SetRecord.id,
-            storedKey: \StoredSetLog.id,
-            make: StoredSetLog.init,
-            update: { $0.update(from: $1) }
-        )
+            report.dayTemplates = try merge(
+                archive.dayTemplates,
+                key: \DayTemplate.id,
+                storedKey: \StoredDayTemplate.id,
+                make: StoredDayTemplate.init,
+                update: { $0.update(from: $1) }
+            )
 
-        report.progressStates = try mergeProgressStates(archive.progressStates)
-        report.bodyweights = try mergeBodyweights(archive.bodyweights, calendar: calendar)
+            report.sets = try merge(
+                archive.sets,
+                key: \SetRecord.id,
+                storedKey: \StoredSetLog.id,
+                make: StoredSetLog.init,
+                update: { $0.update(from: $1) }
+            )
 
-        try saveChanges()
+            report.progressStates = try mergeProgressStates(archive.progressStates)
+            report.bodyweights = try mergeBodyweights(archive.bodyweights, calendar: calendar)
+
+            // The gym the file was written in, written straight to the row rather
+            // than through `saveGymConfig` — that re-racks every lift that follows
+            // the gym, which is exactly what must not happen to lifts this restore
+            // just brought back at their archived values.
+            if let gym = archive.gymConfig {
+                if let existing = try storedGymConfig() {
+                    existing.update(from: gym, at: archive.exportedAt)
+                } else {
+                    modelContext.insert(StoredGymConfig(gym, updatedAt: archive.exportedAt))
+                }
+                report.restoredGym = true
+            }
+
+            try saveChanges()
+        } catch {
+            // SwiftData does not roll back a failed save on its own, so
+            // without this the staged inserts, updates and deletions stay
+            // pending in the shared context and the next unrelated write —
+            // logging one set — commits the half-import silently.
+            modelContext.rollback()
+            throw error
+        }
 
         // The same reconciliation CloudKit conflicts already rely on. An
         // import is the other way duplicate rows arrive, so it runs here too.
@@ -170,6 +214,18 @@ extension TrainingStore {
 
         for reading in readings {
             let day = calendar.startOfDay(for: reading.recordedAt)
+            // The archived reading wins, deliberately: a weigh-in carries no
+            // id, so its day *is* its identity, and "rows sharing an id are
+            // the same row and get overwritten" is the rule this whole merge
+            // is built on. `testRestoreKeepsOneWeighInPerDay` pins it.
+            //
+            // Known tension, left as a decision rather than a fix: restoring
+            // an older file therefore replaces a newer weigh-in for that day,
+            // while the restore alert says "anything already logged here was
+            // kept". Either the rule narrows to recency the way
+            // `mergeProgressStates` does, or the sentence narrows to the sets
+            // and lifts it is really about. That is a judgement about the
+            // lifter's data, so it is Justin's.
             if let existing = byDay[day] { modelContext.delete(existing) }
             let stored = StoredBodyweight(reading)
             modelContext.insert(stored)

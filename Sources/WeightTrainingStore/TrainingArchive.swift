@@ -33,6 +33,19 @@ public struct TrainingArchive: Codable, Hashable, Sendable {
     public var dayTemplates: [DayTemplate]
     public var bodyweights: [BodyweightReading]
 
+    /// The gym this history was logged in (#67, #73).
+    ///
+    /// Without it a restore onto a fresh device lands on the default pound
+    /// gym, and `reconcileGym()` at launch re-racks every lift that follows
+    /// the gym — so a kilogram lifter got their history back with the
+    /// increments and plate racks converted out from under it. The file has to
+    /// carry the unit the numbers in it were read in.
+    ///
+    /// Optional because files written before this exist and must still open;
+    /// nil means "whatever this device already has", which is what those files
+    /// have always meant.
+    public var gymConfig: GymConfig?
+
     public init(
         version: Int = TrainingArchive.currentVersion,
         exportedAt: Date = Date(),
@@ -40,7 +53,8 @@ public struct TrainingArchive: Codable, Hashable, Sendable {
         sets: [SetRecord] = [],
         progressStates: [ProgressState] = [],
         dayTemplates: [DayTemplate] = [],
-        bodyweights: [BodyweightReading] = []
+        bodyweights: [BodyweightReading] = [],
+        gymConfig: GymConfig? = nil
     ) {
         self.version = version
         self.exportedAt = exportedAt
@@ -49,6 +63,7 @@ public struct TrainingArchive: Codable, Hashable, Sendable {
         self.progressStates = progressStates
         self.dayTemplates = dayTemplates
         self.bodyweights = bodyweights
+        self.gymConfig = gymConfig
     }
 
     /// True when there is nothing in here worth writing to disk.
@@ -119,6 +134,11 @@ public extension TrainingArchive {
     var suggestedFilename: String {
         let day = ISO8601DateFormatter()
         day.formatOptions = [.withFullDate]
+        // The lifter's day, not GMT's. `ISO8601DateFormatter` defaults to GMT,
+        // so an export at 09:00 in NZDT was named for the day before — and it
+        // made two tests pass only in timezones west of the date line, since
+        // the fixtures build a local midday.
+        day.timeZone = .current
         return "ChickenBreast-\(day.string(from: exportedAt)).json"
     }
 }
@@ -172,6 +192,10 @@ public struct RestoreReport: Hashable, Sendable {
 
     /// Rows `deduplicate()` merged once the import had landed.
     public var deduplicated: DeduplicationReport = DeduplicationReport()
+
+    /// Whether the file carried a gym and it was taken. Files written before
+    /// the gym was archived carry none, and leave this device's gym alone.
+    public var restoredGym: Bool = false
 
     public var total: Int {
         exercises + sets + progressStates + dayTemplates + bodyweights

@@ -34,6 +34,13 @@ struct TrainingArchiveDocument: FileDocument {
 /// this training and is not what this protects against — the point of a file is
 /// that it survives the account.
 struct BackupSection: View {
+    /// Called after a restore lands, so the screens built from this data get
+    /// rebuilt. Without it a restore writes hundreds of rows and every derived
+    /// view — history, volume, trends, the cycle line — keeps showing the
+    /// state from before it, until the app is relaunched. `DigestView` solves
+    /// the same problem the same way.
+    var onRestored: () -> Void = {}
+
     let store: TrainingStore
 
     @State private var document: TrainingArchiveDocument?
@@ -73,7 +80,10 @@ struct BackupSection: View {
             case .success:
                 outcome = .exported(sets: exportedSets)
             case .failure(let error):
-                outcome = .failed(error.localizedDescription)
+                // Dismissing the picker arrives here as an error. Reporting it
+                // as one puts "That didn't work" on the screen someone opened
+                // to be reassured.
+                if !error.isUserCancelled { outcome = .failed(error.localizedDescription) }
             }
         }
         .fileImporter(
@@ -135,9 +145,10 @@ struct BackupSection: View {
             let archive = try TrainingArchive(json: try Data(contentsOf: url))
             let report = try store.restore(from: archive)
             outcome = .restored(report)
+            onRestored()
             Task { await loadSummary() }
         } catch {
-            outcome = .failed(error.localizedDescription)
+            if !error.isUserCancelled { outcome = .failed(error.localizedDescription) }
         }
     }
 
@@ -173,5 +184,13 @@ struct BackupSection: View {
                 return reason
             }
         }
+    }
+}
+
+private extension Error {
+    /// The file picker reports dismissal as `CocoaError.userCancelled`, which
+    /// is indistinguishable from a real failure unless it is asked for by name.
+    var isUserCancelled: Bool {
+        (self as? CocoaError)?.code == .userCancelled
     }
 }
