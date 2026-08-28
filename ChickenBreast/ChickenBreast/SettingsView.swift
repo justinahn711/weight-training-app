@@ -28,8 +28,12 @@ struct SettingsView: View {
     /// the app claiming something it can't do.
     @State private var authorization: UNAuthorizationStatus?
 
-    /// The gym being edited. Held locally so a stepper doesn't write on every
-    /// intermediate value; committed on change.
+    /// The gym being edited, mirrored from `GymSettings.shared` for display.
+    ///
+    /// Refreshed on appear, and every edit is built from the shared config
+    /// rather than from this copy: a CloudKit import landing while Settings is
+    /// open used to be overwritten by the next plate toggle, which committed a
+    /// snapshot taken before the import.
     @State private var gym: GymConfig = GymSettings.shared.config
 
     /// How many lifts the last change re-racked, so a change that reached
@@ -71,6 +75,9 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            // Pick up a gym that changed while this screen was elsewhere —
+            // another device's edit arriving by sync, most often.
+            gym = GymSettings.shared.config
             authorization = await UNUserNotificationCenter.current()
                 .notificationSettings()
                 .authorizationStatus
@@ -166,8 +173,8 @@ struct SettingsView: View {
         Binding(
             get: { gym.barWeight.value(in: gym.unit) },
             set: { value in
-                var updated = gym
-                updated.barWeight = Load(value, gym.unit)
+                var updated = GymSettings.shared.config
+                updated.barWeight = Load(value, updated.unit)
                 commit(updated)
             }
         )
@@ -177,9 +184,18 @@ struct SettingsView: View {
         Binding(
             get: { gym.availablePlates.contains(plate) },
             set: { keep in
-                var plates = Set(gym.availablePlates)
-                if keep { plates.insert(plate) } else { plates.remove(plate) }
-                var updated = gym
+                var updated = GymSettings.shared.config
+                var plates = Set(updated.availablePlates)
+                if keep {
+                    plates.insert(plate)
+                } else if plates.count > 1 {
+                    // Never the last one. An empty rack is not a gym with no
+                    // plates, it is a gym where nothing is buildable: the
+                    // engine answers `nearestBuildable` from the bar alone, so
+                    // every proposal collapses to 20 kg and gets written into
+                    // progress state as though it were a real target.
+                    plates.remove(plate)
+                }
                 updated.availablePlates = plates.sorted(by: >)
                 commit(updated)
             }

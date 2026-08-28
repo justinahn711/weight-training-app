@@ -82,7 +82,10 @@ struct HeardBanner: View {
     /// `185 lb × 5 @ RPE 8`, with absent fields left out rather than filled in.
     private var spoken: String {
         var parts: [String] = []
-        if let load = heard.load { parts.append(load.description) }
+        // `description` is pounds by definition. This banner auto-commits,
+        // so rendering a spoken "sixty kilos" back as "132.3 lb" asks for
+        // confirmation of a number nobody said.
+        if let load = heard.load { parts.append(load.formatted(in: GymSettings.shared.unit)) }
         if let reps = heard.reps { parts.append("× \(reps)") }
         if let rpe = heard.rpe { parts.append("@ \(rpe)") }
         return parts.isEmpty ? "Didn't catch that" : parts.joined(separator: " ")

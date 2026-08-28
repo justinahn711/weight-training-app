@@ -29,6 +29,15 @@ struct ExerciseConfigView: View {
     /// have to be the ones printed on the machine.
     private let unit: MassUnit
 
+    /// The increment's own unit, which is not always the screen's.
+    ///
+    /// A measured step is a fact about one machine and survives a gym marked
+    /// in something else — `GymConfig.applied(to:for:)` re-marks defaults and
+    /// leaves measurements alone. So a 15 lb stack in a metric gym shows its
+    /// step in pounds while its plates and base weight show in kilograms, and
+    /// the increment row labels its unit for exactly that reason.
+    private let incrementUnit: MassUnit
+
     @State private var incrementValue: Double
     @State private var isMeasured: Bool
     @State private var baseValue: Double
@@ -55,6 +64,13 @@ struct ExerciseConfigView: View {
         self.onSave = onSave
         let unit = exercise.loading?.unit ?? GymSettings.shared.unit
         self.unit = unit
+        // The increment keeps its OWN unit, which is the whole point of
+        // carrying one: a stack measured at 15 lb is a fact about that machine
+        // and survives a gym that marks everything else in kilograms
+        // (`GymConfig.applied(to:for:)` re-marks only defaults). Reading the
+        // value in `increment.unit` and writing it back in `unit` turned that
+        // measured 15 lb into 15 kg on a Save that changed nothing.
+        self.incrementUnit = exercise.increment.unit
         _incrementValue = State(initialValue: exercise.increment.nativeValue)
         _isMeasured = State(initialValue: exercise.loading?.isMeasured ?? false)
         _baseValue = State(
@@ -77,9 +93,12 @@ struct ExerciseConfigView: View {
                 Section {
                     ChoiceRow(
                         caption: "Smallest change",
-                        values: Self.incrementChoices(in: unit),
-                        isSelected: { $0 == incrementValue },
-                        label: { format($0) },
+                        values: Self.incrementChoices(in: incrementUnit),
+                        // A kilogram choice round-trips through canonical
+                        // pounds and comes back as 7.499999999999999, so an
+                        // equality test left every metric chip unselected.
+                        isSelected: { abs($0 - incrementValue) < 0.001 },
+                        label: { format($0, in: incrementUnit, withSymbol: true) },
                         onSelect: { incrementValue = $0 }
                     )
                 } header: {
@@ -166,7 +185,7 @@ struct ExerciseConfigView: View {
     }
 
     private func save() {
-        let increment = LoadIncrement(incrementValue, unit)
+        let increment = LoadIncrement(incrementValue, incrementUnit)
         let chosen = plates.sorted(by: >)
         // Only plate-built lifts carry a loading style; nothing else has a base
         // weight to record, and inventing one would start rendering plate lines
@@ -188,7 +207,10 @@ struct ExerciseConfigView: View {
     }
 
     /// A value already in `unit`, so this only tidies the decimal.
-    private func format(_ value: Double, withSymbol: Bool = false) -> String {
+    private func format(
+        _ value: Double, in unit: MassUnit? = nil, withSymbol: Bool = false
+    ) -> String {
+        let unit = unit ?? self.unit
         let number = value == value.rounded()
             ? String(format: "%.0f", value)
             : String(format: "%.1f", value)

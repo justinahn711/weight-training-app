@@ -160,8 +160,19 @@ public struct LoadIncrement: Hashable, Codable, Sendable {
     /// weight heavier than intended.
     public func snap(_ load: Load) -> Load {
         guard pounds > 0 else { return load }
-        return Load((load.pounds / pounds).rounded(.down) * pounds)
+        return Load((load.pounds / pounds + Self.snapTolerance).rounded(.down) * pounds)
     }
+
+    /// Absorbs the representation error a kilogram round-trip leaves behind.
+    ///
+    /// Canonical loads are pounds, and neither a kilogram load nor a kilogram
+    /// increment is exactly representable there. A 100 kg working set against a
+    /// 2.5 kg step divides to 15.999999999999998, which floors to 15 and drops
+    /// a whole increment — a 20 kg bar's 60% warmup rung came out 57.5 kg
+    /// instead of 60. The error is on the order of 1e-15 relative, so a
+    /// tolerance six orders of magnitude larger still cannot round a load that
+    /// is genuinely short of the next step.
+    private static let snapTolerance = 1e-9
 
     /// Rounds to the nearest achievable load, which may be heavier.
     ///

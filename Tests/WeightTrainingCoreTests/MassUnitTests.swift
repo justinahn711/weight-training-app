@@ -163,3 +163,36 @@ final class MassUnitTests: XCTestCase {
         XCTAssertTrue(back.canBuild(Load(100, .kilograms)))
     }
 }
+
+/// Snapping a metric load used to lose a whole increment to float error.
+///
+/// Canonical loads are pounds, so a kilogram load divided by a kilogram
+/// increment can land on 15.999999999999998 where the arithmetic says 16.
+/// Flooring that dropped a full step: a 100 kg set on a 20 kg bar with 2.5 kg
+/// plates produced a 57.5 kg warmup rung where 60 was intended, and the same
+/// path backs off a deload. The number reached the lifter, so this is a
+/// wrong-weight bug, not a rounding cosmetic.
+final class MetricSnapTests: XCTestCase {
+    func testSnapKeepsExactMetricMultiples() {
+        let step = LoadIncrement(2.5, .kilograms)
+        for kg in stride(from: 20.0, through: 200.0, by: 2.5) {
+            let snapped = step.snap(Load(kg, .kilograms))
+            XCTAssertEqual(
+                snapped.value(in: .kilograms), kg, accuracy: 0.0001,
+                "\(kg) kg is an exact multiple of a 2.5 kg step and must snap to itself"
+            )
+        }
+    }
+
+    func testSnapStillRoundsDownAGenuinelyShortLoad() {
+        let step = LoadIncrement(2.5, .kilograms)
+        let snapped = step.snap(Load(101.2, .kilograms))
+        XCTAssertEqual(snapped.value(in: .kilograms), 100.0, accuracy: 0.0001)
+    }
+
+    func testSixtyPercentOfAMetricWorkingSetIsBuildable() {
+        let step = LoadIncrement(2.5, .kilograms)
+        let sixty = step.snap(Load(Load(100, .kilograms).pounds * 0.6))
+        XCTAssertEqual(sixty.value(in: .kilograms), 60.0, accuracy: 0.0001)
+    }
+}

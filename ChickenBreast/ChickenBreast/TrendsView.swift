@@ -50,7 +50,7 @@ private struct TrendRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 if let latest = trend.latest {
-                    Text(latest.e1RM.rounded.description)
+                    Text(latest.e1RM.rounded.formatted(in: gym.unit))
                         .font(.title2.bold().monospacedDigit())
                 }
                 Text(trend.summary(in: gym.unit))
