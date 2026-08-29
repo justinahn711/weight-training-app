@@ -48,14 +48,27 @@ private struct TrendRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                if let latest = trend.latest {
-                    Text(latest.e1RM.rounded.formatted(in: gym.unit))
-                        .font(.title2.bold().monospacedDigit())
+            VStack(alignment: .leading, spacing: 2) {
+                // The headline is the one number on this screen nobody lifted,
+                // and it was the only one not saying what it was — read on the
+                // phone as a weight that had been on a bar. The caption sits
+                // above rather than beside it so the number keeps the row, and
+                // so the summary's baseline alignment is undisturbed.
+                if trend.latest != nil {
+                    Text("Estimated 1RM")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
-                Text(trend.summary(in: gym.unit))
-                    .font(.subheadline)
-                    .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
+
+                HStack(alignment: .firstTextBaseline) {
+                    if let latest = trend.latest {
+                        Text(latest.e1RM.rounded.formatted(in: gym.unit))
+                            .font(.title2.bold().monospacedDigit())
+                    }
+                    Text(trend.summary(in: gym.unit))
+                        .font(.subheadline)
+                        .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
+                }
             }
 
             if trend.isMeaningful {
