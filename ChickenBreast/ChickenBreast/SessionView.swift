@@ -311,6 +311,24 @@ struct SessionView: View {
                     onAdd: { model.addPlate($0) },
                     onClear: { model.clearToBar() }
                 )
+            } else if model.plateEntryAwaitsMeasurement {
+                // The absence above is correct and stays. What was missing is
+                // any sign that it is fixable: a hack squat shows no plate
+                // buttons, gives no reason, and the switch that turns them on
+                // is in this lift's config with nothing pointing there (#95).
+                Button {
+                    isConfiguring = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "scalemass")
+                        Text("Weigh this machine to add plates")
+                        Spacer(minLength: 0)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.tint)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
 
             ChoiceRow(
