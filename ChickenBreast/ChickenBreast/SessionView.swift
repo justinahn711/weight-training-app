@@ -195,8 +195,26 @@ struct SessionView: View {
         guard let loading = exercise.exercise.loading else {
             return "Steps of \(stepText)"
         }
+
+        // Both states below are ones where the plate row is absent, and the
+        // absence is right — a plate total on an unweighed apparatus, or built
+        // from a rack with nothing on it, would be a guess presented as a
+        // number. What was missing is the connection between the two facts:
+        // "not weighed" was already on screen, already tappable, and never
+        // said that weighing it is what brings the plate buttons back (#95).
+        //
+        // Said here rather than as a second button beside this one. The
+        // information and the route were both already here; adding another
+        // tinted caption opening the same sheet would have been two ways into
+        // one screen, not a clearer one.
         guard let base = loading.baseWeight else {
-            return "Steps of \(stepText) · not weighed"
+            return "Steps of \(stepText) · weigh it to add plates"
+        }
+        if loading.availablePlates.isEmpty {
+            // Reachable: clear every plate in config while "I've weighed it"
+            // is on, then switch it off and save. Weighing is not what fixes
+            // this one, so it must not be what the line asks for.
+            return "Steps of \(stepText) · empty \(base.formatted(in: loading.unit)) · no plates set"
         }
         return "Steps of \(stepText) · empty \(base.formatted(in: loading.unit))"
     }
@@ -311,24 +329,6 @@ struct SessionView: View {
                     onAdd: { model.addPlate($0) },
                     onClear: { model.clearToBar() }
                 )
-            } else if model.plateEntryAwaitsMeasurement {
-                // The absence above is correct and stays. What was missing is
-                // any sign that it is fixable: a hack squat shows no plate
-                // buttons, gives no reason, and the switch that turns them on
-                // is in this lift's config with nothing pointing there (#95).
-                Button {
-                    isConfiguring = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "scalemass")
-                        Text("Weigh this machine to add plates")
-                        Spacer(minLength: 0)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.tint)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
             }
 
             ChoiceRow(

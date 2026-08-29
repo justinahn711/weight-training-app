@@ -221,20 +221,6 @@ final class SessionViewModel {
         return loading.availablePlates.sorted(by: >)
     }
 
-    /// Built from plates, but nobody has weighed it — which is the whole
-    /// reason `plateOptions` is empty here.
-    ///
-    /// The silence on *values* is right: a sled weighs something unknown, so a
-    /// running total would be a guess wearing a real number's clothes. The
-    /// silence on *capability* was not — the switch that fixes it is two taps
-    /// away in this lift's own config, and nothing pointed at it. A cable
-    /// stack has no `loading` at all and stays silent, because there is
-    /// nothing there to weigh.
-    var plateEntryAwaitsMeasurement: Bool {
-        guard let loading = current?.exercise.loading else { return false }
-        return !loading.isMeasured
-    }
-
     func adjustReps(by delta: Int) {
         pendingReps = max(1, pendingReps + delta)
     }
