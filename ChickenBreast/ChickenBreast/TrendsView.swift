@@ -177,6 +177,18 @@ private struct TrendRow: View {
 
     @ChartContentBuilder
     private func marker(for point: TrendPoint) -> some ChartContent {
+        // Declared before the rule, because later marks paint over earlier ones
+        // and an annotation does not escape that: with the dot declared last, a
+        // point near the top of the range covered the callout describing it.
+        // Found on the phone — the plot is 130pt tall, so "near the top" is
+        // most of a rising lift.
+        PointMark(
+            x: .value("Date", point.date),
+            y: .value(gym.unit.symbol, point.e1RM.value(in: gym.unit))
+        )
+        .symbolSize(110)
+        .accessibilityHidden(true)
+
         RuleMark(x: .value("Date", point.date))
             .foregroundStyle(.secondary)
             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
@@ -194,12 +206,6 @@ private struct TrendRow: View {
                 callout(for: point)
             }
 
-        PointMark(
-            x: .value("Date", point.date),
-            y: .value(gym.unit.symbol, point.e1RM.value(in: gym.unit))
-        )
-        .symbolSize(110)
-        .accessibilityHidden(true)
     }
 
     private func callout(for point: TrendPoint) -> some View {
