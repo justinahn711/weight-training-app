@@ -433,7 +433,9 @@ final class SessionViewModel {
                 slot: current.slot,
                 startedAt: session.startedAt
             )
-            session.replaceCurrent(with: rebuilt)
+            // Not `replaceCurrent`: that is the swap path and no-ops when the
+            // replacement is the same lift, which a reconfiguration always is.
+            session.reconfigureCurrent(with: rebuilt)
             seedPendingFromCurrent()
             loadSuggestionContext()
         } catch {
