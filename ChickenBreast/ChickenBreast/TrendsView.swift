@@ -26,11 +26,17 @@ struct TrendsView: View {
                 )
             } else {
                 List {
-                    ForEach(trends) { trend in
+                    ForEach(groups, id: \.title) { group in
                         Section {
-                            TrendRow(trend: trend)
+                            ForEach(group.trends) { trend in
+                                NavigationLink {
+                                    TrendDetailView(trend: trend)
+                                } label: {
+                                    TrendSummaryRow(trend: trend)
+                                }
+                            }
                         } header: {
-                            Text(trend.exercise.name)
+                            Text(group.title)
                         }
                     }
                 }
@@ -39,31 +45,126 @@ struct TrendsView: View {
         .navigationTitle("Progress")
         .navigationBarTitleDisplayMode(.inline)
     }
+
+    /// Lifts grouped by the muscle they primarily train.
+    ///
+    /// A chart per lift in one list is right at three lifts and wrong at
+    /// twenty-five: the screen you open to answer one question makes you scroll
+    /// past every other. `E1RMTrendBuilder` already omits lifts with no history
+    /// for the same reason — "sixteen of them empty buries the three that have
+    /// something to say" — but that filter stops helping once they all have
+    /// history, which is exactly when the app has been working.
+    ///
+    /// Grouped on the primary muscle rather than the day kind, because day
+    /// membership lives on a mutable `DayTemplate`: grouping a year of history
+    /// by it would move when a template is edited, and a lift dropped from a
+    /// template would lose its home while keeping its history. The muscle is a
+    /// fact about the lift.
+    private var groups: [(title: String, trends: [E1RMTrend])] {
+        let byMuscle = Dictionary(grouping: trends) { $0.primaryMuscle }
+        return Self.muscleOrder.compactMap { muscle in
+            guard let group = byMuscle[muscle], !group.isEmpty else { return nil }
+            return (muscle.displayName, group.sorted { $0.exercise.name < $1.exercise.name })
+        } + (byMuscle[nil].map { [("Other", $0.sorted { $0.exercise.name < $1.exercise.name })] } ?? [])
+    }
+
+    /// Push, then pull, then legs — the order the training is thought about.
+    ///
+    /// Deliberately a presentation ordering rather than a `Muscle.dayKind` in
+    /// Core. Day kinds here are *derived from logged sets*, not from muscle
+    /// taxonomy, so asserting a fixed muscle-to-day relationship in the domain
+    /// would state something the engine does not believe.
+    private static let muscleOrder: [Muscle] = [
+        .chest, .frontDelts, .sideDelts, .triceps,
+        .lats, .traps, .rearDelts, .biceps, .forearms,
+        .quads, .hamstrings, .glutes, .calves,
+        .abs,
+    ]
 }
 
-private struct TrendRow: View {
+private extension E1RMTrend {
+    var primaryMuscle: Muscle? {
+        exercise.muscles.first { $0.role == .primary }?.muscle
+    }
+}
+
+/// One line in the list: enough to see which lifts are moving without opening
+/// any of them, and no more.
+private struct TrendSummaryRow: View {
+    private var gym: GymSettings { .shared }
+
+    let trend: E1RMTrend
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(trend.exercise.name)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if let latest = trend.latest {
+                        Text(latest.e1RM.rounded.formatted(in: gym.unit))
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(trend.summary(in: gym.unit))
+                        .font(.caption)
+                        .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
+                }
+            }
+            Spacer(minLength: 0)
+            // Shape only, and only once there is a shape to show: the same
+            // three-session floor the full chart uses, for the same reason —
+            // two points always make a straight line.
+            if trend.isMeaningful { sparkline }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var sparkline: some View {
+        Chart(trend.points) { point in
+            LineMark(
+                x: .value("Date", point.date),
+                y: .value(gym.unit.symbol, point.e1RM.value(in: gym.unit))
+            )
+            .interpolationMethod(.monotone)
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartLegend(.hidden)
+        .frame(width: 64, height: 26)
+        .accessibilityHidden(true)
+    }
+}
+
+/// One lift, on its own screen.
+///
+/// The chart owns this screen rather than sharing a scrolling list with two
+/// dozen others, which is what makes the scrub gesture unambiguous: there is
+/// no vertical scroll competing for the same drag (#104, #105).
+struct TrendDetailView: View {
     private var gym: GymSettings { .shared }
 
     /// The point under the thumb, or `nil` at rest (#101).
     ///
-    /// `@GestureState` rather than `@State` on purpose. It resets itself when
-    /// the gesture ends *or is interrupted*, and inside a `List` interruption
-    /// is the common case: a drag that turns vertical is taken over by the
-    /// enclosing scroll view, which cancels this gesture without ever calling
-    /// `onEnded`. With plain `@State` that path strands a marker on the chart
-    /// of a lift you have already scrolled past.
+    /// `@GestureState` rather than `@State` on purpose: it resets itself when
+    /// the gesture ends *or is interrupted*, so no path can strand a marker on
+    /// a chart nobody is touching.
+    ///
+    /// That mattered more when this chart lived inside the Trends list, where a
+    /// drag turning vertical was taken over by the scroll view and cancelled
+    /// without ever calling `onEnded`. On its own screen the competition is
+    /// gone — which is the point of #105 — but interruption is still possible
+    /// and the cheaper primitive is still the right one.
     @GestureState private var scrubbed: TrendPoint?
 
     let trend: E1RMTrend
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
                 // The headline is the one number on this screen nobody lifted,
                 // and it was the only one not saying what it was — read on the
-                // phone as a weight that had been on a bar. The caption sits
-                // above rather than beside it so the number keeps the row, and
-                // so the summary's baseline alignment is undisturbed.
+                // phone as a weight that had been on a bar.
                 //
                 // "Latest", not "Estimated 1RM" flat, because the number is
                 // `points.last` and `best` is a different value that exists
@@ -77,6 +178,11 @@ private struct TrendRow: View {
                 // tertiary to mean "too thin to trust yet", so rendering the
                 // one element whose whole job is to be read in that style says
                 // the opposite of what it is for.
+                //
+                // It lives here, on the detail screen, and NOT on the compact
+                // list row — that row is already titled with the lift's name
+                // and carries a smaller, secondary figure, so a caption there
+                // would be noise repeated twenty-five times.
                 if trend.latest != nil {
                     Text("Latest estimated 1RM")
                         .font(.caption)
@@ -92,21 +198,26 @@ private struct TrendRow: View {
                         .font(.subheadline)
                         .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
                 }
-            }
-            // Otherwise VoiceOver reads three unrelated fragments and the
-            // caption labels nothing — which is the failure this issue is
-            // about, in the one place it is hardest to notice.
-            .accessibilityElement(children: .combine)
+                }
+                // Grouped so VoiceOver reads the caption and the number as one
+                // thing. Bound to the headline pair specifically, not to the
+                // whole card — sweeping the chart in would undo the per-point
+                // labels that make it readable without the scrub gesture.
+                .accessibilityElement(children: .combine)
 
-            if trend.isMeaningful {
-                chart
-            } else {
-                // An honest empty state rather than a two-point line, which
-                // would look like a trend no matter what the lift did.
-                sparse
+                if trend.isMeaningful {
+                    chart
+                } else {
+                    // An honest empty state rather than a two-point line, which
+                    // would look like a trend no matter what the lift did.
+                    sparse
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
         }
-        .padding(.vertical, 6)
+        .navigationTitle(trend.exercise.name)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var chart: some View {
@@ -149,7 +260,11 @@ private struct TrendRow: View {
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())
             }
         }
-        .frame(height: 130)
+        // Taller than it was as a list row. 130pt was a compromise with two
+        // dozen charts stacked in one scroll; on its own screen the plot can
+        // have the room, which also gives the callout somewhere to sit that
+        // is not on top of the curve.
+        .frame(height: 220)
         .chartOverlay { proxy in
             GeometryReader { geometry in
                 Rectangle()
