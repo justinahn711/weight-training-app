@@ -48,15 +48,45 @@ private struct TrendRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                if let latest = trend.latest {
-                    Text(latest.e1RM.rounded.formatted(in: gym.unit))
-                        .font(.title2.bold().monospacedDigit())
+            VStack(alignment: .leading, spacing: 2) {
+                // The headline is the one number on this screen nobody lifted,
+                // and it was the only one not saying what it was — read on the
+                // phone as a weight that had been on a bar. The caption sits
+                // above rather than beside it so the number keeps the row, and
+                // so the summary's baseline alignment is undisturbed.
+                //
+                // "Latest", not "Estimated 1RM" flat, because the number is
+                // `points.last` and `best` is a different value that exists
+                // right beside it. After a deload the plain caption would read
+                // "Estimated 1RM · 190" while the lifter's best estimate is
+                // 225 — asserting a current maximum on precisely the weeks
+                // someone is most anxious about that number. The bare figure
+                // was merely ambiguous; a confident wrong label is worse.
+                //
+                // `.secondary`, not `.tertiary`: two lines down this view uses
+                // tertiary to mean "too thin to trust yet", so rendering the
+                // one element whose whole job is to be read in that style says
+                // the opposite of what it is for.
+                if trend.latest != nil {
+                    Text("Latest estimated 1RM")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text(trend.summary(in: gym.unit))
-                    .font(.subheadline)
-                    .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
+
+                HStack(alignment: .firstTextBaseline) {
+                    if let latest = trend.latest {
+                        Text(latest.e1RM.rounded.formatted(in: gym.unit))
+                            .font(.title2.bold().monospacedDigit())
+                    }
+                    Text(trend.summary(in: gym.unit))
+                        .font(.subheadline)
+                        .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
+                }
             }
+            // Otherwise VoiceOver reads three unrelated fragments and the
+            // caption labels nothing — which is the failure this issue is
+            // about, in the one place it is hardest to notice.
+            .accessibilityElement(children: .combine)
 
             if trend.isMeaningful {
                 chart
