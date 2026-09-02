@@ -224,8 +224,47 @@ struct SessionView: View {
         return "Steps of \(stepText) · empty \(base.formatted(in: loading.unit))"
     }
 
+    /// What the app assumes, then what it therefore proposes, then what was
+    /// actually done. The order is the argument (#100).
+    ///
+    /// The assumption line used to close this card, under "Last time". A line
+    /// reads as belonging to the one above it, so the single statement of what
+    /// the app believes about the machine read as a footnote to history — which
+    /// is the one thing it has nothing to do with. Above the target it reads as
+    /// the target's premise: this step, this empty weight, *therefore* this
+    /// number. That is also the direction a correction actually runs. The
+    /// number you doubt is the target, and its cause is now the line
+    /// immediately above it instead of two lines past it.
+    ///
+    /// It stays a visible, tinted, one-tap line rather than moving onto the
+    /// lift's name or under a long press, because the summary has to stay on
+    /// screen wherever the route goes (#95) — a lift with no plate buttons has
+    /// no other explanation here. Every other placement would have left this
+    /// line where it was and added a *second* way into one sheet.
     private func context(_ exercise: SessionExercise) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            // Sits directly under the lift's name, which is what it is about,
+            // and is still the line you are reading at the moment you notice a
+            // stack moves in 15s (#20).
+            Button {
+                configuring = exercise.exercise
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "slider.horizontal.3")
+                    Text(configSummary(exercise))
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+                .foregroundStyle(.tint)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Corrects what the app assumes about this lift")
+
+            // Keeps the once-ever tap from reading as a third row of the pair
+            // below, which are read every set and are not controls at all.
+            Divider()
+
             // The target is the biggest thing on screen after the lift's name:
             // it's the one line being checked between sets.
             VStack(alignment: .leading, spacing: 2) {
@@ -247,23 +286,6 @@ struct SessionView: View {
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
-
-            // Sits with the target because that's what it changes, and because
-            // the moment you notice a stack moves in 15s is the moment you're
-            // reading this line (#20).
-            Button {
-                configuring = exercise.exercise
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "slider.horizontal.3")
-                    Text(configSummary(exercise))
-                    Spacer(minLength: 0)
-                }
-                .font(.caption)
-                .foregroundStyle(.tint)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
