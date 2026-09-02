@@ -50,6 +50,18 @@ struct ExerciseConfigView: View {
     @State private var sleeves = 2
     @State private var plates: Set<Double> = []
 
+    @State private var hasSeeded = false
+
+    /// Whether `seed` has run for this presentation.
+    ///
+    /// Moving the seed out of `init` fixed the stale-state bug but left a
+    /// window `init` did not have: `body` renders before `onAppear`, so for a
+    /// frame the form holds zeros. Saving from that frame would call
+    /// `LoadIncrement(0, _)`, whose `precondition(pounds > 0)` traps — turning
+    /// a wrong value into a crash. The window is a frame wide and probably
+    /// unreachable by a thumb, which is exactly why it should be closed here
+    /// rather than left to be discovered.
+
     /// Increments that actually occur: fractional plates, standard plates, and
     /// the coarse steps machine stacks use. Chosen per world rather than
     /// converted — a metric stack's notches are 2.5 and 5 kg, not 2.27.
@@ -96,6 +108,7 @@ struct ExerciseConfigView: View {
             ?? unit.standardBar.value(in: unit)
         sleeves = exercise.loading?.sleeves ?? 2
         plates = Set(exercise.loading?.availablePlates ?? unit.standardPlates)
+        hasSeeded = true
     }
 
     /// Whether this lift is built from plates at all. A cable stack has no
@@ -187,7 +200,7 @@ struct ExerciseConfigView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
-                        .disabled(isMeasured && plates.isEmpty)
+                        .disabled(!hasSeeded || (isMeasured && plates.isEmpty))
                 }
             }
         }
