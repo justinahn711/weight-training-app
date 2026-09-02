@@ -123,9 +123,32 @@ public struct Session: Hashable, Sendable {
         exercises[index] = replacement
     }
 
-    /// Replaces whatever is on screen now.
+    /// Replaces whatever is on screen now — with a *different* lift.
+    ///
+    /// Swap-shaped, and inherits the identity guard above: replacing a lift
+    /// with itself is a no-op here on purpose. To install a rebuilt version of
+    /// the same lift, use `reconfigureCurrent`.
     public mutating func replaceCurrent(with replacement: SessionExercise) {
         replace(at: currentIndex, with: replacement)
+    }
+
+    /// Installs a rebuilt version of the lift already on screen — same lift,
+    /// changed configuration.
+    ///
+    /// The opposite intent to `replaceCurrent`, and it needs its own method
+    /// rather than the same one: there the matching id means "nothing to do",
+    /// here it is the whole point. Correcting a machine's increment or empty
+    /// weight (#20, #39) produces a `SessionExercise` with the same id by
+    /// definition, so routing it through the swap path silently discarded it —
+    /// the correction reached the store and the screen kept showing the old
+    /// configuration until the app was relaunched (#98).
+    ///
+    /// Safe with respect to the concern that motivates the guard: the caller
+    /// rebuilds through `sessionExercise(for:slot:startedAt:)`, which reloads
+    /// today's logged sets, so nothing logged this session is lost.
+    public mutating func reconfigureCurrent(with replacement: SessionExercise) {
+        guard exercises.indices.contains(currentIndex) else { return }
+        exercises[currentIndex] = replacement
     }
 
     /// Removes the most recently logged set anywhere in the session and returns

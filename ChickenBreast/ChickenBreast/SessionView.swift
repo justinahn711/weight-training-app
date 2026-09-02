@@ -19,7 +19,14 @@ struct SessionView: View {
 
     @State var model: SessionViewModel
     @State private var isSwapping = false
-    @State private var isConfiguring = false
+
+    /// The lift whose configuration is open, rather than a bare flag (#98).
+    ///
+    /// The sheet then carries the exercise it is editing for the whole of that
+    /// presentation. Reading `model.current` inside the sheet builder instead
+    /// re-read it on every parent update — and saving is itself a rebuild, so
+    /// the screen's subject could move out from under the person editing it.
+    @State private var configuring: Exercise?
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -131,11 +138,9 @@ struct SessionView: View {
                 }
             )
         }
-        .sheet(isPresented: $isConfiguring) {
-            if let exercise = model.current?.exercise {
-                ExerciseConfigView(exercise: exercise) { increment, loading in
-                    model.updateConfiguration(increment: increment, loading: loading)
-                }
+        .sheet(item: $configuring) { exercise in
+            ExerciseConfigView(exercise: exercise) { increment, loading in
+                model.updateConfiguration(increment: increment, loading: loading)
             }
         }
         .alert("Something went wrong",
@@ -229,7 +234,7 @@ struct SessionView: View {
             // the moment you notice a stack moves in 15s is the moment you're
             // reading this line (#20).
             Button {
-                isConfiguring = true
+                configuring = exercise.exercise
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "slider.horizontal.3")
