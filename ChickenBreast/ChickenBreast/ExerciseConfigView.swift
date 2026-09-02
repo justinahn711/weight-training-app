@@ -27,7 +27,7 @@ struct ExerciseConfigView: View {
     /// is marked in — the lift's own if it has one, otherwise the gym's (#67).
     /// Correcting a machine means reading numbers off it, so the numbers here
     /// have to be the ones printed on the machine.
-    private let unit: MassUnit
+    private var unit: MassUnit { exercise.loading?.unit ?? GymSettings.shared.unit }
 
     /// The increment's own unit, which is not always the screen's.
     ///
@@ -36,13 +36,19 @@ struct ExerciseConfigView: View {
     /// leaves measurements alone. So a 15 lb stack in a metric gym shows its
     /// step in pounds while its plates and base weight show in kilograms, and
     /// the increment row labels its unit for exactly that reason.
-    private let incrementUnit: MassUnit
+    ///
+    /// Read from `exercise` rather than captured in `init`, so it describes the
+    /// lift this presentation is actually editing — see `seed()`.
+    private var incrementUnit: MassUnit { exercise.increment.unit }
 
-    @State private var incrementValue: Double
-    @State private var isMeasured: Bool
-    @State private var baseValue: Double
-    @State private var sleeves: Int
-    @State private var plates: Set<Double>
+    /// The edit in progress. Placeholders only: every one of these is replaced
+    /// by `seed()` before the screen is looked at, and *none* of them may be
+    /// seeded here — see `seed()` for why.
+    @State private var incrementValue: Double = 0
+    @State private var isMeasured = false
+    @State private var baseValue: Double = 0
+    @State private var sleeves = 2
+    @State private var plates: Set<Double> = []
 
     /// Increments that actually occur: fractional plates, standard plates, and
     /// the coarse steps machine stacks use. Chosen per world rather than
@@ -62,25 +68,34 @@ struct ExerciseConfigView: View {
     init(exercise: Exercise, onSave: @escaping (LoadIncrement, LoadingStyle?) -> Void) {
         self.exercise = exercise
         self.onSave = onSave
-        let unit = exercise.loading?.unit ?? GymSettings.shared.unit
-        self.unit = unit
+    }
+
+    /// Loads the lift's current configuration into the form, on every
+    /// presentation (#98).
+    ///
+    /// This deliberately does *not* happen in `init`. A `State` initial value is
+    /// applied only when SwiftUI first creates that view's identity, and nothing
+    /// obliges a re-presented sheet to be a new identity — so seeding there made
+    /// the screen show, and Save write back, whatever was in the form the *first*
+    /// time it opened. Correcting a hack squat and reopening it showed it
+    /// unmeasured again, and the next Save put that back on disk.
+    ///
+    /// `onAppear` fires per presentation rather than per identity, so it is the
+    /// one hook that is right whichever way SwiftUI decides to reuse the view.
+    /// Same fix, same reason, as the gym screen re-reading its config on appear.
+    private func seed() {
         // The increment keeps its OWN unit, which is the whole point of
         // carrying one: a stack measured at 15 lb is a fact about that machine
         // and survives a gym that marks everything else in kilograms
         // (`GymConfig.applied(to:for:)` re-marks only defaults). Reading the
         // value in `increment.unit` and writing it back in `unit` turned that
         // measured 15 lb into 15 kg on a Save that changed nothing.
-        self.incrementUnit = exercise.increment.unit
-        _incrementValue = State(initialValue: exercise.increment.nativeValue)
-        _isMeasured = State(initialValue: exercise.loading?.isMeasured ?? false)
-        _baseValue = State(
-            initialValue: exercise.loading?.baseWeight?.value(in: unit)
-                ?? unit.standardBar.value(in: unit)
-        )
-        _sleeves = State(initialValue: exercise.loading?.sleeves ?? 2)
-        _plates = State(
-            initialValue: Set(exercise.loading?.availablePlates ?? unit.standardPlates)
-        )
+        incrementValue = exercise.increment.nativeValue
+        isMeasured = exercise.loading?.isMeasured ?? false
+        baseValue = exercise.loading?.baseWeight?.value(in: unit)
+            ?? unit.standardBar.value(in: unit)
+        sleeves = exercise.loading?.sleeves ?? 2
+        plates = Set(exercise.loading?.availablePlates ?? unit.standardPlates)
     }
 
     /// Whether this lift is built from plates at all. A cable stack has no
@@ -163,6 +178,9 @@ struct ExerciseConfigView: View {
             }
             .navigationTitle(exercise.name)
             .navigationBarTitleDisplayMode(.inline)
+            // Before the first frame the sheet shows, and again on every later
+            // presentation — the form is never what a previous edit left behind.
+            .onAppear(perform: seed)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
