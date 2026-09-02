@@ -161,6 +161,34 @@ struct TrendDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                // The headline is the one number on this screen nobody lifted,
+                // and it was the only one not saying what it was — read on the
+                // phone as a weight that had been on a bar.
+                //
+                // "Latest", not "Estimated 1RM" flat, because the number is
+                // `points.last` and `best` is a different value that exists
+                // right beside it. After a deload the plain caption would read
+                // "Estimated 1RM · 190" while the lifter's best estimate is
+                // 225 — asserting a current maximum on precisely the weeks
+                // someone is most anxious about that number. The bare figure
+                // was merely ambiguous; a confident wrong label is worse.
+                //
+                // `.secondary`, not `.tertiary`: two lines down this view uses
+                // tertiary to mean "too thin to trust yet", so rendering the
+                // one element whose whole job is to be read in that style says
+                // the opposite of what it is for.
+                //
+                // It lives here, on the detail screen, and NOT on the compact
+                // list row — that row is already titled with the lift's name
+                // and carries a smaller, secondary figure, so a caption there
+                // would be noise repeated twenty-five times.
+                if trend.latest != nil {
+                    Text("Latest estimated 1RM")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 HStack(alignment: .firstTextBaseline) {
                     if let latest = trend.latest {
                         Text(latest.e1RM.rounded.formatted(in: gym.unit))
@@ -170,6 +198,12 @@ struct TrendDetailView: View {
                         .font(.subheadline)
                         .foregroundStyle(trend.isMeaningful ? .secondary : .tertiary)
                 }
+                }
+                // Grouped so VoiceOver reads the caption and the number as one
+                // thing. Bound to the headline pair specifically, not to the
+                // whole card — sweeping the chart in would undo the per-point
+                // labels that make it readable without the scrub gesture.
+                .accessibilityElement(children: .combine)
 
                 if trend.isMeaningful {
                     chart

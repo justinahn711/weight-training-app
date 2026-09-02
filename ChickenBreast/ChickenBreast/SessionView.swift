@@ -19,7 +19,14 @@ struct SessionView: View {
 
     @State var model: SessionViewModel
     @State private var isSwapping = false
-    @State private var isConfiguring = false
+
+    /// The lift whose configuration is open, rather than a bare flag (#98).
+    ///
+    /// The sheet then carries the exercise it is editing for the whole of that
+    /// presentation. Reading `model.current` inside the sheet builder instead
+    /// re-read it on every parent update — and saving is itself a rebuild, so
+    /// the screen's subject could move out from under the person editing it.
+    @State private var configuring: Exercise?
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -131,11 +138,9 @@ struct SessionView: View {
                 }
             )
         }
-        .sheet(isPresented: $isConfiguring) {
-            if let exercise = model.current?.exercise {
-                ExerciseConfigView(exercise: exercise) { increment, loading in
-                    model.updateConfiguration(increment: increment, loading: loading)
-                }
+        .sheet(item: $configuring) { exercise in
+            ExerciseConfigView(exercise: exercise) { increment, loading in
+                model.updateConfiguration(increment: increment, loading: loading)
             }
         }
         .alert("Something went wrong",
@@ -195,8 +200,26 @@ struct SessionView: View {
         guard let loading = exercise.exercise.loading else {
             return "Steps of \(stepText)"
         }
+
+        // Both states below are ones where the plate row is absent, and the
+        // absence is right — a plate total on an unweighed apparatus, or built
+        // from a rack with nothing on it, would be a guess presented as a
+        // number. What was missing is the connection between the two facts:
+        // "not weighed" was already on screen, already tappable, and never
+        // said that weighing it is what brings the plate buttons back (#95).
+        //
+        // Said here rather than as a second button beside this one. The
+        // information and the route were both already here; adding another
+        // tinted caption opening the same sheet would have been two ways into
+        // one screen, not a clearer one.
         guard let base = loading.baseWeight else {
-            return "Steps of \(stepText) · not weighed"
+            return "Steps of \(stepText) · weigh it to add plates"
+        }
+        if loading.availablePlates.isEmpty {
+            // Reachable: clear every plate in config while "I've weighed it"
+            // is on, then switch it off and save. Weighing is not what fixes
+            // this one, so it must not be what the line asks for.
+            return "Steps of \(stepText) · empty \(base.formatted(in: loading.unit)) · no plates set"
         }
         return "Steps of \(stepText) · empty \(base.formatted(in: loading.unit))"
     }
@@ -229,7 +252,7 @@ struct SessionView: View {
             // the moment you notice a stack moves in 15s is the moment you're
             // reading this line (#20).
             Button {
-                isConfiguring = true
+                configuring = exercise.exercise
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "slider.horizontal.3")

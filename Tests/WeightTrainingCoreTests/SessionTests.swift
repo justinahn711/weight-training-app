@@ -279,4 +279,78 @@ final class SessionTests: XCTestCase {
         day.log(SetRecord(exerciseID: day.exercises[0].id, load: Load(70), reps: 10, performedAt: now))
         XCTAssertEqual(day.allLoggedSets.map(\.reps), [10, 12])
     }
+
+    // MARK: - Reconfiguring the lift on screen (#98)
+
+    private func machine() -> Exercise {
+        Exercise(
+            name: "Hack Squat",
+            muscles: [.primary(.quads)],
+            equipment: .plateLoaded,
+            progressionRule: .doubleProgression(range: RepRange(8, 12)),
+            loading: .unmeasuredMachine(sleeves: 2)
+        )
+    }
+
+    private func onScreen(_ lift: Exercise, logged: [SetRecord] = []) -> Session {
+        Session(kind: .legs, exercises: [
+            SessionExercise(
+                exercise: lift,
+                prescription: Prescription(exercise: lift, state: nil),
+                loggedSets: logged
+            )
+        ])
+    }
+
+    /// Correcting a machine mid-session reached the store and not the screen.
+    ///
+    /// `replaceCurrent` is the swap path and deliberately no-ops when the
+    /// replacement is the same lift — re-inserting during a swap would discard
+    /// sets logged against it. But a reconfiguration is the same lift by
+    /// definition, so it was silently dropped: the corrected empty weight
+    /// persisted while the session kept the old one, and the plate buttons it
+    /// unlocks never appeared. Found on a phone, where force-quitting the app
+    /// made the change show up.
+    func testReconfiguringTheCurrentLiftTakesEvenThoughTheIdIsUnchanged() {
+        var session = onScreen(machine())
+        XCTAssertFalse(session.current!.exercise.loading!.isMeasured, "starts unmeasured")
+
+        var measured = session.current!.exercise
+        measured.loading = LoadingStyle(
+            baseWeight: Load(75),
+            sleeves: 2,
+            availablePlates: measured.loading!.availablePlates,
+            unit: .pounds
+        )
+        session.reconfigureCurrent(with: SessionExercise(
+            exercise: measured,
+            prescription: Prescription(exercise: measured, state: nil)
+        ))
+
+        XCTAssertEqual(
+            session.current?.exercise.loading?.baseWeight, Load(75),
+            "the correction has to reach the session, not only the store"
+        )
+        XCTAssertTrue(session.current!.exercise.loading!.isMeasured)
+    }
+
+    /// And the swap path keeps the guard that makes it safe.
+    func testReplacingTheCurrentLiftWithItselfIsStillANoOp() {
+        let lift = machine()
+        let logged = SetRecord(
+            exerciseID: lift.id, load: Load(100), reps: 8,
+            performedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        var session = onScreen(lift, logged: [logged])
+
+        session.replaceCurrent(with: SessionExercise(
+            exercise: lift,
+            prescription: Prescription(exercise: lift, state: nil)
+        ))
+
+        XCTAssertEqual(
+            session.current?.loggedSets.count, 1,
+            "a swap onto the same lift must not discard what was logged against it"
+        )
+    }
 }
