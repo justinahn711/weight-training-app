@@ -50,6 +50,21 @@ struct ExerciseConfigView: View {
     @State private var sleeves = 2
     @State private var plates: Set<Double> = []
 
+    /// The empty weight as it is being typed, in `unit` (#99).
+    ///
+    /// Kept alongside `baseValue` rather than replacing it, because a field
+    /// mid-edit is not always a number — "", "7." and whatever a paste leaves
+    /// all have to be displayable while none of them is a weight. `baseValue`
+    /// holds the last text that *was* one, and that is what Save writes.
+    @State private var baseText = ""
+
+    /// Whether the empty-weight field currently holds the keyboard.
+    ///
+    /// Held so the keyboard can be given up without leaving the sheet: a
+    /// decimal pad has no return key, so without this the only way out of it
+    /// would be Save, which closes the screen.
+    @FocusState private var isEditingBase: Bool
+
     @State private var hasSeeded = false
 
     /// Whether `seed` has run for this presentation.
@@ -106,6 +121,10 @@ struct ExerciseConfigView: View {
         isMeasured = exercise.loading?.isMeasured ?? false
         baseValue = exercise.loading?.baseWeight?.value(in: unit)
             ?? unit.standardBar.value(in: unit)
+        // The field starts on the value it is editing, not empty: this is a
+        // correction to a figure the app already holds, and an empty box would
+        // make it look like the app had forgotten it.
+        baseText = format(baseValue)
         sleeves = exercise.loading?.sleeves ?? 2
         plates = Set(exercise.loading?.availablePlates ?? unit.standardPlates)
         hasSeeded = true
@@ -140,22 +159,49 @@ struct ExerciseConfigView: View {
                         Toggle("I've weighed it", isOn: $isMeasured.animation(.snappy))
 
                         if isMeasured {
-                            // The value sits beside the control rather than
-                            // under it: LabeledContent stacks multiple children,
-                            // which reads as the number belonging to the next
-                            // row down.
-                            Stepper(
-                                value: $baseValue,
-                                in: 0...(unit == .pounds ? 200 : 100),
-                                step: unit == .pounds ? 2.5 : 1.25
-                            ) {
-                                HStack {
-                                    Text("Empty weight")
-                                    Spacer(minLength: 12)
-                                    Text(format(baseValue, withSymbol: true))
-                                        .monospacedDigit()
-                                        .foregroundStyle(.secondary)
+                            // Typed, not stepped (#99). This number is *read* —
+                            // off a sticker, a plate, a scale — so it is exact
+                            // and known before the control exists. Stepping to
+                            // 75 lb from a 45 lb default is twelve taps toward
+                            // a figure already in hand, and the old bound of
+                            // 200 lb was a guess that a heavy sled walks
+                            // straight through. The session screen keeps its
+                            // stepper for the opposite reason: there a weight
+                            // is *chosen*, by nudging a suggestion, and there
+                            // is nothing to read it off.
+                            HStack {
+                                Text("Empty weight")
+                                Spacer(minLength: 12)
+                                // In `unit` — the unit this machine is marked
+                                // in — like everything else on this screen. The
+                                // placeholder is the standing value, so a
+                                // cleared field still shows what Save writes.
+                                TextField(format(baseValue), text: $baseText)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .monospacedDigit()
+                                    .focused($isEditingBase)
+                                Text(unit.symbol)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .onChange(of: baseText) { _, typed in
+                                // Committed keystroke by keystroke, so Save
+                                // writes what is on screen even with the
+                                // keyboard still up. Text that is not a weight
+                                // commits nothing at all — that is what leaves
+                                // the previous value standing instead of
+                                // zeroing it, and a zero here would make every
+                                // plate total wrong by the sled.
+                                if let typedWeight = TypedWeight.parse(typed) {
+                                    baseValue = typedWeight
                                 }
+                            }
+                            .onChange(of: isEditingBase) { _, editing in
+                                // Leaving the field puts the standing value
+                                // back on screen, so a cleared or half-typed
+                                // entry never sits there looking like the one
+                                // that will be saved.
+                                if !editing { baseText = format(baseValue) }
                             }
 
                             Picker("Loads onto", selection: $sleeves) {
@@ -191,6 +237,9 @@ struct ExerciseConfigView: View {
             }
             .navigationTitle(exercise.name)
             .navigationBarTitleDisplayMode(.inline)
+            // A second way out of the decimal pad, for the thumb that is
+            // already on the form rather than up at the toolbar.
+            .scrollDismissesKeyboard(.interactively)
             // Before the first frame the sheet shows, and again on every later
             // presentation — the form is never what a previous edit left behind.
             .onAppear(perform: seed)
@@ -201,6 +250,15 @@ struct ExerciseConfigView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
                         .disabled(!hasSeeded || (isMeasured && plates.isEmpty))
+                }
+
+                // A decimal pad has no return key, and the keyboard covers the
+                // plate toggles under it. Without this the only way out is Save
+                // or Cancel, and both leave the screen — so a lifter correcting
+                // the empty weight could not then go on to fix the rack.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { isEditingBase = false }
                 }
             }
         }
