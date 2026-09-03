@@ -140,7 +140,7 @@ struct SessionView: View {
         }
         .sheet(item: $configuring) { exercise in
             ExerciseConfigView(exercise: exercise) { increment, loading in
-                model.updateConfiguration(increment: increment, loading: loading)
+                model.updateConfiguration(of: exercise, increment: increment, loading: loading)
             }
         }
         .alert("Something went wrong",

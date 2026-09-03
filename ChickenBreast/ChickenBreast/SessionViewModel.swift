@@ -420,13 +420,32 @@ final class SessionViewModel {
     ///
     /// The edit persists, so it survives the session and syncs to your other
     /// devices — a stack measured once should stay measured.
-    func updateConfiguration(increment: LoadIncrement, loading: LoadingStyle?) {
-        guard let current else { return }
+    /// Applies a correction to the lift the config sheet was opened for.
+    ///
+    /// Takes the exercise explicitly rather than reading `current`. The sheet
+    /// pins its subject for the whole presentation (#98), but this wrote
+    /// through `current` — and `current` can move while the sheet is open,
+    /// because `SessionView` stays alive underneath it and the mic keeps
+    /// listening: a spoken "next exercise" advances the session. Saving then
+    /// wrote the increment and loading style you had just corrected for one
+    /// lift onto whichever lift had become current, and left the one you
+    /// edited untouched. Two lifts wrong from one correct action, silently.
+    func updateConfiguration(
+        of exercise: Exercise,
+        increment: LoadIncrement,
+        loading: LoadingStyle?
+    ) {
         do {
-            var corrected = current.exercise
+            var corrected = exercise
             corrected.increment = increment
             corrected.loading = loading
             try store.upsert(corrected)
+
+            // The session's copy only needs rebuilding if this is still the
+            // lift on screen. If the day moved on while the sheet was open the
+            // store now holds the correction and the next visit to that lift
+            // reads it — there is nothing on screen to update.
+            guard let current, current.exercise.id == corrected.id else { return }
 
             let rebuilt = try store.sessionExercise(
                 for: corrected,
