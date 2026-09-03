@@ -38,16 +38,39 @@ public enum TypedWeight {
     /// one — the failure would look like the app being broken, at the machine,
     /// with no way around it.
     public static func parse(_ text: String) -> Double? {
-        // A decimal pad prints the *locale's* separator, so a comma typed into
-        // one is a decimal point rather than a thousands mark — that key is the
-        // only separator the pad offers.
-        let cleaned = text
-            .filter { !$0.isWhitespace }
-            .replacingOccurrences(of: ",", with: ".")
+        // Trimmed at the ends, not stripped throughout. Collapsing internal
+        // whitespace turns a pasted "4 5" into 45, and a space is a thousands
+        // separator in several locales — so stripping it invents a number
+        // rather than reading one.
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
 
-        guard let value = Double(cleaned), value.isFinite, value > 0 else {
-            return nil
+        // Digits and at most one separator, and nothing else.
+        //
+        // `Double(_:)` is strtod-backed, so without this it accepts "1e3" as
+        // 1000, "0x10" as 16 and "+45" as 45. A decimal pad types none of
+        // those, but this type's whole premise is that it sees "whatever a
+        // paste leaves behind", and a sled that silently weighs 1000 is worse
+        // than one the field refuses.
+        let separators = cleaned.filter { $0 == "." || $0 == "," }
+        guard separators.count <= 1,
+              cleaned.allSatisfy({ $0.isNumber || $0 == "." || $0 == "," })
+        else { return nil }
+
+        // A separator followed by exactly three digits is ambiguous: "1,234"
+        // is 1234 to a paste from a grouped number and 1.234 to a decimal
+        // comma, and nothing in the string says which. Refused rather than
+        // guessed — 1.234 kg is not a weight anybody measured, and the guess
+        // that produced it would be believed. "Unknown means silent" applies
+        // to input as much as to output.
+        if let separator = cleaned.firstIndex(where: { $0 == "." || $0 == "," }) {
+            let fraction = cleaned[cleaned.index(after: separator)...]
+            if fraction.count == 3 && fraction.allSatisfy(\.isNumber) { return nil }
         }
+
+        guard let value = Double(cleaned.replacingOccurrences(of: ",", with: ".")),
+              value.isFinite, value > 0
+        else { return nil }
         return value
     }
 }

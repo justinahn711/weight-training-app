@@ -181,27 +181,39 @@ struct ExerciseConfigView: View {
                                     .multilineTextAlignment(.trailing)
                                     .monospacedDigit()
                                     .focused($isEditingBase)
+                                    // The Stepper carried this label; a
+                                    // TextField beside a sibling Text does not
+                                    // inherit it, so VoiceOver was announcing
+                                    // an unnamed field holding a bare number.
+                                    .accessibilityLabel("Empty weight")
+                                    .accessibilityValue("\(baseText.isEmpty ? format(baseValue) : baseText) \(unit.symbol)")
                                 Text(unit.symbol)
                                     .foregroundStyle(.secondary)
                             }
-                            .onChange(of: baseText) { _, typed in
-                                // Committed keystroke by keystroke, so Save
-                                // writes what is on screen even with the
-                                // keyboard still up. Text that is not a weight
-                                // commits nothing at all — that is what leaves
-                                // the previous value standing instead of
-                                // zeroing it, and a zero here would make every
-                                // plate total wrong by the sled.
-                                if let typedWeight = TypedWeight.parse(typed) {
-                                    baseValue = typedWeight
-                                }
-                            }
+                            // Nothing is committed while typing. Committing
+                            // per keystroke looked like it made Save safe with
+                            // the keyboard up, and did the opposite: every
+                            // valid *prefix* committed, so backspacing 102.5
+                            // away walked the stored value 102 → 10 → 1 and
+                            // left 1 standing when the field went empty. A 1 kg
+                            // sled makes every plate line off that machine
+                            // wrong by the whole apparatus, which is the exact
+                            // failure `TypedWeight` exists to prevent.
+                            //
+                            // `baseValue` is the standing value and only `seed`
+                            // sets it. What Save writes is resolved once, from
+                            // the text, falling back to the standing value —
+                            // so a cleared or half-typed field writes what was
+                            // there before, with the keyboard up or not.
                             .onChange(of: isEditingBase) { _, editing in
                                 // Leaving the field puts the standing value
-                                // back on screen, so a cleared or half-typed
-                                // entry never sits there looking like the one
-                                // that will be saved.
-                                if !editing { baseText = format(baseValue) }
+                                // back on screen only when what is there is not
+                                // a weight. A valid entry is left exactly as
+                                // typed: reformatting it to one decimal turned
+                                // 45.25 into 45.2 purely because Done was
+                                // tapped before Save.
+                                guard !editing, TypedWeight.parse(baseText) == nil else { return }
+                                baseText = format(baseValue)
                             }
 
                             Picker("Loads onto", selection: $sleeves) {
@@ -281,7 +293,7 @@ struct ExerciseConfigView: View {
         // for a cable stack.
         let loading: LoadingStyle? = isPlateBuilt
             ? LoadingStyle(
-                baseWeight: isMeasured ? Load(baseValue, unit) : nil,
+                baseWeight: isMeasured ? Load(TypedWeight.parse(baseText) ?? baseValue, unit) : nil,
                 sleeves: sleeves,
                 availablePlates: chosen,
                 unit: unit,
