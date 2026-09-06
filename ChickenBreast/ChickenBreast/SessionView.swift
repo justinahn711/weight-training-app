@@ -132,8 +132,8 @@ struct SessionView: View {
         .sheet(item: $swapping) { replaced in
             SwapSheet(
                 slotName: replaced.slot?.name,
-                candidates: model.swapCandidates,
-                search: { model.searchResults($0) },
+                candidates: model.swapCandidates(for: replaced),
+                search: { model.searchResults($0, for: replaced) },
                 onPick: { exercise in
                     model.swap(replaced, to: exercise)
                     swapping = nil

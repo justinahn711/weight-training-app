@@ -359,19 +359,26 @@ final class SessionViewModel {
     ///
     /// Excludes what's already on screen: offering to swap a lift for itself is
     /// a row that can only waste a tap.
-    var swapCandidates: [Exercise] {
-        guard let current else { return [] }
-        let ids = current.slot?.candidateExerciseIDs ?? []
+    /// Takes the lift being swapped rather than reading `current`.
+    ///
+    /// This is the *read* half of #120 and it was missed the first time. The
+    /// sheet's content closure is re-evaluated when a voice-driven `advance()`
+    /// lands, so a list built from `current` silently repainted to the new
+    /// lift's alternatives — and whatever was picked from it went into the old
+    /// lift's slot. It also filtered out the wrong exercise, so the lift being
+    /// replaced appeared as a candidate for itself and picking it no-opped
+    /// against the Core identity guard with nothing said.
+    func swapCandidates(for replaced: SessionExercise) -> [Exercise] {
+        let ids = replaced.slot?.candidateExerciseIDs ?? []
         let candidates = ids.compactMap { id in allExercises.first { $0.id == id } }
-            .filter { $0.id != current.exercise.id }
+            .filter { $0.id != replaced.exercise.id }
         return ExerciseSearch.rankedByStaleness(candidates, lastPerformed: lastPerformed)
     }
 
     /// Fuzzy search across the whole library, for everything else.
-    func searchResults(_ query: String) -> [Exercise] {
-        guard let current else { return [] }
-        return ExerciseSearch.search(query, in: allExercises)
-            .filter { $0.id != current.exercise.id }
+    func searchResults(_ query: String, for replaced: SessionExercise) -> [Exercise] {
+        ExerciseSearch.search(query, in: allExercises)
+            .filter { $0.id != replaced.exercise.id }
     }
 
     // MARK: - Live Activity (#23)
@@ -495,11 +502,21 @@ final class SessionViewModel {
                 slot: replaced.slot,
                 startedAt: session.startedAt
             )
+            // Asked before the write, and about the lift that was replaced.
+            //
+            // Checking `current?.id == replacement.id` afterwards asks whether
+            // the visible lift happens to be the same *exercise* as the
+            // replacement — `SessionExercise.id` is the exercise's id, not a
+            // per-instance one. Swap Leg Press for Hack Squat while the day has
+            // already advanced to Hack Squat and that reads true, so a lift
+            // nobody touched had its pending load, rest timer and warmup ramp
+            // reset mid-set. `updateConfiguration` already asks it this way.
+            let wasVisible = current?.id == replaced.id
             session.replace(exerciseWithID: replaced.id, with: replacement)
             // Only the visible lift's pending state and advice are the screen's
             // to reset. Swapping one the day has already moved past changes the
             // day, not what is in front of you.
-            guard current?.id == replacement.id else { return }
+            guard wasVisible else { return }
             seedPendingFromCurrent()
             // The old lift's advice has nothing to say about this one.
             rest = nil
