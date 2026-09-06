@@ -254,7 +254,10 @@ struct SettingsView: View {
         gym = updated
         guard let store else { return }
         reracked = try? GymSettings.shared.save(updated, to: store)
-        // Recounted after a save: re-racking can change which lifts match.
-        withOwnRack = try? store.liftsWithOwnRack()
+        // Deliberately not recounted. `GymConfig.applied(to:)` returns early
+        // for an exception and copies `usesGymRack` through unchanged for a
+        // follower, so no gym save can change which lifts are exceptions — the
+        // recount was provably a no-op, and it cost a second full fetch and
+        // decode of the library on the main actor for every plate toggle.
     }
 }

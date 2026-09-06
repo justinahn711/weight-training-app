@@ -138,8 +138,16 @@ struct ExerciseConfigView: View {
     /// the per-lift and gym-level plate sections look identical, and nothing
     /// distinguished editing a default from creating an exception.
     private var followsGymRack: Bool {
-        plates == Set(GymSettings.shared.config.availablePlates)
+        unit == GymSettings.shared.unit
+            && plates == Set(GymSettings.shared.config.availablePlates)
     }
+
+    /// Whether this lift is marked in a different unit from the gym.
+    ///
+    /// Only reachable for a lift that already diverged: `GymConfig.applied` and
+    /// `reconcileGym` re-mark every follower, so a follower's unit is the
+    /// gym's by construction.
+    private var markedInAnotherUnit: Bool { unit != GymSettings.shared.unit }
 
     /// What changing these plates actually costs.
     ///
@@ -149,9 +157,13 @@ struct ExerciseConfigView: View {
     /// can be expected to remember. Hence the button rather than only the text.
     private var plateFooter: String {
         if plates.isEmpty { return "Pick at least one plate size." }
-        return followsGymRack
-            ? "Following your gym's rack. Changing these makes this lift an exception, and it will stop picking up gym-level changes."
-            : "This lift has its own rack and won't follow changes made to the gym."
+        if followsGymRack {
+            return "Following your gym's rack. Changing these makes this lift an exception, and it will stop picking up gym-level changes."
+        }
+        if markedInAnotherUnit {
+            return "This lift is marked in \(unit.displayName.lowercased()) and your gym is in \(GymSettings.shared.unit.displayName.lowercased()), so it keeps its own rack."
+        }
+        return "This lift has its own rack and won't follow changes made to the gym."
     }
 
     /// Whether this lift is built from plates at all. A cable stack has no
@@ -254,6 +266,23 @@ struct ExerciseConfigView: View {
                              : "Until it's weighed, the app logs what you lift but won't guess a plate breakdown — a plate list that's wrong gets followed.")
                     }
 
+                    // An unmeasured lift renders no plate section, but it can
+                    // still hold its own rack — turn "I've weighed it" off on a
+                    // described apparatus and it keeps `availablePlates` and
+                    // `usesGymRack: false`, and a row arriving by sync or
+                    // restore can be in that state from the start. Settings
+                    // counts those lifts, so without this the footer names an
+                    // exception whose own screen offers no way out of it.
+                    if !isMeasured && !followsGymRack && !markedInAnotherUnit {
+                        Section {
+                            Button("Follow the gym's rack") {
+                                plates = Set(GymSettings.shared.config.availablePlates)
+                            }
+                        } footer: {
+                            Text("This lift keeps a rack of its own and won't follow changes made to the gym.")
+                        }
+                    }
+
                     if isMeasured {
                         Section {
                             ForEach(Self.plateChoices(in: unit), id: \.self) { plate in
@@ -261,7 +290,14 @@ struct ExerciseConfigView: View {
                                     Text(format(plate, withSymbol: true))
                                 }
                             }
-                            if !followsGymRack {
+                            // Offered only when the units already agree. The
+                            // gym's plate list is in the gym's unit, and `save`
+                            // writes whatever is here as *this lift's* unit —
+                            // so on a pound-marked lift in a kilogram gym this
+                            // button wrote a kilogram rack labelled pounds: no
+                            // 45s, a 20 lb plate, and no row in
+                            // `plateChoices(in: .pounds)` to untoggle it again.
+                            if !followsGymRack && !markedInAnotherUnit {
                                 Button("Follow the gym's rack") {
                                     plates = Set(GymSettings.shared.config.availablePlates)
                                 }

@@ -64,7 +64,6 @@ extension TrainingStore {
         return changed
     }
 
-    /// - Returns: the number of stored exercises actually rewritten.
     /// How many lifts no longer follow the gym's rack.
     ///
     /// A lift diverges the moment its plate set stops matching the gym's, and
@@ -82,6 +81,7 @@ extension TrainingStore {
             .count
     }
 
+    /// - Returns: the number of stored exercises actually rewritten.
     private func applyGym(_ config: GymConfig) throws -> Int {
         var changed = 0
         for stored in try modelContext.fetch(FetchDescriptor<StoredExercise>()) {
