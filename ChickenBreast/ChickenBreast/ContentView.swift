@@ -201,10 +201,25 @@ struct ContentView: View {
     private func refresh() {
         guard let store else { return }
         cycle = try? store.cyclePosition()
+        loadInsights(from: store)
+    }
+
+    /// Everything the Train screen does not need to become usable.
+    ///
+    /// Ordered by how soon it is likely to be looked at: the dashboard's own
+    /// volume and digest first, then the two that feed destinations nobody has
+    /// opened yet and that grow fastest with a long history.
+    ///
+    /// Still eager rather than loaded when a destination opens, which is the
+    /// last stage #115 describes and the one not done here: the toolbar
+    /// disables History and Volume on these values being absent, so moving to
+    /// on-demand loading changes what an empty state means. That belongs with
+    /// #112, which is reconsidering those destinations anyway.
+    private func loadInsights(from store: TrainingStore) {
         volume = try? store.volumeReport()
+        digest = try? store.digest()
         trends = (try? store.e1RMTrends()) ?? []
         days = (try? store.trainingDays()) ?? []
-        digest = try? store.digest()
     }
 
     /// Names the muscles that are behind, at most three — a list of ten is a
@@ -295,16 +310,23 @@ struct ContentView: View {
             // gym row syncs, but what each lift inherits from it does not.
             try opened.reconcileGym()
             GymSettings.shared.refresh(from: opened)
+            // Train needs the store and the cycle position. Nothing else on
+            // this path is for the screen that is about to appear: volume, the
+            // digest, every e1RM trend and the whole training history were all
+            // computed here first, so opening the app paid for History and
+            // Progress before anyone asked to see them — and that cost grows
+            // with exactly the thing a working app accumulates (#115).
             cycle = try opened.cyclePosition()
-            volume = try opened.volumeReport()
-            trends = try opened.e1RMTrends()
-            days = try opened.trainingDays()
-            digest = try opened.digest()
+            store = opened
+
             // Recovery arrives after the screen does. It's context, never a
             // reason to keep someone waiting on a Health query before they can
             // start a session (#26).
             Task { await loadReadiness() }
-            store = opened
+            // Same rule, now applied to the rest of it: the insights land in a
+            // later turn of the run loop, so the first frame is not waiting on
+            // a fetch of every set ever logged.
+            Task { loadInsights(from: opened) }
             await sync.refresh(store: opened)
             await DigestNotification.schedule()
         } catch {
