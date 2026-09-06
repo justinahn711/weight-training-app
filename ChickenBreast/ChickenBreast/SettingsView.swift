@@ -52,6 +52,10 @@ struct SettingsView: View {
     /// twenty exercises says so instead of happening silently (#73).
     @State private var reracked: Int?
 
+    /// How many lifts stopped following the gym's rack, so the section can say
+    /// that a change made here will not reach all of them.
+    @State private var withOwnRack: Int?
+
     var body: some View {
         Form {
             if store != nil {
@@ -101,6 +105,7 @@ struct SettingsView: View {
             // Pick up a gym that changed while this screen was elsewhere —
             // another device's edit arriving by sync, most often.
             gym = GymSettings.shared.config
+            withOwnRack = try? store?.liftsWithOwnRack()
             authorization = await UNUserNotificationCenter.current()
                 .notificationSettings()
                 .authorizationStatus
@@ -154,10 +159,23 @@ struct SettingsView: View {
         } header: {
             Text("Plates on the rack")
         } footer: {
-            Text(gym.availablePlates.isEmpty
-                 ? "Pick at least one plate size — with none, nothing can be loaded."
-                 : "What every lift is built from, unless it's been given a rack of its own.")
+            Text(plateFooter)
         }
+    }
+
+    /// Says that exceptions exist, and how many.
+    ///
+    /// The old text ended "unless it's been given a rack of its own", which is
+    /// true and unfalsifiable from this screen: nothing said whether any lift
+    /// had one. A change made here quietly skips them, which is #73's rule
+    /// working correctly and looking like it did not (#123).
+    private var plateFooter: String {
+        if gym.availablePlates.isEmpty {
+            return "Pick at least one plate size — with none, nothing can be loaded."
+        }
+        let base = "What every lift is built from, unless it's been given a rack of its own."
+        guard let withOwnRack, withOwnRack > 0 else { return base }
+        return "\(base) \(withOwnRack) \(withOwnRack == 1 ? "lift has" : "lifts have") one, and won't follow changes here."
     }
 
     private var gymFooter: String {
@@ -236,5 +254,10 @@ struct SettingsView: View {
         gym = updated
         guard let store else { return }
         reracked = try? GymSettings.shared.save(updated, to: store)
+        // Deliberately not recounted. `GymConfig.applied(to:)` returns early
+        // for an exception and copies `usesGymRack` through unchanged for a
+        // follower, so no gym save can change which lifts are exceptions — the
+        // recount was provably a no-op, and it cost a second full fetch and
+        // decode of the library on the main actor for every plate toggle.
     }
 }
