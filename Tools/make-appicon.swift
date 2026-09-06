@@ -46,7 +46,11 @@ func write(_ name: String, background: NSColor, mark: NSColor, to directory: Str
     guard let ctx = CGContext(
         data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpace(name: CGColorSpace.sRGB)!,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        // Opaque, not premultipliedLast. An app icon carrying an alpha channel
+        // is rejected on upload with ITMS-90717 — and nothing below that catches
+        // it: `actool` preserves the channel, the simulator build succeeds, and
+        // the icon looks correct everywhere until the submission fails.
+        bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
     ) else { fatalError("could not make a bitmap context") }
 
     drawIcon(size: CGFloat(side), background: background, mark: mark, into: ctx)
@@ -57,7 +61,11 @@ func write(_ name: String, background: NSColor, mark: NSColor, to directory: Str
         fatalError("could not encode png")
     }
     let url = URL(fileURLWithPath: directory).appendingPathComponent(name)
-    try! png.write(to: url)
+    do {
+        try png.write(to: url)
+    } catch {
+        fatalError("could not write \(url.path): \(error.localizedDescription)")
+    }
     print("wrote \(url.lastPathComponent)")
 }
 

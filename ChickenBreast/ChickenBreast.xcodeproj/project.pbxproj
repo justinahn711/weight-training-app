@@ -255,6 +255,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 87A8S37MAY;
 				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				INFOPLIST_FILE = "ChickenBreastWidgets-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ChickenBreastWidgets;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -284,6 +285,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 87A8S37MAY;
 				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				INFOPLIST_FILE = "ChickenBreastWidgets-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ChickenBreastWidgets;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
