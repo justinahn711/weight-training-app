@@ -359,19 +359,26 @@ final class SessionViewModel {
     ///
     /// Excludes what's already on screen: offering to swap a lift for itself is
     /// a row that can only waste a tap.
-    var swapCandidates: [Exercise] {
-        guard let current else { return [] }
-        let ids = current.slot?.candidateExerciseIDs ?? []
+    /// Takes the lift being swapped rather than reading `current`.
+    ///
+    /// This is the *read* half of #120 and it was missed the first time. The
+    /// sheet's content closure is re-evaluated when a voice-driven `advance()`
+    /// lands, so a list built from `current` silently repainted to the new
+    /// lift's alternatives — and whatever was picked from it went into the old
+    /// lift's slot. It also filtered out the wrong exercise, so the lift being
+    /// replaced appeared as a candidate for itself and picking it no-opped
+    /// against the Core identity guard with nothing said.
+    func swapCandidates(for replaced: SessionExercise) -> [Exercise] {
+        let ids = replaced.slot?.candidateExerciseIDs ?? []
         let candidates = ids.compactMap { id in allExercises.first { $0.id == id } }
-            .filter { $0.id != current.exercise.id }
+            .filter { $0.id != replaced.exercise.id }
         return ExerciseSearch.rankedByStaleness(candidates, lastPerformed: lastPerformed)
     }
 
     /// Fuzzy search across the whole library, for everything else.
-    func searchResults(_ query: String) -> [Exercise] {
-        guard let current else { return [] }
-        return ExerciseSearch.search(query, in: allExercises)
-            .filter { $0.id != current.exercise.id }
+    func searchResults(_ query: String, for replaced: SessionExercise) -> [Exercise] {
+        ExerciseSearch.search(query, in: allExercises)
+            .filter { $0.id != replaced.exercise.id }
     }
 
     // MARK: - Live Activity (#23)
@@ -468,10 +475,10 @@ final class SessionViewModel {
     /// mid-session is to do it now. It persists and syncs like any other, and
     /// counts towards volume from its first set — the muscle report reads what
     /// was trained, never what was planned.
-    func createAndSwap(to exercise: Exercise) {
+    func createAndSwap(_ replaced: SessionExercise, to exercise: Exercise) {
         do {
             try store.create(exercise)
-            swap(to: exercise)
+            swap(replaced, to: exercise)
         } catch {
             failure = "Couldn't add that exercise: \(error.localizedDescription)"
         }
@@ -481,15 +488,35 @@ final class SessionViewModel {
     ///
     /// The replacement is rebuilt from disk so it arrives with its own target
     /// and its own history — a swap is not an inheritance.
-    func swap(to exercise: Exercise) {
-        guard let current else { return }
+    /// Takes the lift being replaced rather than reading `current`.
+    ///
+    /// The swap sheet is decided over several seconds and the day can move
+    /// underneath it — the mic keeps listening beneath the sheet, so "next
+    /// exercise" advances the session mid-decision. Reading `current` at the
+    /// end meant picking a replacement for Leg Press could replace Calf Raise
+    /// and leave Leg Press alone (#120). Same shape as #98's config write.
+    func swap(_ replaced: SessionExercise, to exercise: Exercise) {
         do {
             let replacement = try store.sessionExercise(
                 for: exercise,
-                slot: current.slot,
+                slot: replaced.slot,
                 startedAt: session.startedAt
             )
-            session.replaceCurrent(with: replacement)
+            // Asked before the write, and about the lift that was replaced.
+            //
+            // Checking `current?.id == replacement.id` afterwards asks whether
+            // the visible lift happens to be the same *exercise* as the
+            // replacement — `SessionExercise.id` is the exercise's id, not a
+            // per-instance one. Swap Leg Press for Hack Squat while the day has
+            // already advanced to Hack Squat and that reads true, so a lift
+            // nobody touched had its pending load, rest timer and warmup ramp
+            // reset mid-set. `updateConfiguration` already asks it this way.
+            let wasVisible = current?.id == replaced.id
+            session.replace(exerciseWithID: replaced.id, with: replacement)
+            // Only the visible lift's pending state and advice are the screen's
+            // to reset. Swapping one the day has already moved past changes the
+            // day, not what is in front of you.
+            guard wasVisible else { return }
             seedPendingFromCurrent()
             // The old lift's advice has nothing to say about this one.
             rest = nil

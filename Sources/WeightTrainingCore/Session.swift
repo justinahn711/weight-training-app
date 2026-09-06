@@ -123,6 +123,22 @@ public struct Session: Hashable, Sendable {
         exercises[index] = replacement
     }
 
+    /// Replaces a named lift, wherever it sits in the day.
+    ///
+    /// Not `replaceCurrent`, because a swap is decided in a sheet and the day
+    /// can move underneath it: `SessionView` stays alive beneath the swap
+    /// sheet and the mic keeps listening, so a spoken "next exercise" advances
+    /// the session between choosing a replacement and picking it. Targeting
+    /// the current index then swapped whichever lift had become current and
+    /// left the one being looked at alone (#120).
+    ///
+    /// Inherits the identity guard: replacing a lift with itself is still a
+    /// no-op, which is what a swap onto the same exercise should be.
+    public mutating func replace(exerciseWithID id: UUID, with replacement: SessionExercise) {
+        guard let index = exercises.firstIndex(where: { $0.id == id }) else { return }
+        replace(at: index, with: replacement)
+    }
+
     /// Replaces whatever is on screen now — with a *different* lift.
     ///
     /// Swap-shaped, and inherits the identity guard above: replacing a lift
