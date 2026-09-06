@@ -130,6 +130,30 @@ struct ExerciseConfigView: View {
         hasSeeded = true
     }
 
+    /// Whether this lift still takes its plates from the gym.
+    ///
+    /// The same rule `save()` writes to `usesGymRack`: a lift follows the gym
+    /// exactly while its plate set equals the gym's, and diverges the moment it
+    /// does not. Computed here so the screen can say which of those is true —
+    /// the per-lift and gym-level plate sections look identical, and nothing
+    /// distinguished editing a default from creating an exception.
+    private var followsGymRack: Bool {
+        plates == Set(GymSettings.shared.config.availablePlates)
+    }
+
+    /// What changing these plates actually costs.
+    ///
+    /// The divergence is silent and effectively one-way today: `usesGymRack` is
+    /// recomputed on save as "does this equal the gym's set", so a lift only
+    /// rejoins by being edited back to exactly the gym's plates — which nobody
+    /// can be expected to remember. Hence the button rather than only the text.
+    private var plateFooter: String {
+        if plates.isEmpty { return "Pick at least one plate size." }
+        return followsGymRack
+            ? "Following your gym's rack. Changing these makes this lift an exception, and it will stop picking up gym-level changes."
+            : "This lift has its own rack and won't follow changes made to the gym."
+    }
+
     /// Whether this lift is built from plates at all. A cable stack has no
     /// base weight to measure and no plates to pick.
     private var isPlateBuilt: Bool { exercise.loading != nil }
@@ -237,12 +261,19 @@ struct ExerciseConfigView: View {
                                     Text(format(plate, withSymbol: true))
                                 }
                             }
+                            if !followsGymRack {
+                                Button("Follow the gym's rack") {
+                                    plates = Set(GymSettings.shared.config.availablePlates)
+                                }
+                            }
                         } header: {
-                            Text("Plates on the rack")
+                            // Named as the exception it is. The identical
+                            // section in Settings is the one people should
+                            // reach for; this overrides it for one apparatus,
+                            // and nothing said so (#123).
+                            Text(followsGymRack ? "Plates on the rack" : "This lift's own rack")
                         } footer: {
-                            Text(plates.isEmpty
-                                 ? "Pick at least one plate size."
-                                 : "Suggestions are limited to weights these plates can build.")
+                            Text(plateFooter)
                         }
                     }
                 }

@@ -65,6 +65,23 @@ extension TrainingStore {
     }
 
     /// - Returns: the number of stored exercises actually rewritten.
+    /// How many lifts no longer follow the gym's rack.
+    ///
+    /// A lift diverges the moment its plate set stops matching the gym's, and
+    /// nothing on screen said so — nor which lifts, nor that the divergence is
+    /// effectively one-way, since `usesGymRack` is recomputed as "does this
+    /// equal the gym's set" and rejoining means reproducing it exactly (#123).
+    ///
+    /// Counted rather than listed: the gym screen needs to say that exceptions
+    /// exist, and the lift's own screen is where one is inspected and undone.
+    /// An unreadable row is skipped for the same reason `applyGym` skips it.
+    public func liftsWithOwnRack() throws -> Int {
+        try modelContext.fetch(FetchDescriptor<StoredExercise>())
+            .compactMap { try? $0.toDomain() }
+            .filter { $0.loading?.usesGymRack == false }
+            .count
+    }
+
     private func applyGym(_ config: GymConfig) throws -> Int {
         var changed = 0
         for stored in try modelContext.fetch(FetchDescriptor<StoredExercise>()) {

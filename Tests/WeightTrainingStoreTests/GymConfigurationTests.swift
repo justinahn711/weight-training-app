@@ -119,6 +119,45 @@ final class GymConfigurationTests: XCTestCase {
         XCTAssertEqual(report.gymConfigs, 1)
         XCTAssertEqual(try store.gymConfig().unit, .kilograms)
     }
+
+    // MARK: - Lifts that stopped following the gym (#123)
+
+    /// A lift silently stops tracking the gym the moment its plates differ.
+    ///
+    /// `usesGymRack` is recomputed on save as "does this equal the gym's set",
+    /// so describing one apparatus specifically detaches it — correctly, per
+    /// #73 — but nothing on screen said it had happened, nor how many lifts it
+    /// had happened to. Someone asked whether plates were a gym setting at all,
+    /// which is what a silent exception looks like from the outside.
+    func testCountsOnlyTheLiftsThatStoppedFollowing() throws {
+        let store = try TrainingStore.inMemory()
+        var follower = ExerciseLibrary.all.first { $0.equipment == .barbell }!
+        var exception = ExerciseLibrary.all.first { $0.name == "Hack Squat" }!
+
+        follower.loading = LoadingStyle(
+            baseWeight: Load(45), sleeves: 2,
+            availablePlates: MassUnit.pounds.standardPlates,
+            unit: .pounds, usesGymRack: true
+        )
+        exception.loading = LoadingStyle(
+            baseWeight: Load(75), sleeves: 2,
+            availablePlates: [25, 10],
+            unit: .pounds, usesGymRack: false
+        )
+        try store.upsert([follower, exception])
+
+        XCTAssertEqual(try store.liftsWithOwnRack(), 1, "only the described apparatus")
+    }
+
+    /// A store where nothing has been described reports none, rather than
+    /// reporting every lift because `loading` happens to be nil.
+    func testALiftWithNoRackAtAllIsNotAnException() throws {
+        let store = try TrainingStore.inMemory()
+        let cable = ExerciseLibrary.all.first { $0.loading == nil }!
+        try store.upsert(cable)
+        XCTAssertEqual(try store.liftsWithOwnRack(), 0)
+    }
+
 }
 
 extension GymConfigurationTests {
