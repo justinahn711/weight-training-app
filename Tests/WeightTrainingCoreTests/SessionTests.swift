@@ -353,4 +353,64 @@ final class SessionTests: XCTestCase {
             "a swap onto the same lift must not discard what was logged against it"
         )
     }
+
+    // MARK: - Swapping a lift the day has moved past (#120)
+
+    /// A swap is decided in a sheet, and the day can move while it is open.
+    ///
+    /// `SessionView` stays alive beneath the swap sheet and the mic keeps
+    /// listening, so a spoken "next exercise" advances the session between
+    /// choosing a replacement and picking it. Targeting the current index then
+    /// swapped whichever lift had become current and left the one being looked
+    /// at untouched — two lifts wrong from one correct action, the same shape
+    /// as the config write in #98.
+    func testSwappingALiftTheDayHasMovedPastLandsOnThatLift() {
+        var day = session(["A", "B", "C"])
+        let opened = day.current!            // A, the lift the sheet was opened for
+        day.advance()                        // "next exercise" — current is now B
+        XCTAssertEqual(day.current?.exercise.name, "B")
+
+        let replacement = SessionExercise(
+            exercise: exercise("D"),
+            prescription: Prescription(exercise: exercise("D"), state: nil)
+        )
+        day.replace(exerciseWithID: opened.id, with: replacement)
+
+        XCTAssertEqual(day.exercises.map(\.exercise.name), ["D", "B", "C"],
+                       "the swap lands where it was aimed")
+        XCTAssertEqual(day.current?.exercise.name, "B",
+                       "and the lift the day moved on to is untouched")
+    }
+
+    /// A lift that is no longer in the day at all is not a crash and not a
+    /// silent write somewhere else.
+    func testSwappingALiftThatIsNoLongerThereChangesNothing() {
+        var day = session(["A", "B", "C"])
+        let stranger = SessionExercise(
+            exercise: exercise("Z"),
+            prescription: Prescription(exercise: exercise("Z"), state: nil)
+        )
+        day.replace(exerciseWithID: UUID(), with: stranger)
+        XCTAssertEqual(day.exercises.map(\.exercise.name), ["A", "B", "C"])
+    }
+
+    /// The identity guard still applies: swapping a lift for itself is a no-op,
+    /// so sets logged against it this session survive.
+    func testSwappingALiftForItselfKeepsWhatWasLoggedAgainstIt() {
+        let lift = exercise("A")
+        var day = Session(kind: .push, exercises: [
+            SessionExercise(
+                exercise: lift,
+                prescription: Prescription(exercise: lift, state: nil),
+                loggedSets: [SetRecord(exerciseID: lift.id, load: Load(100), reps: 8,
+                                       performedAt: Date(timeIntervalSince1970: 1_772_000_000))]
+            )
+        ])
+        day.replace(exerciseWithID: lift.id, with: SessionExercise(
+            exercise: lift,
+            prescription: Prescription(exercise: lift, state: nil)
+        ))
+        XCTAssertEqual(day.current?.loggedSets.count, 1)
+    }
+
 }

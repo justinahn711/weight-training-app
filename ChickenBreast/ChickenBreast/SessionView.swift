@@ -18,7 +18,13 @@ struct SessionView: View {
     private var gym: GymSettings { .shared }
 
     @State var model: SessionViewModel
-    @State private var isSwapping = false
+    /// The lift the swap sheet was opened for, rather than a bare flag (#120).
+    ///
+    /// Same reason as `configuring`: the sheet is decided over seconds, the mic
+    /// keeps listening beneath it, and a spoken "next exercise" moves the day
+    /// while it is open. Carrying the subject means the swap lands where it was
+    /// aimed.
+    @State private var swapping: SessionExercise?
 
     /// The lift whose configuration is open, rather than a bare flag (#98).
     ///
@@ -123,18 +129,18 @@ struct SessionView: View {
             model.handle(parsed)
         }
         .onDisappear { voice.stop() }
-        .sheet(isPresented: $isSwapping) {
+        .sheet(item: $swapping) { replaced in
             SwapSheet(
-                slotName: model.current?.slot?.name,
+                slotName: replaced.slot?.name,
                 candidates: model.swapCandidates,
                 search: { model.searchResults($0) },
                 onPick: { exercise in
-                    model.swap(to: exercise)
-                    isSwapping = false
+                    model.swap(replaced, to: exercise)
+                    swapping = nil
                 },
                 onCreate: { exercise in
-                    model.createAndSwap(to: exercise)
-                    isSwapping = false
+                    model.createAndSwap(replaced, to: exercise)
+                    swapping = nil
                 }
             )
         }
@@ -170,7 +176,7 @@ struct SessionView: View {
                 }
             }
             Button {
-                isSwapping = true
+                swapping = exercise
             } label: {
                 HStack(spacing: 6) {
                     Text(exercise.exercise.name)

@@ -468,10 +468,10 @@ final class SessionViewModel {
     /// mid-session is to do it now. It persists and syncs like any other, and
     /// counts towards volume from its first set — the muscle report reads what
     /// was trained, never what was planned.
-    func createAndSwap(to exercise: Exercise) {
+    func createAndSwap(_ replaced: SessionExercise, to exercise: Exercise) {
         do {
             try store.create(exercise)
-            swap(to: exercise)
+            swap(replaced, to: exercise)
         } catch {
             failure = "Couldn't add that exercise: \(error.localizedDescription)"
         }
@@ -481,15 +481,25 @@ final class SessionViewModel {
     ///
     /// The replacement is rebuilt from disk so it arrives with its own target
     /// and its own history — a swap is not an inheritance.
-    func swap(to exercise: Exercise) {
-        guard let current else { return }
+    /// Takes the lift being replaced rather than reading `current`.
+    ///
+    /// The swap sheet is decided over several seconds and the day can move
+    /// underneath it — the mic keeps listening beneath the sheet, so "next
+    /// exercise" advances the session mid-decision. Reading `current` at the
+    /// end meant picking a replacement for Leg Press could replace Calf Raise
+    /// and leave Leg Press alone (#120). Same shape as #98's config write.
+    func swap(_ replaced: SessionExercise, to exercise: Exercise) {
         do {
             let replacement = try store.sessionExercise(
                 for: exercise,
-                slot: current.slot,
+                slot: replaced.slot,
                 startedAt: session.startedAt
             )
-            session.replaceCurrent(with: replacement)
+            session.replace(exerciseWithID: replaced.id, with: replacement)
+            // Only the visible lift's pending state and advice are the screen's
+            // to reset. Swapping one the day has already moved past changes the
+            // day, not what is in front of you.
+            guard current?.id == replacement.id else { return }
             seedPendingFromCurrent()
             // The old lift's advice has nothing to say about this one.
             rest = nil
