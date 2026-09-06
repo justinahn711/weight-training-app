@@ -331,7 +331,14 @@ struct ExerciseConfigView: View {
                 // Picking a rack that differs from the gym's is what makes this
                 // lift an exception, and exceptions are left alone when the gym
                 // changes (#73). Leaving it matching means it keeps following.
-                usesGymRack: chosen == GymSettings.shared.config.availablePlates
+                // Compared as a set, matching `followsGymRack` above. This
+                // compared a descending-sorted array against the gym's, which
+                // agrees only while every writer happens to sort the same way —
+                // and a restored archive carries whatever order the file had.
+                // Two comparisons of one question, one of them order-sensitive,
+                // is how a header comes to say "follows the gym" while the
+                // stored flag says it does not.
+                usesGymRack: followsGymRack
               )
             : nil
         onSave(increment, loading)
