@@ -219,9 +219,12 @@ struct SessionView: View {
             // Reachable: clear every plate in config while "I've weighed it"
             // is on, then switch it off and save. Weighing is not what fixes
             // this one, so it must not be what the line asks for.
-            return "Steps of \(stepText) · empty \(base.formatted(in: loading.unit)) · no plates set"
+            return "Steps of \(stepText) · empty \(loading.unit.format(base.value(in: loading.unit))) · no plates set"
         }
-        return "Steps of \(stepText) · empty \(base.formatted(in: loading.unit))"
+        // Native, not converted: an empty weight is measured on the
+        // apparatus in its own unit. Through `formatted(in:)` the config
+        // sheet read back a typed 45.25 while this line said 45.3.
+        return "Steps of \(stepText) · empty \(loading.unit.format(base.value(in: loading.unit)))"
     }
 
     /// What the app assumes, then what it therefore proposes, then what was
@@ -353,6 +356,7 @@ struct SessionView: View {
             if !model.plateOptions.isEmpty {
                 PlateRow(
                     plates: model.plateOptions,
+                    unit: exercise.exercise.loading?.unit ?? gym.unit,
                     onAdd: { model.addPlate($0) },
                     onClear: { model.clearToBar() }
                 )
@@ -885,6 +889,12 @@ enum RestAlert {
 /// barbell is 90 lb.
 private struct PlateRow: View {
     let plates: [Double]
+
+    /// The rack's unit, so the sizes render at the precision the rack has.
+    /// Passed in rather than read from `GymSettings`: a lift can carry a rack
+    /// that differs from the gym's, and the plates on the button are that
+    /// lift's.
+    let unit: MassUnit
     let onAdd: (Double) -> Void
     let onClear: () -> Void
 
@@ -929,10 +939,11 @@ private struct PlateRow: View {
         }
     }
 
+    /// Plate sizes are native to the rack, so the unit's own rule renders
+    /// them. This was a fifth copy of the old one-decimal rule — the buttons
+    /// you tap while loading a bar would have offered a "1.2" in a metric gym.
     private func label(_ plate: Double) -> String {
-        plate == plate.rounded()
-            ? String(format: "%.0f", plate)
-            : String(format: "%.1f", plate)
+        unit.format(plate, withSymbol: false)
     }
 }
 

@@ -183,6 +183,46 @@ final class MassUnitTests: XCTestCase {
         }
     }
 
+    /// The plate sizes the screens actually offer, which are not the same
+    /// list as `standardPlates`.
+    ///
+    /// `plateChoices` in the config and settings screens offers 1.25 and 15 in
+    /// pounds too — real toggles, and neither appears in `standardPlates`, so
+    /// looping that list alone left the pound-side 1.25 untested while the
+    /// whole issue was about a 1.25 rendering wrong.
+    func testEveryPlateAScreenOffersRendersAsItself() {
+        let offered: [MassUnit: [Double]] = [
+            .pounds: [45, 35, 25, 15, 10, 5, 2.5, 1.25],
+            .kilograms: [25, 20, 15, 10, 5, 2.5, 1.25],
+        ]
+        for (unit, plates) in offered {
+            for plate in plates {
+                let rendered = unit.format(plate, withSymbol: false)
+                XCTAssertEqual(
+                    Double(rendered), plate,
+                    "\(plate) \(unit.symbol) is a plate someone can toggle on"
+                )
+            }
+        }
+    }
+
+    /// The plate line read while loading a bar had its own copy of the rule.
+    ///
+    /// `PlateBreakdown.displayLine` inlined one decimal against native plate
+    /// sizes, so a metric breakdown containing the 1.25 pair rendered "1.2" —
+    /// the same nonexistent plate, on the one screen consulted with a bar in
+    /// hand rather than out of curiosity.
+    func testThePlateLineRendersAMetricPairInFull() {
+        let style = LoadingStyle(
+            baseWeight: Load(20, .kilograms),
+            sleeves: 2,
+            availablePlates: [25, 20, 15, 10, 5, 2.5, 1.25],
+            unit: .kilograms
+        )
+        let breakdown = style.breakdown(for: Load(22.5, .kilograms))
+        XCTAssertEqual(breakdown?.displayLine, "1.25", "a 1.25 kg pair, named properly")
+    }
+
     /// Trailing zeros claim precision the number does not have.
     func testWholeWeightsCarryNoDecimals() {
         XCTAssertEqual(MassUnit.pounds.format(45), "45 lb")

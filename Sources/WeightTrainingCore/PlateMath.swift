@@ -49,7 +49,11 @@ public struct PlateBreakdown: Hashable, Sendable {
         guard !isBarOnly else { return sleeves == 1 ? "Empty" : "Bar only" }
         return perSide
             .flatMap { entry in Array(repeating: entry.plate, count: entry.count) }
-            .map { $0 == $0.rounded() ? String(format: "%.0f", $0) : String(format: "%.1f", $0) }
+            // Native plate sizes, so the rack's own unit renders them: this
+            // had its own inlined one-decimal rule and turned the 1.25 kg pair
+            // into "1.2" — a plate nobody owns, on the line you read with a
+            // bar in your hands.
+            .map { unit.format($0, withSymbol: false) }
             .joined(separator: " · ")
     }
 }

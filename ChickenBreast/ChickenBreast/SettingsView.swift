@@ -177,11 +177,12 @@ struct SettingsView: View {
             : [25, 20, 15, 10, 5, 2.5, 1.25]
     }
 
-    private func format(_ value: Double) -> String {
-        let number = value == value.rounded()
-            ? String(format: "%.0f", value)
-            : String(format: "%.1f", value)
-        return "\(number) \(gym.unit.symbol)"
+    /// Delegates to Core. This was a second verbatim copy of the old
+    /// one-decimal rule, and it drove the "Plates on the rack" toggles — so
+    /// the gym screen offered a 1.2 kg plate and a 1.2 lb plate, neither of
+    /// which exists.
+    private func format(_ value: Double, withSymbol: Bool = false) -> String {
+        gym.unit.format(value, withSymbol: withSymbol)
     }
 
     private var unitBinding: Binding<MassUnit> {

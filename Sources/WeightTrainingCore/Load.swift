@@ -126,8 +126,14 @@ public struct LoadIncrement: Hashable, Codable, Sendable {
     }
 
     /// `5 lb`, `2.5 kg`.
+    ///
+    /// Rendered from `nativeValue` rather than through `format(pounds:)`. An
+    /// increment is marked on the equipment, not converted to it — which is
+    /// the whole reason this type carries a unit — so it takes the native
+    /// rule. Through the converted one, a rack stepping by 1.25 kg read
+    /// "Steps of 1.3 kg".
     public var formatted: String {
-        unit.format(pounds: pounds)
+        unit.format(nativeValue)
     }
 
     /// Rows written before #67 carry no unit and are pounds by definition,
