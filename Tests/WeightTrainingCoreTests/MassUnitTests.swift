@@ -162,6 +162,56 @@ final class MassUnitTests: XCTestCase {
         XCTAssertEqual(back.availablePlates, rack.availablePlates)
         XCTAssertTrue(back.canBuild(Load(100, .kilograms)))
     }
+
+    // MARK: - Rendering precision (#116)
+
+    /// The smallest standard kilogram plate used to render as 1.2.
+    ///
+    /// The rule was one decimal, and its comment called that "finer than any
+    /// plate in either world". `standardPlates` for kilograms ends in 1.25, so
+    /// it was not — the plate toggles in the config screen offered a "1.2 kg"
+    /// plate that does not exist, and every `Load` shown in kilograms was
+    /// subject to the same trim.
+    func testTheSmallestKilogramPlateRendersInFull() {
+        XCTAssertEqual(MassUnit.kilograms.format(1.25), "1.25 kg")
+        for plate in MassUnit.kilograms.standardPlates {
+            let rendered = MassUnit.kilograms.format(plate, withSymbol: false)
+            XCTAssertEqual(
+                Double(rendered), plate,
+                "\(plate) kg is a real plate and has to render as itself"
+            )
+        }
+    }
+
+    /// Trailing zeros claim precision the number does not have.
+    func testWholeWeightsCarryNoDecimals() {
+        XCTAssertEqual(MassUnit.pounds.format(45), "45 lb")
+        XCTAssertEqual(MassUnit.pounds.format(2.5), "2.5 lb")
+        for plate in MassUnit.pounds.standardPlates {
+            let rendered = MassUnit.pounds.format(plate, withSymbol: false)
+            XCTAssertEqual(Double(rendered), plate)
+        }
+    }
+
+    /// The original and correct reason for rounding at all: a kilogram value
+    /// stored in canonical pounds and read back is not quite itself, and
+    /// showing 99.99999999999999 would be an unforced insult.
+    func testConversionNoiseStaysHidden() {
+        let hundredKilos = Load(100, .kilograms)
+        XCTAssertEqual(hundredKilos.formatted(in: .kilograms), "100 kg")
+
+        let twentyKilos = Load(20, .kilograms)
+        XCTAssertEqual(twentyKilos.formatted(in: .kilograms), "20 kg")
+    }
+
+    /// A typed empty weight survives being shown and read back — the round
+    /// trip that put 45.2 in the field after typing 45.25.
+    func testATypedWeightSurvivesRendering() {
+        for typed in [45.25, 27.5, 102.5, 1.25, 75] {
+            let rendered = MassUnit.pounds.format(typed, withSymbol: false)
+            XCTAssertEqual(Double(rendered), typed, "\(typed) changed on the way to the screen")
+        }
+    }
 }
 
 /// Snapping a metric load used to lose a whole increment to float error.
@@ -195,4 +245,5 @@ final class MetricSnapTests: XCTestCase {
         let sixty = step.snap(Load(Load(100, .kilograms).pounds * 0.6))
         XCTAssertEqual(sixty.value(in: .kilograms), 60.0, accuracy: 0.0001)
     }
+
 }

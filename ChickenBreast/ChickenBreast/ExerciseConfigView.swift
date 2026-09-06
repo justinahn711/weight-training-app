@@ -308,13 +308,14 @@ struct ExerciseConfigView: View {
     }
 
     /// A value already in `unit`, so this only tidies the decimal.
+    /// Delegates to Core rather than keeping a second rule.
+    ///
+    /// This had its own one-decimal copy, which is how a 1.25 kg plate toggle
+    /// read "1.2 kg" and a typed 45.25 came back as 45.2 after a reopen — the
+    /// seeded text was formatted through it. One rule, checked by the suite.
     private func format(
         _ value: Double, in unit: MassUnit? = nil, withSymbol: Bool = false
     ) -> String {
-        let unit = unit ?? self.unit
-        let number = value == value.rounded()
-            ? String(format: "%.0f", value)
-            : String(format: "%.1f", value)
-        return withSymbol ? "\(number) \(unit.symbol)" : number
+        (unit ?? self.unit).format(value, withSymbol: withSymbol)
     }
 }

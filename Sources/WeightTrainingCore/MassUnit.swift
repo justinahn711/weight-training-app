@@ -98,15 +98,48 @@ public enum MassUnit: String, Codable, CaseIterable, Sendable {
     /// `225 lb`, `102.5 kg` — no trailing `.0`, because most loads are whole
     /// and the session screen is read at arm's length.
     ///
-    /// Rounded to one decimal, which is finer than any plate in either world
-    /// and coarse enough to hide the float noise a conversion leaves behind:
-    /// 100 kg stored as pounds and read back is 99.99999999999999, and showing
-    /// that would be an unforced insult.
+    /// A *converted* weight as text, to one decimal.
+    ///
+    /// One decimal is right here and two would be a lie. 225 lb is 102.0582 kg,
+    /// and rendering "102.06 kg" claims a precision the lift does not have —
+    /// nobody loaded 102.06 of anything, they loaded 225 lb. One decimal is
+    /// also what hides the float noise a conversion leaves behind: 100 kg
+    /// stored as pounds and read back is 99.99999999999999.
+    ///
+    /// Native values are different and use `format(_:withSymbol:)` below.
     public func format(pounds: Double) -> String {
         let value = self.value(fromPounds: pounds)
         let rounded = (value * 10).rounded() / 10
         return rounded == rounded.rounded()
             ? String(format: "%.0f %@", rounded, symbol)
             : String(format: "%.1f %@", rounded, symbol)
+    }
+
+    /// A weight that is already in this unit, at the precision the equipment
+    /// actually has.
+    ///
+    /// Two decimals, because equipment has them: the smallest standard
+    /// kilogram plate is 1.25. The previous single rule rounded to one decimal
+    /// and called that "finer than any plate in either world", which was
+    /// wrong — the 1.25 kg plate toggle rendered as "1.3 kg", a plate nobody
+    /// owns. A typed empty weight of 45.25 came back as 45.3 the same way.
+    ///
+    /// The distinction from `format(pounds:)` is not stylistic. A converted
+    /// weight is an approximation of a number the lifter never chose, so extra
+    /// digits are noise. A native one — a plate size, a typed empty weight —
+    /// is exact, and trimming it changes a fact.
+    ///
+    /// Trailing zeros are still trimmed: a 45 lb plate is `45`, not `45.00`.
+    public func format(_ value: Double, withSymbol: Bool = true) -> String {
+        let rounded = (value * 100).rounded() / 100
+        let number: String
+        if rounded == rounded.rounded() {
+            number = String(format: "%.0f", rounded)
+        } else if (rounded * 10) == (rounded * 10).rounded() {
+            number = String(format: "%.1f", rounded)
+        } else {
+            number = String(format: "%.2f", rounded)
+        }
+        return withSymbol ? "\(number) \(symbol)" : number
     }
 }
