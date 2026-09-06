@@ -15,6 +15,12 @@ import WeightTrainingStore
 /// the app suggests rather than decides.
 struct ContentView: View {
     @State private var store: TrainingStore?
+
+    /// Whether the deferred insights have landed.
+    ///
+    /// Distinguishes "not computed yet" from "computed and genuinely empty",
+    /// which staging the launch made two different things for the first time.
+    @State private var insightsLoaded = false
     @State private var startupFailure: String?
     @State private var route: DayKind?
     @State private var cycle: CyclePosition?
@@ -50,6 +56,14 @@ struct ContentView: View {
                     Button("Progress", systemImage: "chart.xyaxis.line") {
                         showingTrends = true
                     }
+                    // Volume and History were already guarded; Progress was
+                    // not, and staging the launch gave that a window it never
+                    // had. Between the store publishing and the insights
+                    // landing, `trends` is empty and indistinguishable from a
+                    // lifter who has never trained — so Progress would greet
+                    // someone with a year of history with "Trends appear once
+                    // you've trained a lift".
+                    .disabled(!insightsLoaded)
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Volume", systemImage: "chart.bar") { showingVolume = true }
@@ -89,6 +103,17 @@ struct ContentView: View {
             }
         }
         .task { await openStore() }
+        // Keyed on the store arriving, so this runs after SwiftUI has updated
+        // for it — which is the point: Train is on screen and interactive
+        // before anything reads every set ever logged.
+        .task(id: store == nil) {
+            guard let store else { return }
+            do {
+                try loadInsights(from: store)
+            } catch {
+                startupFailure = String(describing: error)
+            }
+        }
         // Recomputed on return from a session, so finishing a push day moves
         // the home screen on to pull without a relaunch.
         .onChange(of: route) { _, newValue in
@@ -201,10 +226,38 @@ struct ContentView: View {
     private func refresh() {
         guard let store else { return }
         cycle = try? store.cyclePosition()
-        volume = try? store.volumeReport()
-        trends = (try? store.e1RMTrends()) ?? []
-        days = (try? store.trainingDays()) ?? []
-        digest = try? store.digest()
+        // Deliberately not surfaced: a reload after a session must not replace
+        // a working screen with a startup failure.
+        try? loadInsights(from: store)
+    }
+
+    /// Everything the Train screen does not need to become usable.
+    ///
+    /// Ordered by how soon it is likely to be looked at: the dashboard's own
+    /// volume and digest first, then the two that feed destinations nobody has
+    /// opened yet and that grow fastest with a long history.
+    ///
+    /// Still eager rather than loaded when a destination opens, which is the
+    /// last stage #115 describes and the one not done here: the toolbar
+    /// disables History and Volume on these values being absent, so moving to
+    /// on-demand loading changes what an empty state means. That belongs with
+    /// #112, which is reconsidering those destinations anyway.
+    /// Throws, so the caller decides what a failure means.
+    ///
+    /// At launch it means the store is broken and should say so: these reads
+    /// used to sit inside `openStore`'s do/catch, and behind a `try?` a store
+    /// that answered `cyclePosition()` then threw on `allSets()` opened looking
+    /// healthy, with Volume and History permanently disabled and nothing to
+    /// distinguish it from a fresh install.
+    ///
+    /// After a session it means something else entirely, and must not blank a
+    /// screen someone is mid-workout on — `refresh` keeps the old `try?`.
+    private func loadInsights(from store: TrainingStore) throws {
+        volume = try store.volumeReport()
+        digest = try store.digest()
+        trends = try store.e1RMTrends()
+        days = try store.trainingDays()
+        insightsLoaded = true
     }
 
     /// Names the muscles that are behind, at most three — a list of ten is a
@@ -295,16 +348,25 @@ struct ContentView: View {
             // gym row syncs, but what each lift inherits from it does not.
             try opened.reconcileGym()
             GymSettings.shared.refresh(from: opened)
+            // Train needs the store and the cycle position. Nothing else on
+            // this path is for the screen that is about to appear: volume, the
+            // digest, every e1RM trend and the whole training history were all
+            // computed here first, so opening the app paid for History and
+            // Progress before anyone asked to see them — and that cost grows
+            // with exactly the thing a working app accumulates (#115).
             cycle = try opened.cyclePosition()
-            volume = try opened.volumeReport()
-            trends = try opened.e1RMTrends()
-            days = try opened.trainingDays()
-            digest = try opened.digest()
+            store = opened
+
             // Recovery arrives after the screen does. It's context, never a
             // reason to keep someone waiting on a Health query before they can
             // start a session (#26).
             Task { await loadReadiness() }
-            store = opened
+            // The insights load from `.task(id: storeIsOpen)` below rather
+            // than from a `Task {}` here. A Task enqueued at this point is a
+            // main-actor job, not a later frame: `openStore` suspends two
+            // statements down at `sync.refresh`, the job drains in the same
+            // run-loop iteration, and the render this staging exists to unblock
+            // can still end up behind it.
             await sync.refresh(store: opened)
             await DigestNotification.schedule()
         } catch {
