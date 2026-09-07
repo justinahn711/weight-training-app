@@ -24,28 +24,28 @@ enum RestAlertSettings {
     /// Whether the banner reports when the buzz actually went out.
     static let timingKey = "rest-alert-timing"
 
+    /// Diagnostic detail is opt-in. Keep this value shared with both
+    /// `@AppStorage` readers so an unset preference means the same thing at
+    /// launch, in Settings, and in the rest banner (#133).
+    static let timingDefault = false
+
     /// Whether the Sunday digest reminder is wanted (#110).
     ///
-    /// Defaults **off**, unlike the two above. Those describe what happens
-    /// during a session someone chose to start; this one asks for a weekly
-    /// interruption, and it used to be arranged by requesting notification
-    /// access at first launch — before the person had seen a digest, or the
-    /// app. Off by default means the reminder exists for people who went
-    /// looking for it, which is the only group it was ever useful to.
+    /// Defaults **off**. Unlike the rest notification above, this asks for a
+    /// weekly interruption, and it used to be arranged by requesting
+    /// notification access at first launch — before the person had seen a
+    /// digest, or the app. Off by default means the reminder exists for people
+    /// who went looking for it, which is the only group it was ever useful to.
     static let digestKey = "digest-reminder"
 
-    /// Both default on. The notification is the channel that survives the
-    /// phone being away, which is the case #69 exists for.
-    ///
-    /// The timing readout stays on now that it reads `+0.00s`, because it cost
-    /// four rounds to learn that this alert has no other way of telling the
-    /// truth about itself — a line of caption text is a cheap regression test
-    /// for the one bug class no build can catch. Switch it off in Settings
-    /// once watching it stops being interesting.
+    /// Notifications default on because that channel survives the phone being
+    /// away, which is the case #69 exists for. Timing is troubleshooting
+    /// detail, so it stays available in Settings without appearing in an
+    /// ordinary workout unless explicitly enabled.
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             notificationKey: true,
-            timingKey: true,
+            timingKey: timingDefault,
         ])
     }
 

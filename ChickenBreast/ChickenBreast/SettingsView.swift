@@ -33,7 +33,7 @@ struct SettingsView: View {
     var onRestored: () -> Void = {}
 
     @AppStorage(RestAlertSettings.notificationKey) private var notification = true
-    @AppStorage(RestAlertSettings.timingKey) private var timing = true
+    @AppStorage(RestAlertSettings.timingKey) private var timing = RestAlertSettings.timingDefault
     @AppStorage(RestAlertSettings.digestKey) private var digestReminder = false
 
     /// Whether iOS will actually deliver what the toggle above asks for. A
@@ -120,7 +120,7 @@ struct SettingsView: View {
             Section {
                 Toggle("Show alert timing", isOn: $timing)
             } footer: {
-                Text("Adds a line to the rest banner reporting how late the buzz went out. Useful while that's still being chased; noise once it isn't.")
+                Text("Adds a line to the rest banner reporting how late the buzz went out. Enable it while troubleshooting an alert.")
             }
 
             if let store {
