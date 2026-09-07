@@ -32,6 +32,9 @@ struct ContentView: View {
     @State private var sync = SyncStatus()
     @State private var health = HealthReadiness()
     @State private var readiness: Readiness?
+    /// Health has never been asked on this device, so recovery is offered as
+    /// a card rather than taken as a launch-time prompt (#110).
+    @State private var healthNeedsPermission = false
     @State private var days: [TrainingDay] = []
     @State private var showingSettings = false
 
@@ -203,6 +206,38 @@ struct ContentView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    /// Explains recovery before iOS is allowed to ask about it.
+    ///
+    /// Says what will appear and where, because "Allow ChickenBreast to read
+    /// Heart Rate Variability" says neither. Dismissal is deliberately absent:
+    /// the card disappears the moment Health has been answered either way, so
+    /// there is nothing to dismiss that declining does not already settle.
+    private var healthCard: some View {
+        Button {
+            Task { await connectHealth() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "heart.text.square")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Use recovery data")
+                        .font(.subheadline.weight(.medium))
+                    Text("Sleep and HRV from Health add a readiness line here. Nothing is written back.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption.weight(.bold))
+            }
+            .foregroundStyle(.tint)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var dayPicker: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -214,6 +249,10 @@ struct ContentView: View {
                     .font(.headline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if healthNeedsPermission {
+                healthCard
             }
 
             if let digest, !digest.isEmpty {
@@ -374,11 +413,36 @@ struct ContentView: View {
         }
     }
 
+    /// Loads recovery when Health has already been answered, and otherwise
+    /// offers the card.
+    ///
+    /// #26 asked for zero taps and this is one, which is a deliberate trade.
+    /// The silent version put a Health sheet in front of someone who had not
+    /// yet seen the app, next to a notification alert doing the same (#110) —
+    /// and a permission sheet with no visible cause is the one people decline,
+    /// which cost #26 the data it was trying to protect.
+    ///
+    /// The tap is only ever paid once. After any answer — granted or refused —
+    /// `needsPermission()` goes false and every later launch comes straight
+    /// here, silent, exactly as before.
+    private func loadReadinessIfPermitted() async {
+        guard await health.needsPermission() else {
+            await loadReadiness()
+            return
+        }
+        healthNeedsPermission = true
+    }
+
+    /// Requests Health from the card, then loads.
+    private func connectHealth() async {
+        healthNeedsPermission = false
+        await loadReadiness()
+    }
+
     /// Reads recovery and folds it into the digest.
     ///
-    /// Asked for once, at launch, and silently: #26 wants zero taps, and iOS
-    /// shows its own Health sheet exactly once. A refusal is indistinguishable
-    /// from having no data, which is fine — both mean no readiness line.
+    /// A refusal is indistinguishable from having no data, which is fine —
+    /// both mean no readiness line.
     private func loadReadiness() async {
         await health.requestAccess()
         guard let store else { return }
@@ -428,7 +492,7 @@ struct ContentView: View {
             // Recovery arrives after the screen does. It's context, never a
             // reason to keep someone waiting on a Health query before they can
             // start a session (#26).
-            Task { await loadReadiness() }
+            Task { await loadReadinessIfPermitted() }
             // The insights load from `.task(id: storeIsOpen)` below rather
             // than from a `Task {}` here. A Task enqueued at this point is a
             // main-actor job, not a later frame: `openStore` suspends two
@@ -436,7 +500,10 @@ struct ContentView: View {
             // run-loop iteration, and the render this staging exists to unblock
             // can still end up behind it.
             await sync.refresh(store: opened)
-            await DigestNotification.schedule()
+            // Schedules for someone who has already allowed notifications and
+            // asks nobody. The request moved to Settings, where turning the
+            // digest on is a thing the person just did (#110).
+            await DigestNotification.scheduleIfAuthorized()
         } catch {
             startupFailure = String(describing: error)
         }

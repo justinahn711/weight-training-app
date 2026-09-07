@@ -65,7 +65,28 @@ final class HealthReadiness {
     /// keep here — the query simply comes back empty.
     func requestAccess() async {
         guard isAvailable else { return }
-        try? await store.requestAuthorization(toShare: [], read: readTypes)
+        // Queued rather than called, so this never lands on top of the
+        // notification alert the way it did on a clean launch (#110).
+        await PermissionQueue.shared.run {
+            try? await self.store.requestAuthorization(toShare: [], read: self.readTypes)
+        }
+    }
+
+    /// Whether the Health sheet would still appear if access were requested.
+    ///
+    /// This is the one thing HealthKit will say about read permission, and it
+    /// says it without prompting. It does not mean "refused" — a person who
+    /// granted access and a person who declined both come back `false`, and
+    /// both are then indistinguishable from having no data, which is the rule
+    /// the rest of this type is built on.
+    ///
+    /// It exists so launch can tell "never asked" apart from "already
+    /// answered". The first is a card explaining what recovery does before any
+    /// system sheet appears; the second is just a query (#110).
+    func needsPermission() async -> Bool {
+        guard isAvailable else { return false }
+        let status = try? await store.statusForAuthorizationRequest(toShare: [], read: readTypes)
+        return status == .shouldRequest
     }
 
     /// Today's readiness, or nil when Health has nothing to say.

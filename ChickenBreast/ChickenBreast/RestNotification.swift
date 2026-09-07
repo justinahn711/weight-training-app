@@ -39,10 +39,11 @@ enum RestNotification {
             return
         }
 
-        let center = UNUserNotificationCenter.current()
-        guard let granted = try? await center.requestAuthorization(options: [.alert, .sound]),
-              granted else { return }
+        // The moment this asks is already right — a rest timer is running, so
+        // the alert it wants permission for is the thing about to happen.
+        guard await requestAccess() else { return }
 
+        let center = UNUserNotificationCenter.current()
         cancel()
 
         let remaining = rest.endsAt.timeIntervalSinceNow
@@ -67,6 +68,22 @@ enum RestNotification {
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: remaining, repeats: false)
         )
         try? await center.add(request)
+    }
+
+    /// Asks for notification access, serialised against every other prompt.
+    ///
+    /// What the first-rest request lacked was a guarantee that nothing else
+    /// was asking at the same time: starting a session while launch was still
+    /// settling could stack this on the Health sheet (#110). Also called from
+    /// the Settings toggle, which is the other moment the benefit is concrete.
+    ///
+    /// - Returns: whether notifications may be posted.
+    @discardableResult
+    static func requestAccess() async -> Bool {
+        await PermissionQueue.shared.run {
+            let center = UNUserNotificationCenter.current()
+            return (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        }
     }
 
     /// Called whenever the rest stops being real: skipped, undone, or the

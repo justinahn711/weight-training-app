@@ -24,6 +24,16 @@ enum RestAlertSettings {
     /// Whether the banner reports when the buzz actually went out.
     static let timingKey = "rest-alert-timing"
 
+    /// Whether the Sunday digest reminder is wanted (#110).
+    ///
+    /// Defaults **off**, unlike the two above. Those describe what happens
+    /// during a session someone chose to start; this one asks for a weekly
+    /// interruption, and it used to be arranged by requesting notification
+    /// access at first launch — before the person had seen a digest, or the
+    /// app. Off by default means the reminder exists for people who went
+    /// looking for it, which is the only group it was ever useful to.
+    static let digestKey = "digest-reminder"
+
     /// Both default on. The notification is the channel that survives the
     /// phone being away, which is the case #69 exists for.
     ///

@@ -47,21 +47,29 @@ final class VoiceRecognizer {
 
     /// Asks for both permissions. Declining either is remembered by the system,
     /// so this is safe to call whenever the microphone is tapped.
+    ///
+    /// Queued as a single unit rather than two (#110). These two sheets belong
+    /// back to back — they are one decision about dictating a set — and the
+    /// queue must not be able to slot an unrelated prompt between them. The
+    /// microphone is tapped from inside a running session, which is exactly
+    /// where a rest alert is asking about itself.
     func requestAccess() async -> Bool {
-        let speech = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
-        }
-        guard speech == .authorized else {
-            state = .unavailable("Speech recognition is off in Settings.")
-            return false
-        }
+        await PermissionQueue.shared.run {
+            let speech = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+            }
+            guard speech == .authorized else {
+                self.state = .unavailable("Speech recognition is off in Settings.")
+                return false
+            }
 
-        let microphone = await AVAudioApplication.requestRecordPermission()
-        guard microphone else {
-            state = .unavailable("Microphone access is off in Settings.")
-            return false
+            let microphone = await AVAudioApplication.requestRecordPermission()
+            guard microphone else {
+                self.state = .unavailable("Microphone access is off in Settings.")
+                return false
+            }
+            return true
         }
-        return true
     }
 
     // MARK: - Listening
