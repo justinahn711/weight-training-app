@@ -413,6 +413,7 @@ struct SessionView: View {
             }
 
             RepChoiceRow(
+                exerciseID: exercise.id,
                 values: model.repChoices,
                 selected: model.pendingReps,
                 usesOtherCount: model.usesOtherRepCount,
@@ -1147,11 +1148,17 @@ struct ChoiceRow<Value: Hashable>: View {
 /// the button itself becomes the exact selected number so the form always says
 /// what Log Set will record (#131).
 private struct RepChoiceRow: View {
+    let exerciseID: UUID
     let values: [Int]
     let selected: Int
     let usesOtherCount: Bool
     let onSelect: (Int) -> Void
     let onOther: () -> Void
+
+    /// A quick-chip tap already happened at a visible, intentional location.
+    /// Remember it long enough to avoid moving the row after that tap; changes
+    /// from navigation or the exact-entry sheet do need recentering.
+    @State private var directSelection: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1167,6 +1174,7 @@ private struct RepChoiceRow: View {
                             ForEach(values, id: \.self) { value in
                                 let isSelected = value == selected
                                 Button {
+                                    directSelection = value
                                     onSelect(value)
                                 } label: {
                                     repChip(String(value), selected: isSelected)
@@ -1180,8 +1188,24 @@ private struct RepChoiceRow: View {
                         .padding(.horizontal, 2)
                     }
                     .onAppear {
-                        if values.contains(selected) {
-                            proxy.scrollTo(selected, anchor: .center)
+                        scrollToSelected(using: proxy)
+                    }
+                    .onChange(of: exerciseID) {
+                        directSelection = nil
+                        scrollToSelected(using: proxy)
+                    }
+                    .onChange(of: values) {
+                        scrollToSelected(using: proxy)
+                    }
+                    .onChange(of: selected) { _, newValue in
+                        if directSelection == newValue {
+                            directSelection = nil
+                        } else {
+                            directSelection = nil
+                            // Saving an in-range value through Other has no
+                            // selected trailing control, so its chip must be
+                            // brought into view when the sheet closes.
+                            scrollToSelected(using: proxy)
                         }
                     }
                 }
@@ -1191,8 +1215,12 @@ private struct RepChoiceRow: View {
                             selected: usesOtherCount)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Enter another rep count")
-                .accessibilityValue("\(selected) reps selected")
+                .accessibilityLabel(usesOtherCount
+                                    ? "Change rep count"
+                                    : "Enter another rep count")
+                .accessibilityValue(usesOtherCount
+                                    ? "\(selected) reps selected"
+                                    : "Current selection, \(selected) reps")
                 .accessibilityAddTraits(usesOtherCount ? .isSelected : [])
             }
         }
@@ -1211,6 +1239,12 @@ private struct RepChoiceRow: View {
                     .fill(selected ? AnyShapeStyle(Color.accentColor)
                                    : AnyShapeStyle(.fill.quaternary))
             )
+    }
+
+    private func scrollToSelected(using proxy: ScrollViewProxy) {
+        if values.contains(selected) {
+            proxy.scrollTo(selected, anchor: .center)
+        }
     }
 }
 
