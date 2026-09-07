@@ -220,7 +220,9 @@ struct SessionView: View {
         // is a 15 lb stack even in a gym that has since gone metric (#67).
         let increment = lift.increment
         if increment != lift.equipment.defaultIncrement(in: increment.unit) {
-            parts.append("steps of \(increment.formatted)")
+            // "10 lb steps", not "steps of 10 lb" — the number is what is
+            // being read, so it goes first and the line loses a word.
+            parts.append("\(increment.formatted) steps")
         }
 
         if let loading = lift.loading {
