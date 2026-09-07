@@ -34,6 +34,7 @@ struct SettingsView: View {
 
     @AppStorage(RestAlertSettings.notificationKey) private var notification = true
     @AppStorage(RestAlertSettings.timingKey) private var timing = true
+    @AppStorage(RestAlertSettings.digestKey) private var digestReminder = false
 
     /// Whether iOS will actually deliver what the toggle above asks for. A
     /// toggle that's on while notifications are denied at the system level is
@@ -65,6 +66,20 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Notify when rest is over", isOn: $notification)
+                    // Asked here as well as at the first rest, because this is
+                    // the other moment the benefit is concrete — somebody has
+                    // just said they want the banner. Only on the way on: a
+                    // prompt when switching a thing *off* is the app asking to
+                    // do what it was told not to (#110).
+                    .onChange(of: notification) { _, isOn in
+                        guard isOn else { return }
+                        Task {
+                            await RestNotification.requestAccess()
+                            authorization = await UNUserNotificationCenter.current()
+                                .notificationSettings()
+                                .authorizationStatus
+                        }
+                    }
 
                 if notification, let authorization, authorization == .denied {
                     Label(
@@ -80,6 +95,26 @@ struct SettingsView: View {
                 Text(notification
                      ? "A banner when the target passes, so a phone in a pocket still tells you. The buzz happens either way."
                      : "The phone will buzz when rest is over and say nothing else.")
+            }
+
+            Section {
+                Toggle("Remind me on Sundays", isOn: $digestReminder)
+                    .onChange(of: digestReminder) { _, isOn in
+                        Task {
+                            if isOn {
+                                await DigestNotification.requestAndSchedule()
+                                authorization = await UNUserNotificationCenter.current()
+                                    .notificationSettings()
+                                    .authorizationStatus
+                            } else {
+                                DigestNotification.cancel()
+                            }
+                        }
+                    }
+            } header: {
+                Text("Weekly summary")
+            } footer: {
+                Text("A Sunday evening nudge to read the week's findings. The digest itself is always on the Train screen — this only decides whether the phone brings it up.")
             }
 
             Section {

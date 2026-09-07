@@ -117,13 +117,52 @@ enum DigestNotification {
 
     static let identifier = "weekly-digest"
 
-    /// Asks once, then schedules. Declining is remembered by the system, so
-    /// this is safe to call on every launch.
-    static func schedule() async {
-        let center = UNUserNotificationCenter.current()
-        guard let granted = try? await center.requestAuthorization(options: [.alert, .sound]),
-              granted else { return }
+    /// Schedules the digest if notifications are already allowed, and asks
+    /// for nothing.
+    ///
+    /// This is the launch path. It used to call `requestAuthorization`, which
+    /// is what put a notification alert on top of the Health sheet on a clean
+    /// install (#110) — and it asked for a weekly summary before the person
+    /// had opened the app once, which is the wrong order regardless of what
+    /// else was on screen. Somebody who has already said yes keeps their
+    /// Sunday reminder across launches; somebody who has not is asked by
+    /// `requestAndSchedule()` from Settings, where the digest is a thing they
+    /// just chose.
+    static func scheduleIfAuthorized() async {
+        // Off means off, including a repeat registered by a build that
+        // scheduled this without being asked. iOS keeps a repeating trigger
+        // until something removes it, so declining the reminder has to remove
+        // it rather than merely stop re-adding it.
+        guard UserDefaults.standard.bool(forKey: RestAlertSettings.digestKey) else {
+            cancel()
+            return
+        }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard settings.authorizationStatus == .authorized else { return }
+        await add()
+    }
 
+    /// Removes the pending Sunday reminder.
+    static func cancel() {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: [identifier])
+    }
+
+    /// Asks for notification access and, if granted, schedules.
+    ///
+    /// Called from a control the person has just operated, never from launch.
+    static func requestAndSchedule() async {
+        // Queued so this cannot stack on the Health sheet (#110).
+        let granted = await PermissionQueue.shared.run {
+            let center = UNUserNotificationCenter.current()
+            return (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        }
+        guard granted else { return }
+        await add()
+    }
+
+    private static func add() async {
+        let center = UNUserNotificationCenter.current()
         var components = DateComponents()
         components.weekday = weekday
         components.hour = hour
