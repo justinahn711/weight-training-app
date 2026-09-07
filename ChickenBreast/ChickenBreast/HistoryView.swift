@@ -67,6 +67,16 @@ struct HistoryView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
         }
+        // Reloaded on every appearance, not just when the view is first
+        // created. `State(initialValue:)` is honoured only when an identity is
+        // installed, and as a tab this view is created once and kept for the
+        // life of the app — so a session finished, an import landed or a backup
+        // restored after the first visit left today unmarked until relaunch.
+        // The same shape as #98, resurfaced by changing how this is presented.
+        //
+        // It also means History loads its own data when opened, which is the
+        // stage #115 deferred.
+        .task { reload() }
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $selected) { day in

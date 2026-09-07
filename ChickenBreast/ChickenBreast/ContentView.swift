@@ -27,80 +27,30 @@ struct ContentView: View {
     @State private var volume: VolumeReport?
     @State private var showingVolume = false
     @State private var trends: [E1RMTrend] = []
-    @State private var showingTrends = false
     @State private var digest: Digest?
     @State private var showingDigest = false
     @State private var sync = SyncStatus()
     @State private var health = HealthReadiness()
     @State private var readiness: Readiness?
     @State private var days: [TrainingDay] = []
-    @State private var showingHistory = false
     @State private var showingSettings = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let startupFailure {
-                    ContentUnavailableView(
-                        "Couldn't open the training store",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(startupFailure)
-                    )
-                } else {
-                    dayPicker
-                }
-            }
-            .navigationTitle("ChickenBreast")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Progress", systemImage: "chart.xyaxis.line") {
-                        showingTrends = true
-                    }
-                    // Volume and History were already guarded; Progress was
-                    // not, and staging the launch gave that a window it never
-                    // had. Between the store publishing and the insights
-                    // landing, `trends` is empty and indistinguishable from a
-                    // lifter who has never trained — so Progress would greet
-                    // someone with a year of history with "Trends appear once
-                    // you've trained a lift".
-                    .disabled(!insightsLoaded)
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Volume", systemImage: "chart.bar") { showingVolume = true }
-                        .disabled(volume == nil)
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Settings", systemImage: "gearshape") { showingSettings = true }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("History", systemImage: "calendar") { showingHistory = true }
-                        .disabled(days.isEmpty)
-                }
-            }
-            .navigationDestination(isPresented: $showingVolume) {
-                if let volume {
-                    VolumeView(report: volume)
-                }
-            }
-            .navigationDestination(isPresented: $showingSettings) {
-                SettingsView(store: store, sync: sync, onRestored: refresh)
-            }
-            .navigationDestination(isPresented: $showingTrends) {
-                TrendsView(trends: trends)
-            }
-            .navigationDestination(isPresented: $showingHistory) {
-                if let store {
-                    HistoryView(days: days, store: store)
-                }
-            }
-            .navigationDestination(isPresented: $showingDigest) {
-                if let digest, let store {
-                    DigestView(digest: digest, store: store, onApplied: refresh)
-                }
-            }
-            .navigationDestination(item: $route) { kind in
-                sessionDestination(for: kind)
-            }
+        // Three durable destinations, each with a home rather than a toolbar
+        // button (#112). The old bar gave Train, History, Progress, Volume and
+        // Settings equal weight across both sides of the title, so the app's
+        // primary job looked like one option among five.
+        //
+        // Volume and the digest are not destinations. They are findings about
+        // the training in front of you, so they stay on the Train dashboard
+        // where they are read, and open from there.
+        TabView {
+            trainTab
+                .tabItem { Label("Train", systemImage: "figure.strengthtraining.traditional") }
+            historyTab
+                .tabItem { Label("History", systemImage: "calendar") }
+            progressTab
+                .tabItem { Label("Progress", systemImage: "chart.xyaxis.line") }
         }
         .task { await openStore() }
         // Keyed on the store arriving, so this runs after SwiftUI has updated
@@ -136,6 +86,123 @@ struct ContentView: View {
         }
     }
 
+    /// The week's volume, as a finding rather than a destination.
+    ///
+    /// Shown whether or not anything is starved: the toolbar button was the
+    /// only route on a quiet week, and #112 removed it. A finding worth
+    /// surfacing loudly is still worth reaching quietly.
+    private func volumeRow(_ volume: VolumeReport) -> some View {
+        let starved = !volume.starved.isEmpty
+        return Button { showingVolume = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: starved ? "exclamationmark.triangle.fill" : "chart.bar")
+                Text(starved ? starvedSummary(volume) : "Volume this week")
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if !starved {
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                }
+            }
+            .font(.subheadline)
+            .foregroundStyle(starved ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var trainTab: some View {
+        NavigationStack {
+            Group {
+                if let startupFailure {
+                    ContentUnavailableView(
+                        "Couldn't open the training store",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(startupFailure)
+                    )
+                } else {
+                    dayPicker
+                }
+            }
+            .navigationTitle("ChickenBreast")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Settings", systemImage: "gearshape") { showingSettings = true }
+                }
+            }
+            .navigationDestination(isPresented: $showingSettings) {
+                SettingsView(store: store, sync: sync, onRestored: refresh)
+            }
+            .navigationDestination(isPresented: $showingVolume) {
+                if let volume {
+                    VolumeView(report: volume)
+                }
+            }
+            .navigationDestination(isPresented: $showingDigest) {
+                if let digest, let store {
+                    DigestView(digest: digest, store: store, onApplied: refresh)
+                }
+            }
+            .navigationDestination(item: $route) { kind in
+                sessionDestination(for: kind)
+                    // A session is the one place in the app that is not
+                    // navigation. The bar would sit under the thumb that
+                    // reaches for Log Set, and leaving mid-set by mistiming a
+                    // tap costs the set. It comes back on the way out.
+                    .toolbar(.hidden, for: .tabBar)
+            }
+        }
+    }
+
+    private var historyTab: some View {
+        NavigationStack {
+            if let store {
+                // No `insightsLoaded` gate: HistoryView loads its own days on
+                // appearance now, so it is correct as soon as the store is.
+                HistoryView(days: days, store: store)
+            } else {
+                unavailable("History")
+            }
+        }
+    }
+
+    private var progressTab: some View {
+        NavigationStack {
+            if insightsLoaded {
+                TrendsView(trends: trends)
+            } else {
+                unavailable("Progress")
+            }
+        }
+    }
+
+    /// What a tab shows before its data exists — or when it never will.
+    ///
+    /// A tab is always tappable, so the window the staged launch opened (#115)
+    /// is reachable rather than merely possible, and "nothing logged yet" would
+    /// be a lie for the second it takes the insights to land. But a spinner is
+    /// a promise too: if the store failed to open, `insightsLoaded` never
+    /// becomes true and an unbounded spinner claims to be loading something
+    /// that will never arrive. The toolbar buttons this replaced at least said
+    /// so by being disabled.
+    private func unavailable(_ title: String) -> some View {
+        Group {
+            if let startupFailure {
+                ContentUnavailableView(
+                    "Couldn't open the training store",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(startupFailure)
+                )
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .navigationTitle(title)
+        // Matching both real destinations, which are inline — otherwise the
+        // placeholder shows a large title that collapses the moment data lands.
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
     private var dayPicker: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -169,22 +236,23 @@ struct ContentView: View {
 
             // The volume guard is worth nothing behind a tap nobody takes, so
             // the headline finding sits on the first screen.
-            if let volume, !volume.starved.isEmpty {
-                Button { showingVolume = true } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                        Text(starvedSummary(volume))
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                        Spacer(minLength: 0)
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.orange)
-                    .contentShape(Rectangle())
+            //
+            // Shown whether or not anything is starved, which it was not
+            // before: the toolbar button was the only route when the week
+            // looked fine, and #112 removed it. A finding worth surfacing
+            // loudly is still worth reaching quietly.
+            // Height reserved from first paint, not claimed when the insights
+            // land. Making the row unconditional put it on every launch rather
+            // than only for a lifter behind on something — and it arrives after
+            // Train is already tappable (#115), so the centred stack re-laid
+            // out and every day button moved under a thumb already reaching for
+            // one.
+            Group {
+                if let volume {
+                    volumeRow(volume)
                 }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(height: 22)
 
             ForEach(orderedDays, id: \.self) { kind in
                 let isNext = kind == cycle?.next
