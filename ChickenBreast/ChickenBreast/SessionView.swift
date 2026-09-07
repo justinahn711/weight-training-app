@@ -198,39 +198,54 @@ struct SessionView: View {
 
     /// One line describing what the app currently assumes, so the button says
     /// what tapping it would change rather than just "Settings".
+    /// What the app assumes about this lift, saying only what is not the
+    /// default.
+    ///
+    /// It used to state both facts always — "Steps of 10 lb · empty 55.25 lb" —
+    /// and two changes compounded to make that a problem: #95 lengthened it so
+    /// an unmeasured machine explains itself, and #100 moved it to the first
+    /// line of the card. The least important thing on the screen became the
+    /// first thing read, at its longest, with the unit repeated twice.
+    ///
+    /// A stack stepping by its equipment default carries no information; one
+    /// measured at 15 lb does. Same rule as "unknown means silent" — say the
+    /// thing that tells you something. A lift with nothing to declare falls
+    /// back to naming the route, because the line is also the way in.
     private func configSummary(_ exercise: SessionExercise) -> String {
+        let lift = exercise.exercise
+        var parts: [String] = []
+
         // The increment is rendered in the unit it was marked in rather than
         // the gym's, because that is what it means: a stack measured at 15 lb
         // is a 15 lb stack even in a gym that has since gone metric (#67).
-        let stepText = exercise.exercise.increment.formatted
-        guard let loading = exercise.exercise.loading else {
-            return "Steps of \(stepText)"
+        let increment = lift.increment
+        if increment != lift.equipment.defaultIncrement(in: increment.unit) {
+            parts.append("steps of \(increment.formatted)")
         }
 
-        // Both states below are ones where the plate row is absent, and the
-        // absence is right — a plate total on an unweighed apparatus, or built
-        // from a rack with nothing on it, would be a guess presented as a
-        // number. What was missing is the connection between the two facts:
-        // "not weighed" was already on screen, already tappable, and never
-        // said that weighing it is what brings the plate buttons back (#95).
-        //
-        // Said here rather than as a second button beside this one. The
-        // information and the route were both already here; adding another
-        // tinted caption opening the same sheet would have been two ways into
-        // one screen, not a clearer one.
-        guard let base = loading.baseWeight else {
-            return "Steps of \(stepText) · weigh it to add plates"
+        if let loading = lift.loading {
+            if let base = loading.baseWeight {
+                // Native, not converted: an empty weight is measured on the
+                // apparatus in its own unit. Through `formatted(in:)` the
+                // config sheet read back a typed 45.25 while this said 45.3.
+                parts.append("empty \(loading.unit.format(base.value(in: loading.unit)))")
+                if loading.availablePlates.isEmpty {
+                    // Reachable: clear every plate while "I've weighed it" is
+                    // on, then switch it off and save. Weighing is not what
+                    // fixes this one, so it must not be what the line asks for.
+                    parts.append("no plates set")
+                }
+            } else {
+                // The absence of a plate row here is right — a total built on
+                // an unweighed apparatus would be a guess presented as a
+                // number — but nothing said the absence was fixable (#95).
+                parts.append("weigh it to add plates")
+            }
         }
-        if loading.availablePlates.isEmpty {
-            // Reachable: clear every plate in config while "I've weighed it"
-            // is on, then switch it off and save. Weighing is not what fixes
-            // this one, so it must not be what the line asks for.
-            return "Steps of \(stepText) · empty \(loading.unit.format(base.value(in: loading.unit))) · no plates set"
-        }
-        // Native, not converted: an empty weight is measured on the
-        // apparatus in its own unit. Through `formatted(in:)` the config
-        // sheet read back a typed 45.25 while this line said 45.3.
-        return "Steps of \(stepText) · empty \(loading.unit.format(base.value(in: loading.unit)))"
+
+        guard let first = parts.first else { return "How this lift loads" }
+        return ([first.prefix(1).uppercased() + first.dropFirst()] + parts.dropFirst())
+            .joined(separator: " · ")
     }
 
     /// What the app assumes, then what it therefore proposes, then what was
