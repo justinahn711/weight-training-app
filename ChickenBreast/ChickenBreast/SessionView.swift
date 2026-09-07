@@ -96,11 +96,6 @@ struct SessionView: View {
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
-            // Leaving the session is what finishes it — there's no "done"
-            // button to forget to press, and a session abandoned halfway still
-            // produced real work that should count.
-            model.applyProgression()
-            model.endActivity()
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

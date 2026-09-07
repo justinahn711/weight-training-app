@@ -23,6 +23,11 @@ struct ContentView: View {
     @State private var insightsLoaded = false
     @State private var startupFailure: String?
     @State private var route: DayKind?
+    /// The model belongs to the route, not to one rendering of its destination.
+    /// Keeping it here gives route dismissal the exact session it must finish
+    /// and prevents a temporary `SessionView` disappearance from doing so.
+    @State private var activeSession: SessionViewModel?
+    @State private var sessionStartFailure: String?
     @State private var cycle: CyclePosition?
     @State private var volume: VolumeReport?
     @State private var showingVolume = false
@@ -70,7 +75,10 @@ struct ContentView: View {
         // Recomputed on return from a session, so finishing a push day moves
         // the home screen on to pull without a relaunch.
         .onChange(of: route) { _, newValue in
-            guard newValue == nil, let store else { return }
+            guard newValue == nil else { return }
+            activeSession?.finish()
+            activeSession = nil
+            sessionStartFailure = nil
             refresh()
         }
         // Rows arriving from another device are the one thing that can
@@ -296,7 +304,7 @@ struct ContentView: View {
             ForEach(orderedDays, id: \.self) { kind in
                 let isNext = kind == cycle?.next
                 Button {
-                    route = kind
+                    openSession(kind, from: store)
                 } label: {
                     HStack {
                         Text(kind.rawValue.capitalized)
@@ -397,20 +405,34 @@ struct ContentView: View {
 
     @ViewBuilder
     private func sessionDestination(for kind: DayKind) -> some View {
-        if let store {
-            // Built here rather than in the picker so the session is assembled
-            // from disk at the moment it's opened, not when the list rendered.
-            switch Result(catching: { try store.startSession(kind: kind) }) {
-            case .success(let session):
-                SessionView(model: SessionViewModel(store: store, session: session))
-            case .failure(let error):
-                ContentUnavailableView(
-                    "Couldn't start the session",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(String(describing: error))
-                )
-            }
+        if let activeSession {
+            SessionView(model: activeSession)
+        } else if let sessionStartFailure {
+            ContentUnavailableView(
+                "Couldn't start the session",
+                systemImage: "exclamationmark.triangle",
+                description: Text(sessionStartFailure)
+            )
         }
+    }
+
+    /// Assembles a session at the tap, then gives the route ownership of it.
+    ///
+    /// The destination used to construct its model while rendering. That left
+    /// the parent with only a `DayKind` when the route ended, so completion had
+    /// to live in `SessionView.onDisappear` and could also fire for unrelated
+    /// view removals. Holding the model until `route` becomes nil makes the
+    /// navigation transition the single finishing boundary (#126).
+    private func openSession(_ kind: DayKind, from store: TrainingStore?) {
+        guard route == nil, activeSession == nil, let store else { return }
+        do {
+            let session = try store.startSession(kind: kind)
+            activeSession = SessionViewModel(store: store, session: session)
+            sessionStartFailure = nil
+        } catch {
+            sessionStartFailure = String(describing: error)
+        }
+        route = kind
     }
 
     /// Loads recovery when Health has already been answered, and otherwise
