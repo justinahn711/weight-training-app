@@ -196,15 +196,29 @@ struct SessionView: View {
         .padding(.top, 8)
     }
 
-    /// One line describing what the app currently assumes, so the button says
-    /// what tapping it would change rather than just "Settings".
+    /// The assumptions worth noticing, rather than every default (#122).
+    ///
+    /// This line is read every set and edited almost never. Naming the default
+    /// increment and the ordinary gym rack made the common case the longest one
+    /// on the card, even though neither fact told the lifter anything. Defaults
+    /// collapse to a short route label; corrections stay visible because they
+    /// are the facts that can explain a surprising target.
     private func configSummary(_ exercise: SessionExercise) -> String {
+        let definition = exercise.exercise
+
         // The increment is rendered in the unit it was marked in rather than
         // the gym's, because that is what it means: a stack measured at 15 lb
         // is a 15 lb stack even in a gym that has since gone metric (#67).
-        let stepText = exercise.exercise.increment.formatted
-        guard let loading = exercise.exercise.loading else {
-            return "Steps of \(stepText)"
+        let customStep = definition.increment
+            != definition.equipment.defaultIncrement(in: definition.increment.unit)
+        var facts = customStep ? ["\(definition.increment.formatted) steps"] : []
+
+        guard let loading = definition.loading else {
+            return facts.first ?? "Standard setup"
+        }
+
+        if !loading.usesGymRack {
+            facts.append("Own rack")
         }
 
         // Both states below are ones where the plate row is absent, and the
@@ -219,18 +233,40 @@ struct SessionView: View {
         // tinted caption opening the same sheet would have been two ways into
         // one screen, not a clearer one.
         guard let base = loading.baseWeight else {
-            return "Steps of \(stepText) · weigh it to add plates"
+            facts.append("Weigh it to add plates")
+            return facts.joined(separator: " · ")
         }
         if loading.availablePlates.isEmpty {
             // Reachable: clear every plate in config while "I've weighed it"
             // is on, then switch it off and save. Weighing is not what fixes
             // this one, so it must not be what the line asks for.
-            return "Steps of \(stepText) · empty \(loading.unit.format(base.value(in: loading.unit))) · no plates set"
+            facts.append("No plates set")
+            return facts.joined(separator: " · ")
         }
-        // Native, not converted: an empty weight is measured on the
-        // apparatus in its own unit. Through `formatted(in:)` the config
-        // sheet read back a typed 45.25 while this line said 45.3.
-        return "Steps of \(stepText) · empty \(loading.unit.format(base.value(in: loading.unit)))"
+
+        // A plate-loaded machine starts unmeasured, so any base here is a fact
+        // somebody supplied. A barbell following the gym merely repeats the
+        // bar already described in Settings and earns no space on this line.
+        let inheritedBar = loading.usesGymRack && loading.unit == gym.unit
+            ? gym.config.barWeight
+            : loading.unit.standardBar
+        if definition.equipment != .barbell || base != inheritedBar {
+            // Native, not converted: an empty weight is measured on the
+            // apparatus in its own unit. Through `formatted(in:)` the config
+            // sheet read back a typed 45.25 while this line said 45.3.
+            // When the custom step is marked in the same unit it has already
+            // named that unit for the whole line. Repeating it here is the
+            // exact visual stutter #122 reported; differing units both stay,
+            // because then the distinction is the fact being communicated.
+            let repeatsStepUnit = customStep && definition.increment.unit == loading.unit
+            let baseText = loading.unit.format(
+                base.value(in: loading.unit),
+                withSymbol: !repeatsStepUnit
+            )
+            facts.append("\(baseText) empty")
+        }
+
+        return facts.isEmpty ? "Gym setup" : facts.joined(separator: " · ")
     }
 
     /// What the app assumes, then what it therefore proposes, then what was
