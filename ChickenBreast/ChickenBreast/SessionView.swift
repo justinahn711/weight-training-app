@@ -33,6 +33,9 @@ struct SessionView: View {
     /// re-read it on every parent update — and saving is itself a rebuild, so
     /// the screen's subject could move out from under the person editing it.
     @State private var configuring: Exercise?
+    /// The lift whose exact-rep sheet is open. Voice can advance beneath a
+    /// sheet, so carrying the subject keeps Save aimed where the tap began.
+    @State private var enteringReps: RepEntryTarget?
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -147,6 +150,11 @@ struct SessionView: View {
         .sheet(item: $configuring) { exercise in
             ExerciseConfigView(exercise: exercise) { increment, loading in
                 model.updateConfiguration(of: exercise, increment: increment, loading: loading)
+            }
+        }
+        .sheet(item: $enteringReps) { target in
+            RepEntrySheet(initialReps: target.reps) { reps in
+                model.setPendingReps(reps, for: target.id)
             }
         }
         .alert("Something went wrong",
@@ -404,12 +412,14 @@ struct SessionView: View {
                 )
             }
 
-            ChoiceRow(
-                caption: "Reps",
+            RepChoiceRow(
                 values: model.repChoices,
-                isSelected: { $0 == model.pendingReps },
-                label: { String($0) },
-                onSelect: { model.pendingReps = $0 }
+                selected: model.pendingReps,
+                usesOtherCount: model.usesOtherRepCount,
+                onSelect: { model.setPendingReps($0) },
+                onOther: {
+                    enteringReps = RepEntryTarget(id: exercise.id, reps: model.pendingReps)
+                }
             )
 
             ChoiceRow(
@@ -451,6 +461,13 @@ struct SessionView: View {
         .padding(.bottom, 8)
         .background(.bar)
     }
+}
+
+/// A sheet target carries both the exercise and the standing value at the
+/// moment the alternative entry path was opened.
+private struct RepEntryTarget: Identifiable {
+    let id: UUID
+    let reps: Int
 }
 
 /// One logged set. Warmups are visually demoted — they're kept in the same list
@@ -1119,5 +1136,131 @@ struct ChoiceRow<Value: Hashable>: View {
                 }
             }
         }
+    }
+}
+
+/// Target-centred shortcuts plus one stable path to every positive rep count.
+///
+/// `Other` stays fixed beside the scrolling quick choices instead of hiding at
+/// the far end or inserting the selected exception among them. That keeps the
+/// route visible and the common controls from moving beneath a finger, while
+/// the button itself becomes the exact selected number so the form always says
+/// what Log Set will record (#131).
+private struct RepChoiceRow: View {
+    let values: [Int]
+    let selected: Int
+    let usesOtherCount: Bool
+    let onSelect: (Int) -> Void
+    let onOther: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Reps")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            HStack(spacing: 8) {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(values, id: \.self) { value in
+                                let isSelected = value == selected
+                                Button {
+                                    onSelect(value)
+                                } label: {
+                                    repChip(String(value), selected: isSelected)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("\(value) reps")
+                                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                                .id(value)
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                    }
+                    .onAppear {
+                        if values.contains(selected) {
+                            proxy.scrollTo(selected, anchor: .center)
+                        }
+                    }
+                }
+
+                Button(action: onOther) {
+                    repChip(usesOtherCount ? String(selected) : "Other",
+                            selected: usesOtherCount)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Enter another rep count")
+                .accessibilityValue("\(selected) reps selected")
+                .accessibilityAddTraits(usesOtherCount ? .isSelected : [])
+            }
+        }
+    }
+
+    private func repChip(_ label: String, selected: Bool) -> some View {
+        Text(label)
+            .font(.title3.weight(selected ? .bold : .medium).monospacedDigit())
+            .foregroundStyle(selected ? Color.white : Color.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(minWidth: 54, minHeight: 48)
+            .padding(.horizontal, label == "Other" ? 4 : 0)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(selected ? AnyShapeStyle(Color.accentColor)
+                                   : AnyShapeStyle(.fill.quaternary))
+            )
+    }
+}
+
+/// Exact rep entry is secondary: normal target logging still needs only the
+/// standing selection and the Log Set button.
+private struct RepEntrySheet: View {
+    let onSave: (Int) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(initialReps: Int, onSave: @escaping (Int) -> Void) {
+        self.onSave = onSave
+        _text = State(initialValue: String(initialReps))
+    }
+
+    private var parsedReps: Int? { TypedReps.parse(text) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Reps", text: $text)
+                        .keyboardType(.numberPad)
+                        .font(.title2.monospacedDigit())
+                        .focused($isFocused)
+                        .accessibilityLabel("Rep count")
+                        .accessibilityValue(text.isEmpty ? "Empty" : text)
+                } footer: {
+                    Text("Enter a whole number greater than zero.")
+                }
+            }
+            .navigationTitle("Enter reps")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let parsedReps else { return }
+                        onSave(parsedReps)
+                        dismiss()
+                    }
+                    .disabled(parsedReps == nil)
+                }
+            }
+            .onAppear { isFocused = true }
+        }
+        .presentationDetents([.medium])
     }
 }
