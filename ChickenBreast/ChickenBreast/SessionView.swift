@@ -225,6 +225,12 @@ struct SessionView: View {
 
         if let loading = lift.loading {
             if let base = loading.baseWeight {
+                // Always stated, default or not — unlike the increment, this
+                // is weight you are actually lifting. A bar assumed to be 45
+                // and a machine measured at 55.25 both count toward the
+                // target, and a person doing bar math needs the number
+                // whether or not they were the one who established it.
+                //
                 // Native, not converted: an empty weight is measured on the
                 // apparatus in its own unit. Through `formatted(in:)` the
                 // config sheet read back a typed 45.25 while this said 45.3.
@@ -243,7 +249,12 @@ struct SessionView: View {
             }
         }
 
-        guard let first = parts.first else { return "How this lift loads" }
+        // Not "how this lift loads" — `defaultLoadingStyle` is nil for
+        // bodyweight as well as for dumbbells, stacks and cables, so that
+        // wording promised a pull-up an external load it does not have. The
+        // sheet behind this line sets step, unit and measurement for every
+        // equipment kind, so the label has to be true for all of them.
+        guard let first = parts.first else { return "Lift setup" }
         return ([first.prefix(1).uppercased() + first.dropFirst()] + parts.dropFirst())
             .joined(separator: " · ")
     }
