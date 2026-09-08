@@ -14,6 +14,13 @@ import Foundation
 /// standing at a rack.
 public enum TypedWeight {
 
+    /// The outcome of checking keyboard input against one real apparatus.
+    /// Impossible loads are an offer, never a value silently applied.
+    public enum Resolution: Hashable, Sendable {
+        case exact(Load)
+        case nearest(requested: Load, achievable: Load)
+    }
+
     /// The weight this text names, or nil when it does not name one.
     ///
     /// Nil is not zero, and the whole point is the difference. A caller that
@@ -72,5 +79,22 @@ public enum TypedWeight {
               value.isFinite, value > 0
         else { return nil }
         return value
+    }
+
+    /// Parses in the displayed unit and delegates buildability to Exercise.
+    public static func resolve(
+        _ text: String,
+        in unit: MassUnit,
+        for exercise: Exercise
+    ) -> Resolution? {
+        guard let value = parse(text) else { return nil }
+        let requested = Load(value, unit)
+        if exercise.canBuild(requested) { return .exact(requested) }
+
+        let achievable = max(
+            exercise.lightestUsableLoad,
+            exercise.nearestAchievable(requested)
+        )
+        return .nearest(requested: requested, achievable: achievable)
     }
 }

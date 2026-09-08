@@ -235,6 +235,17 @@ final class SessionViewModel {
         pendingLoad = max(exercise.minimumLoad, Load(next))
     }
 
+    /// Accepts only a value already resolved by the typed-entry sheet, and
+    /// rechecks the current exercise in case its configuration changed while
+    /// the sheet was open.
+    @discardableResult
+    func setTypedLoad(_ load: Load, for exerciseID: UUID) -> Bool {
+        guard let current, current.id == exerciseID,
+              current.exercise.canBuild(load) else { return false }
+        pendingLoad = load
+        return true
+    }
+
     /// Adds one plate per sleeve, the way it goes on the bar (#77).
     ///
     /// A 45 on a two-sleeve barbell is 90 lb, not 45. Stepping there by the

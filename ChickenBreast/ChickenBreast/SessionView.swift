@@ -39,6 +39,7 @@ struct SessionView: View {
     /// The lift whose exact-rep sheet is open. Voice can advance beneath a
     /// sheet, so carrying the subject keeps Save aimed where the tap began.
     @State private var enteringReps: RepEntryTarget?
+    @State private var enteringWeight: WeightEntryTarget?
     @State private var isChoosingExercise = false
     /// Plate building is the exception path, opened from the breakdown it
     /// edits (#138). It stays open while plates are added, then closes when
@@ -131,6 +132,11 @@ struct SessionView: View {
         .sheet(item: $enteringReps) { target in
             RepEntrySheet(initialReps: target.reps) { reps in
                 model.setPendingReps(reps, for: target.id)
+            }
+        }
+        .sheet(item: $enteringWeight) { target in
+            WeightEntrySheet(target: target) { load in
+                model.setTypedLoad(load, for: target.id)
             }
         }
         .sheet(isPresented: $isChoosingExercise) {
@@ -653,6 +659,7 @@ struct SessionView: View {
             WeightStepper(
                 load: model.pendingLoad,
                 increment: exercise.exercise.increment,
+                equipment: exercise.exercise.equipment,
                 // Read off while loading the bar, so it sits directly under the
                 // number it describes (#14).
                 plates: model.plateBreakdown?.displayLine,
@@ -662,6 +669,12 @@ struct SessionView: View {
                         isPlateRowExpanded.toggle()
                     }
                 },
+                onEnterWeight: model.plateOptions.isEmpty ? {
+                    enteringWeight = WeightEntryTarget(
+                        exercise: exercise.exercise,
+                        load: model.pendingLoad
+                    )
+                } : nil,
                 onDecrement: { model.adjustLoad(by: -1) },
                 onIncrement: { model.adjustLoad(by: 1) }
             )
@@ -827,6 +840,13 @@ private struct LoggedSetBanner: View {
 private struct RepEntryTarget: Identifiable {
     let id: UUID
     let reps: Int
+}
+
+private struct WeightEntryTarget: Identifiable {
+    let exercise: Exercise
+    let load: Load
+    var id: UUID { exercise.id }
+    var unit: MassUnit { exercise.loading?.unit ?? exercise.increment.unit }
 }
 
 /// One logged set. Warmups are visually demoted — they're kept in the same list
@@ -1464,9 +1484,11 @@ private struct WeightStepper: View {
 
     let load: Load
     let increment: LoadIncrement
+    let equipment: Equipment
     let plates: String?
     let isPlateDisclosureExpanded: Bool
     let onTogglePlates: (() -> Void)?
+    let onEnterWeight: (() -> Void)?
     let onDecrement: () -> Void
     let onIncrement: () -> Void
 
@@ -1474,7 +1496,7 @@ private struct WeightStepper: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            button("minus", action: onDecrement)
+            button("minus", caption: decrementCaption, label: decrementLabel, action: onDecrement)
             if let onTogglePlates {
                 Button(action: onTogglePlates) {
                     plateReadout(detail: plates)
@@ -1494,10 +1516,18 @@ private struct WeightStepper: View {
                     isPlateDisclosureExpanded ? "Hides plate buttons" : "Shows plate buttons"
                 )
             } else {
-                readout(detail: plates ?? "\(increment.formatted) steps", showsDisclosure: false)
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                Button(action: onEnterWeight ?? {}) {
+                    readout(detail: adjustmentLabel, showsEntry: onEnterWeight != nil)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(onEnterWeight == nil)
+                .accessibilityLabel("Enter exact weight")
+                .accessibilityValue(load.formatted(in: gym.unit))
+                .accessibilityHint("Plus and minus remain the primary controls")
             }
-            button("plus", action: onIncrement)
+            button("plus", caption: incrementCaption, label: incrementLabel, action: onIncrement)
         }
         .padding(.vertical, 6)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 14))
@@ -1523,7 +1553,7 @@ private struct WeightStepper: View {
         }
     }
 
-    private func readout(detail: String, showsDisclosure: Bool) -> some View {
+    private func readout(detail: String, showsEntry: Bool) -> some View {
         VStack(spacing: 0) {
             Text(load.formatted(in: gym.unit))
                 .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
@@ -1533,8 +1563,8 @@ private struct WeightStepper: View {
                 Text(detail)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                if showsDisclosure {
-                    Image(systemName: isPlateDisclosureExpanded ? "chevron.up" : "chevron.down")
+                if showsEntry {
+                    Image(systemName: "square.and.pencil")
                         .accessibilityHidden(true)
                 }
             }
@@ -1543,20 +1573,56 @@ private struct WeightStepper: View {
         }
     }
 
-    private func button(_ symbol: String, action: @escaping () -> Void) -> some View {
+    private func button(_ symbol: String, caption: String?, label: String,
+                        action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.title2.weight(.semibold))
+            VStack(spacing: 1) {
+                Image(systemName: symbol).font(.title2.weight(.semibold))
+                if let caption { Text(caption).font(.caption2.weight(.semibold)) }
+            }
                 // Oversized on purpose: tapped with chalky hands, mid-set.
                 .frame(width: 64, height: 56)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
         // Held rather than tapped twenty-eight times (#77). Accelerates, so a
         // long move is quick and a short one is still controllable.
         .onLongPressGesture(minimumDuration: 0.4, pressing: { isPressing in
             if isPressing { repeater.start(action) } else { repeater.stop() }
         }, perform: {})
+    }
+
+    private var adjustmentLabel: String {
+        switch equipment {
+        case .dumbbell: return "Dumbbell rack"
+        case .machineStack, .cable: return "One notch"
+        default: return "\(increment.formatted) steps"
+        }
+    }
+
+    private var decrementCaption: String? {
+        equipment == .dumbbell ? "Previous" : nil
+    }
+
+    private var incrementCaption: String? {
+        equipment == .dumbbell ? "Next" : nil
+    }
+
+    private var decrementLabel: String {
+        switch equipment {
+        case .dumbbell: return "Previous dumbbell"
+        case .machineStack, .cable: return "One notch down"
+        default: return "Decrease weight by \(increment.formatted)"
+        }
+    }
+
+    private var incrementLabel: String {
+        switch equipment {
+        case .dumbbell: return "Next dumbbell"
+        case .machineStack, .cable: return "One notch up"
+        default: return "Increase weight by \(increment.formatted)"
+        }
     }
 }
 
@@ -1772,5 +1838,82 @@ private struct RepEntrySheet: View {
             .onAppear { isFocused = true }
         }
         .presentationDetents([.medium])
+    }
+}
+
+/// Exact weight entry is a secondary escape hatch behind the standing number.
+/// Normal rack/notch stepping remains visible and primary.
+private struct WeightEntrySheet: View {
+    let target: WeightEntryTarget
+    let onSave: (Load) -> Bool
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(target: WeightEntryTarget, onSave: @escaping (Load) -> Bool) {
+        self.target = target
+        self.onSave = onSave
+        _text = State(initialValue: target.unit.format(
+            target.load.value(in: target.unit), withSymbol: false
+        ))
+    }
+
+    private var resolution: TypedWeight.Resolution? {
+        TypedWeight.resolve(text, in: target.unit, for: target.exercise)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        TextField("Weight", text: $text)
+                            .keyboardType(.decimalPad)
+                            .font(.title2.monospacedDigit())
+                            .focused($isFocused)
+                            .accessibilityLabel("Exact weight")
+                        Text(target.unit.symbol).foregroundStyle(.secondary)
+                    }
+                } footer: {
+                    Text("Enter the number marked on this equipment.")
+                }
+
+                if case .nearest(let requested, let achievable) = resolution {
+                    Section {
+                        Text("\(requested.formatted(in: target.unit)) cannot be set on this equipment.")
+                        Button("Use \(achievable.formatted(in: target.unit))") {
+                            if onSave(achievable) { dismiss() }
+                        }
+                        .font(.body.weight(.semibold))
+                    } header: {
+                        Text("Not available")
+                    } footer: {
+                        Text("The nearest achievable weight is offered, never substituted silently.")
+                    }
+                }
+            }
+            .navigationTitle("Enter weight")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard case .exact(let load) = resolution else { return }
+                        if onSave(load) { dismiss() }
+                    }
+                    .disabled(!isExact)
+                }
+            }
+            .onAppear { isFocused = true }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private var isExact: Bool {
+        if case .exact = resolution { return true }
+        return false
     }
 }
