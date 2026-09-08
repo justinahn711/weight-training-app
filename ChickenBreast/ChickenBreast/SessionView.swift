@@ -16,6 +16,8 @@ struct SessionView: View {
     /// The gym the app is rendering in, so a weight on this screen is in
     /// the unit the lifter's rack is marked in (#67).
     private var gym: GymSettings { .shared }
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State var model: SessionViewModel
     let onFinish: () -> Void
@@ -49,61 +51,18 @@ struct SessionView: View {
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
-        VStack(spacing: 0) {
+        GeometryReader { geometry in
             if let exercise = model.current {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        header(exercise)
-                        context(exercise)
-                        if !model.warmupRamp.isEmpty {
-                            WarmupBlock(
-                                ramp: model.warmupRamp,
-                                isExpanded: $model.isWarmupRampExpanded,
-                                breakdown: { exercise.exercise.plateBreakdown(for: $0) },
-                                onLog: { model.logWarmup($0) },
-                                onClear: { model.clearWarmupRamp() }
-                            )
-                        }
-                        setRows(exercise)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 24)
-                }
-                if let heard = model.heard {
-                    HeardBanner(
-                        heard: heard,
-                        autoCommitAt: model.autoCommitAt,
-                        onCommit: {
-                            model.commitHeard()
-                            voice.consume()
-                        },
-                        onCancel: {
-                            model.clearHeard()
-                            voice.consume()
-                        }
-                    )
-                } else if let rest = model.rest {
-                    RestBanner(rest: rest, onSkip: { model.skipRest() })
-                }
-                if let record = model.recentlyLoggedSet {
-                    LoggedSetBanner(
-                        record: record,
-                        unit: gym.unit,
-                        onUndo: { model.undoRecentlyLoggedSet(id: record.id) },
-                        onExpire: { model.dismissRecentSetUndo(id: record.id) }
+                if verticalSizeClass == .compact {
+                    landscapeLayout(exercise, size: geometry.size)
+                } else {
+                    stackedLayout(
+                        exercise,
+                        isCompact: geometry.size.height < 650 || dynamicTypeSize.isAccessibilitySize
                     )
                 }
-                actionBar(exercise)
             } else {
-                VStack(spacing: 20) {
-                    ContentUnavailableView(
-                        "Nothing to train",
-                        systemImage: "figure.strengthtraining.traditional",
-                        description: Text("This day has no exercises in the library yet.")
-                    )
-                    Button("Finish workout", action: onFinish)
-                        .buttonStyle(.borderedProminent)
-                }
+                emptySession
             }
         }
         .navigationTitle(model.session.kind.rawValue.capitalized)
@@ -199,9 +158,122 @@ struct SessionView: View {
         }
     }
 
+    private var emptySession: some View {
+        VStack(spacing: 20) {
+            ContentUnavailableView(
+                "Nothing to train",
+                systemImage: "figure.strengthtraining.traditional",
+                description: Text("This day has no exercises in the library yet.")
+            )
+            Button("Finish workout", action: onFinish)
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Regular portrait keeps the familiar document-over-dock arrangement.
+    /// Short portrait and accessibility text compact only the dock, while
+    /// status changes move into the document so logging controls never jump.
+    private func stackedLayout(_ exercise: SessionExercise, isCompact: Bool) -> some View {
+        VStack(spacing: 0) {
+            contextScroll(exercise, isCompact: isCompact, includesStatus: isCompact)
+            if !isCompact {
+                statusBanners
+            }
+            actionBar(exercise, isCompact: isCompact)
+        }
+    }
+
+    /// iPhone landscape remains supported deliberately. Width is plentiful
+    /// while height is not, so context and action become peers instead of
+    /// competing vertically. Rest, voice, and undo live on the left; their
+    /// transitions cannot move any control on the right.
+    private func landscapeLayout(_ exercise: SessionExercise, size: CGSize) -> some View {
+        HStack(spacing: 0) {
+            contextScroll(exercise, isCompact: true, includesStatus: true)
+                .frame(width: min(size.width * 0.48, max(280, size.width * 0.42)))
+
+            Divider()
+
+            ScrollView {
+                actionBar(exercise, isCompact: true)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(.bar)
+        }
+    }
+
+    private func contextScroll(
+        _ exercise: SessionExercise,
+        isCompact: Bool,
+        includesStatus: Bool
+    ) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: isCompact ? 12 : 20) {
+                header(exercise, isCompact: isCompact)
+
+                if includesStatus {
+                    statusBanners
+                }
+
+                context(exercise, isCompact: isCompact)
+
+                if isCompact {
+                    compactSetRows(exercise)
+                    suggestionRow
+                }
+
+                if !model.warmupRamp.isEmpty {
+                    WarmupBlock(
+                        ramp: model.warmupRamp,
+                        isExpanded: $model.isWarmupRampExpanded,
+                        breakdown: { exercise.exercise.plateBreakdown(for: $0) },
+                        onLog: { model.logWarmup($0) },
+                        onClear: { model.clearWarmupRamp() }
+                    )
+                }
+
+                if !isCompact {
+                    setRows(exercise)
+                }
+            }
+            .padding(.horizontal, isCompact ? 12 : 20)
+            .padding(.bottom, isCompact ? 12 : 24)
+        }
+    }
+
+    @ViewBuilder
+    private var statusBanners: some View {
+        if let heard = model.heard {
+            HeardBanner(
+                heard: heard,
+                autoCommitAt: model.autoCommitAt,
+                onCommit: {
+                    model.commitHeard()
+                    voice.consume()
+                },
+                onCancel: {
+                    model.clearHeard()
+                    voice.consume()
+                }
+            )
+        } else if let rest = model.rest {
+            RestBanner(rest: rest, onSkip: { model.skipRest() })
+        }
+        if let record = model.recentlyLoggedSet {
+            LoggedSetBanner(
+                record: record,
+                unit: gym.unit,
+                onUndo: { model.undoRecentlyLoggedSet(id: record.id) },
+                onExpire: { model.dismissRecentSetUndo(id: record.id) }
+            )
+        }
+    }
+
     // MARK: - Context above
 
-    private func header(_ exercise: SessionExercise) -> some View {
+    private func header(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Button {
@@ -242,7 +314,7 @@ struct SessionView: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(exercise.exercise.name)
-                        .font(.largeTitle.bold())
+                        .font(isCompact ? .title2.bold() : .largeTitle.bold())
                         .minimumScaleFactor(0.6)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
@@ -394,7 +466,7 @@ struct SessionView: View {
     /// screen wherever the route goes (#95) — a lift with no plate buttons has
     /// no other explanation here. Every other placement would have left this
     /// line where it was and added a *second* way into one sheet.
-    private func context(_ exercise: SessionExercise) -> some View {
+    private func context(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             // Sits directly under the lift's name, which is what it is about,
             // and is still the line you are reading at the moment you notice a
@@ -418,31 +490,51 @@ struct SessionView: View {
             // below, which are read every set and are not controls at all.
             Divider()
 
-            // The target is the biggest thing on screen after the lift's name:
-            // it's the one line being checked between sets.
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Target")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                Text(exercise.prescription.displayLine(in: gym.unit))
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(exercise.prescription.isColdStart ? .secondary : .primary)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Last time")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                Text(exercise.lastPerformance?.displayLine(in: gym.unit) ?? "No history yet")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
+            if isCompact {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 20) {
+                        targetSummary(exercise)
+                        lastTimeSummary(exercise)
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        targetSummary(exercise)
+                        lastTimeSummary(exercise)
+                    }
+                }
+            } else {
+                targetSummary(exercise)
+                lastTimeSummary(exercise)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func targetSummary(_ exercise: SessionExercise) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Target")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(exercise.prescription.displayLine(in: gym.unit))
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(exercise.prescription.isColdStart ? .secondary : .primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func lastTimeSummary(_ exercise: SessionExercise) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Last time")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(exercise.lastPerformance?.displayLine(in: gym.unit) ?? "No history yet")
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Set rows
@@ -477,26 +569,85 @@ struct SessionView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The newest result is the one checked between sets. Earlier rows remain
+    /// one disclosure away for correction, but no longer push it below the
+    /// fold on the smallest screen.
+    private func compactSetRows(_ exercise: SessionExercise) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Latest set")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            if let latest = exercise.loggedSets.last {
+                Button {
+                    editingSet = ActiveSetEditTarget(record: latest, exercise: exercise.exercise)
+                } label: {
+                    SetRow(number: exercise.loggedSets.count, set: latest)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Edits this logged set")
+
+                if exercise.loggedSets.count > 1 {
+                    DisclosureGroup("Earlier sets (\(exercise.loggedSets.count - 1))") {
+                        VStack(spacing: 8) {
+                            ForEach(
+                                Array(exercise.loggedSets.dropLast().enumerated()),
+                                id: \.element.id
+                            ) { index, set in
+                                Button {
+                                    editingSet = ActiveSetEditTarget(
+                                        record: set,
+                                        exercise: exercise.exercise
+                                    )
+                                } label: {
+                                    SetRow(number: index + 1, set: set)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityHint("Edits this logged set")
+                            }
+                        }
+                        .padding(.top, 8)
+                    }
+                    .font(.subheadline)
+                }
+            } else {
+                Text("No sets yet")
+                    .font(.body)
+                    .foregroundStyle(.tertiary)
+                    .padding(.vertical, 6)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var suggestionRow: some View {
+        if !model.suggestions.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(model.suggestions) { suggestion in
+                        SuggestionChip(
+                            suggestion: suggestion,
+                            onAccept: { withAnimation(.snappy) { model.accept(suggestion) } },
+                            onDismiss: { withAnimation(.snappy) { model.dismiss(suggestion) } }
+                        )
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+        }
+    }
+
     // MARK: - Action below
 
-    private func actionBar(_ exercise: SessionExercise) -> some View {
-        VStack(spacing: 12) {
+    private func actionBar(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
+        VStack(spacing: isCompact ? 8 : 12) {
             // Beside the number, never as it — chips sit directly above the
             // stepper they're talking about, and the stepper is unaffected
             // until one is tapped.
-            if !model.suggestions.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(model.suggestions) { suggestion in
-                            SuggestionChip(
-                                suggestion: suggestion,
-                                onAccept: { withAnimation(.snappy) { model.accept(suggestion) } },
-                                onDismiss: { withAnimation(.snappy) { model.dismiss(suggestion) } }
-                            )
-                        }
-                    }
-                    .padding(.horizontal, 2)
-                }
+            if !isCompact {
+                suggestionRow
             }
 
             WeightStepper(
@@ -532,26 +683,22 @@ struct SessionView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            RepChoiceRow(
-                exerciseID: exercise.id,
-                values: model.repChoices,
-                selected: model.pendingReps,
-                usesOtherCount: model.usesOtherRepCount,
-                onSelect: { model.setPendingReps($0) },
-                onOther: {
-                    enteringReps = RepEntryTarget(id: exercise.id, reps: model.pendingReps)
+            if isCompact {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 8) {
+                        repChoices(exercise)
+                        rpeChoices
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 8) {
+                        repChoices(exercise)
+                        rpeChoices
+                    }
                 }
-            )
-
-            ChoiceRow(
-                caption: "RPE",
-                values: RPE.sessionChips,
-                isSelected: { $0 == model.pendingRPE },
-                label: { $0.value == $0.value.rounded()
-                    ? String(format: "%.0f", $0.value)
-                    : String(format: "%.1f", $0.value) },
-                onSelect: { model.pendingRPE = $0 }
-            )
+            } else {
+                repChoices(exercise)
+                rpeChoices
+            }
 
             Button {
                 model.logSet()
@@ -559,31 +706,62 @@ struct SessionView: View {
                 Text("Log Set")
                     .font(.title3.bold())
                     .frame(maxWidth: .infinity)
-                    .frame(height: 56)
+                    .frame(height: isCompact ? 50 : 56)
             }
             .buttonStyle(.borderedProminent)
 
             HStack {
                 Button("Warmup") { model.logSet(isWarmup: true) }
                     .font(.subheadline)
+                    .frame(minHeight: 44)
                 Spacer()
                 if model.session.currentIndex > 0 {
                     Button("Back") { model.goBack() }
                         .font(.subheadline)
+                        .frame(minHeight: 44)
                 }
                 if !model.session.isOnLastExercise {
                     Button("Next exercise") { model.advance() }
                         .font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44)
                 } else {
                     Button("Finish workout", action: requestFinish)
                         .font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44)
                 }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, isCompact ? 12 : 20)
+        .padding(.top, isCompact ? 8 : 12)
+        .padding(.bottom, isCompact ? 4 : 8)
         .background(.bar)
+    }
+
+    private func repChoices(_ exercise: SessionExercise) -> some View {
+        RepChoiceRow(
+            exerciseID: exercise.id,
+            values: model.repChoices,
+            selected: model.pendingReps,
+            usesOtherCount: model.usesOtherRepCount,
+            onSelect: { model.setPendingReps($0) },
+            onOther: {
+                enteringReps = RepEntryTarget(id: exercise.id, reps: model.pendingReps)
+            }
+        )
+        .frame(maxWidth: .infinity)
+    }
+
+    private var rpeChoices: some View {
+        ChoiceRow(
+            caption: "RPE",
+            values: RPE.sessionChips,
+            isSelected: { $0 == model.pendingRPE },
+            label: { $0.value == $0.value.rounded()
+                ? String(format: "%.0f", $0.value)
+                : String(format: "%.1f", $0.value) },
+            onSelect: { model.pendingRPE = $0 }
+        )
+        .frame(maxWidth: .infinity)
     }
 
     /// A normal completed workout stays one tap. Finishing while planned lifts
