@@ -18,7 +18,7 @@ import WeightTrainingStore
 @Observable
 final class SessionViewModel {
     private let store: TrainingStore
-    private let liveActivity = SessionActivityController()
+    private let liveActivity: SessionActivityController
     private let draftID: UUID
     /// Finish can be tapped twice while navigation animates. Persistent
     /// progression and Live Activity teardown still belong to one explicit
@@ -57,6 +57,7 @@ final class SessionViewModel {
         self.store = store
         self.session = session
         self.draftID = draftID
+        self.liveActivity = SessionActivityController(workoutID: draftID)
         let prescription = session.current?.prescription
         self.pendingLoad = prescription?.load ?? Load.zero
         self.pendingReps = prescription?.reps ?? 8
