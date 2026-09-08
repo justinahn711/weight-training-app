@@ -157,6 +157,25 @@ final class SessionViewModel {
 
     var canUndo: Bool { !session.allLoggedSets.isEmpty }
 
+    /// Corrects an already logged row without disturbing the controls for the
+    /// next set or the rest currently running (#130).
+    ///
+    /// A false result keeps the correction sheet and its entered values alive.
+    @discardableResult
+    func correctSet(_ record: SetRecord) -> Bool {
+        do {
+            guard try store.updateSet(record, in: &session) else {
+                failure = "That set changed somewhere else. Your edits are still here; try again or cancel."
+                return false
+            }
+            publishActivity()
+            return true
+        } catch {
+            failure = "Couldn't save that correction: \(error.localizedDescription). Your edits are still here."
+            return false
+        }
+    }
+
     // MARK: - Weight and reps
 
     /// What the lifter weighed most recently, for seeding a bodyweight lift.

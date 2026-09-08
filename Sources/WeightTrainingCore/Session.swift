@@ -104,6 +104,25 @@ public struct Session: Hashable, Sendable {
         exercises[index].loggedSets.append(record)
     }
 
+    /// Replaces one set already present in this running session.
+    ///
+    /// Identity locates the row; exercise identity must still agree with the
+    /// exercise that owns it. A correction can change what was performed, but
+    /// moving a set to another lift is a delete-and-log operation with very
+    /// different consequences for progression and history.
+    @discardableResult
+    public mutating func correctSet(_ record: SetRecord) -> Bool {
+        for exerciseIndex in exercises.indices {
+            guard let setIndex = exercises[exerciseIndex].loggedSets.firstIndex(
+                where: { $0.id == record.id }
+            ) else { continue }
+            guard exercises[exerciseIndex].id == record.exerciseID else { return false }
+            exercises[exerciseIndex].loggedSets[setIndex] = record
+            return true
+        }
+        return false
+    }
+
     // MARK: - Swapping
 
     /// Replaces the exercise at `index`, keeping the slot it was filling.

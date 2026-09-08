@@ -158,6 +158,40 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
         return Load(baseNative + Double(best ?? 0) / 100 * Double(sleeves), unit)
     }
 
+    /// The next exact plate combination above `load`.
+    ///
+    /// Correction controls use this instead of adding a scalar increment. A
+    /// custom rack can have gaps where that scalar lands on an impossible
+    /// weight; moving through the reachable totals keeps every edited load
+    /// honest and gives the minus/plus buttons stable neighbours.
+    public func nextBuildable(after load: Load) -> Load? {
+        adjacentBuildable(to: load, ascending: true)
+    }
+
+    /// The previous exact plate combination below `load`, never below the
+    /// empty apparatus.
+    public func previousBuildable(before load: Load) -> Load? {
+        adjacentBuildable(to: load, ascending: false)
+    }
+
+    private func adjacentBuildable(to load: Load, ascending: Bool) -> Load? {
+        guard let base = baseWeight else { return nil }
+        let baseNative = base.value(in: unit)
+        let currentPerSleeve = (load.value(in: unit) - baseNative) / Double(sleeves)
+        let bound = max(0, currentPerSleeve) + (availablePlates.max() ?? 0)
+        let totals = Self.reachable(upTo: bound, from: availablePlates)
+            .map { Double($0) / 100 }
+
+        let neighbour: Double?
+        if ascending {
+            neighbour = totals.first { $0 > currentPerSleeve + 0.000_001 }
+        } else {
+            neighbour = totals.last { $0 < currentPerSleeve - 0.000_001 }
+        }
+        guard let neighbour else { return nil }
+        return Load(baseNative + neighbour * Double(sleeves), unit)
+    }
+
     // MARK: - Plate reachability
 
     /// A plate value as hundredths of its own unit, so plate arithmetic is

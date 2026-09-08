@@ -104,4 +104,42 @@ final class SetCorrectionTests: XCTestCase {
         XCTAssertFalse(try store.updateSet(record))
         XCTAssertTrue(try store.allSets().isEmpty, "must not insert what it couldn't find")
     }
+
+    func testActiveCorrectionUpdatesStoreAndSessionTogether() throws {
+        let original = try logged(185, 5, daysAgo: 0)
+        var session = Session(kind: .push, exercises: [
+            SessionExercise(
+                exercise: bench,
+                prescription: Prescription(exercise: bench, state: nil),
+                loggedSets: [original]
+            )
+        ])
+        var corrected = original
+        corrected.load = Load(190)
+        corrected.reps = 7
+
+        XCTAssertTrue(try store.updateSet(corrected, in: &session))
+        XCTAssertEqual(session.current?.loggedSets, [corrected])
+        XCTAssertEqual(try store.allSets().first { $0.id == original.id }, corrected)
+    }
+
+    func testMissingPersistedSetLeavesActiveSessionUnchanged() throws {
+        let original = SetRecord(
+            exerciseID: bench.id, load: Load(185), reps: 5,
+            performedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        var session = Session(kind: .push, exercises: [
+            SessionExercise(
+                exercise: bench,
+                prescription: Prescription(exercise: bench, state: nil),
+                loggedSets: [original]
+            )
+        ])
+        var corrected = original
+        corrected.reps = 8
+
+        XCTAssertFalse(try store.updateSet(corrected, in: &session))
+        XCTAssertEqual(session.current?.loggedSets, [original],
+                       "a failed persistence preflight must keep the visible row unchanged")
+    }
 }

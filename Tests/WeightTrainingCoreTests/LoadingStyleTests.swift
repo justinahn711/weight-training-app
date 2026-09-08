@@ -202,6 +202,16 @@ final class LoadingStyleTests: XCTestCase {
         XCTAssertEqual(style.nearestBuildable(Load(46.25)), Load(45))
     }
 
+    func testAdjacentBuildableLoadsFollowCustomPlateCombinations() {
+        let style = LoadingStyle(baseWeight: Load(50), sleeves: 1, availablePlates: [25, 10])
+
+        XCTAssertEqual(style.nextBuildable(after: Load(50)), Load(60))
+        XCTAssertEqual(style.nextBuildable(after: Load(60)), Load(70))
+        XCTAssertEqual(style.previousBuildable(before: Load(80)), Load(75))
+        XCTAssertEqual(style.previousBuildable(before: Load(60)), Load(50))
+        XCTAssertNil(style.previousBuildable(before: Load(50)))
+    }
+
     /// A bar cannot go below itself.
     func testNeverProposesLessThanTheApparatus() {
         let style = LoadingStyle.olympicBarbell

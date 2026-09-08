@@ -241,6 +241,52 @@ final class SessionTests: XCTestCase {
 
     // MARK: - Undo
 
+    func testCorrectingASetKeepsItsPlaceAndLeavesOtherSetsUntouched() {
+        var day = session(["A", "B"])
+        let exerciseID = day.current!.id
+        let first = SetRecord(
+            exerciseID: exerciseID, load: Load(100), reps: 8,
+            performedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        let second = SetRecord(
+            exerciseID: exerciseID, load: Load(105), reps: 7,
+            performedAt: Date(timeIntervalSince1970: 1_772_000_100)
+        )
+        day.log(first)
+        day.log(second)
+
+        var corrected = first
+        corrected.reps = 75
+        corrected.isWarmup = true
+        corrected.rpe = nil
+
+        XCTAssertTrue(day.correctSet(corrected))
+        XCTAssertEqual(day.exercises[0].loggedSets, [corrected, second])
+        XCTAssertEqual(day.exercises[0].loggedSets.first?.reps, 75,
+                       "correction must preserve actual reps beyond quick-entry ranges")
+        XCTAssertEqual(day.currentIndex, 0)
+    }
+
+    func testCorrectionCannotMoveASetToAnotherExercise() {
+        var day = session(["A", "B"])
+        let original = SetRecord(
+            exerciseID: day.exercises[0].id, load: Load(100), reps: 8,
+            performedAt: Date(timeIntervalSince1970: 1_772_000_000)
+        )
+        day.log(original)
+
+        let moved = SetRecord(
+            id: original.id,
+            exerciseID: day.exercises[1].id,
+            load: original.load,
+            reps: original.reps,
+            performedAt: original.performedAt
+        )
+
+        XCTAssertFalse(day.correctSet(moved))
+        XCTAssertEqual(day.exercises[0].loggedSets, [original])
+    }
+
     /// The undo in #8 has to reach across exercises: a mistap is often noticed
     /// just after moving on, which is exactly when a per-exercise undo fails.
     func testUndoReachesBackwardAcrossExercises() {
