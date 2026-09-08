@@ -19,6 +19,10 @@ import WeightTrainingStore
 final class SessionViewModel {
     private let store: TrainingStore
     private let liveActivity = SessionActivityController()
+    /// Route completion may be observed more than once as SwiftUI reconciles
+    /// navigation. Persistent progression and Live Activity teardown still
+    /// belong to one session boundary, so repeated calls are harmless.
+    @ObservationIgnored private var hasFinished = false
 
     private(set) var session: Session
     private(set) var failure: String?
@@ -331,6 +335,18 @@ final class SessionViewModel {
 
     // MARK: - Finishing
 
+    /// Finishes this route's session exactly once.
+    ///
+    /// Called by `ContentView` when its session route becomes nil. View
+    /// disappearance is deliberately not a finishing signal: SwiftUI can
+    /// remove and recreate a destination while the route remains active.
+    func finish() {
+        guard !hasFinished else { return }
+        hasFinished = true
+        applyProgression()
+        endActivity()
+    }
+
     /// Turns what was performed into next session's targets.
     ///
     /// Leaving the session is what finishes it — there is no "done" button to
@@ -338,7 +354,7 @@ final class SessionViewModel {
     /// work that should count. The store owns the rule, including the
     /// once-per-day guard that keeps walking out and back in from being worth
     /// a load jump.
-    func applyProgression() {
+    private func applyProgression() {
         do {
             let applied = try store.applyProgression(for: session)
             for entry in applied {
@@ -408,11 +424,11 @@ final class SessionViewModel {
     }
 
     /// Takes the lock screen down when the session ends.
-    func endActivity() {
+    private func endActivity() {
         liveActivity.end()
         // Rest belongs to a session in progress. Leaving ends the session
-        // (SessionView.onDisappear), so a pending alert would arrive for
-        // training that's already finished.
+        // route, so a pending alert would arrive for training that's already
+        // finished.
         RestNotification.cancel()
     }
 
