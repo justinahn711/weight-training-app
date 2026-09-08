@@ -85,6 +85,14 @@ struct SessionView: View {
                 } else if let rest = model.rest {
                     RestBanner(rest: rest, onSkip: { model.skipRest() })
                 }
+                if let record = model.recentlyLoggedSet {
+                    LoggedSetBanner(
+                        record: record,
+                        unit: gym.unit,
+                        onUndo: { model.undoRecentlyLoggedSet(id: record.id) },
+                        onExpire: { model.dismissRecentSetUndo(id: record.id) }
+                    )
+                }
                 actionBar(exercise)
             } else {
                 VStack(spacing: 20) {
@@ -115,14 +123,6 @@ struct SessionView: View {
             UIApplication.shared.isIdleTimerDisabled = false
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                // Reachable at all times without a menu — sweaty-hand mistaps
-                // are constant (#8).
-                Button("Undo", systemImage: "arrow.uturn.backward") {
-                    model.undoLastSet()
-                }
-                .disabled(!model.canUndo)
-            }
             ToolbarItem(placement: .topBarLeading) {
                 Button {
                     Task {
@@ -590,6 +590,52 @@ struct SessionView: View {
             showingPartialFinishConfirmation = true
         } else {
             onFinish()
+        }
+    }
+}
+
+/// A short, scoped recovery action for the set that was just written (#8).
+///
+/// Naming the exact set answers "what will this remove?" before the tap. It
+/// expires because older corrections have a safer, explicit home in Today.
+private struct LoggedSetBanner: View {
+    let record: SetRecord
+    let unit: MassUnit
+    let onUndo: () -> Void
+    let onExpire: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(record.isWarmup ? "Warmup logged" : "Set logged")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("\(record.load.formatted(in: unit)) × \(record.reps)")
+                    .font(.body.weight(.semibold))
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Undo", action: onUndo)
+                .font(.body.weight(.semibold))
+                .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(record.isWarmup ? "Warmup" : "Set") logged, "
+            + "\(record.load.formatted(in: unit)), \(record.reps) reps"
+        )
+        .accessibilityAction(named: "Undo logged set", onUndo)
+        .task(id: record.id) {
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            onExpire()
         }
     }
 }

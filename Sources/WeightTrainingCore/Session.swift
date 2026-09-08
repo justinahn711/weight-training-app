@@ -192,8 +192,13 @@ public struct Session: Hashable, Sendable {
     /// Session-wide rather than per-exercise: a mistap is often noticed just
     /// after moving on, and an undo that only reaches the current exercise
     /// would be useless exactly then. Backs #8.
+    ///
+    /// Removes the most recently performed set, optionally only when it is the
+    /// set the caller is still offering to undo. The identity check and the
+    /// mutation belong together: a contextual Undo must never remove a newer
+    /// set that arrived after its banner was rendered.
     @discardableResult
-    public mutating func undoLastSet() -> SetRecord? {
+    public mutating func undoLastSet(ifID expectedID: UUID? = nil) -> SetRecord? {
         let latest = exercises.indices
             .compactMap { index -> (Int, SetRecord)? in
                 guard let last = exercises[index].loggedSets.last else { return nil }
@@ -201,7 +206,8 @@ public struct Session: Hashable, Sendable {
             }
             .max { $0.1.performedAt < $1.1.performedAt }
 
-        guard let (index, record) = latest else { return nil }
+        guard let (index, record) = latest,
+              expectedID == nil || record.id == expectedID else { return nil }
         exercises[index].loggedSets.removeLast()
         return record
     }
