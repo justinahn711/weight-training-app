@@ -48,6 +48,11 @@ final class SessionViewModel {
     /// so it needs nothing running to stay correct across a backgrounding (#6).
     private(set) var rest: RestTimer?
 
+    /// The one set the session UI may offer to undo. This is deliberately not
+    /// derived from all history: old sets remain editable in Today, while Undo
+    /// is a short-lived acknowledgement of the action that just happened.
+    private(set) var recentlyLoggedSet: SetRecord?
+
     init(store: TrainingStore, session: Session, draftID: UUID) {
         self.store = store
         self.session = session
@@ -106,6 +111,7 @@ final class SessionViewModel {
         do {
             try store.log(record)
             session.log(record)
+            recentlyLoggedSet = record
             // Log, start resting, and be ready for the next set — one tap does
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
@@ -137,9 +143,15 @@ final class SessionViewModel {
         publishActivity()
     }
 
-    /// Removes the most recent set from both the session and disk. Backs #8.
-    func undoLastSet() {
-        guard let record = session.undoLastSet() else { return }
+    /// Removes the specifically named, just-logged set from session and disk.
+    /// If a newer set has appeared, the stale offer disappears without
+    /// touching history. Persistent corrections belong to the Today rows.
+    func undoRecentlyLoggedSet(id: UUID) {
+        guard recentlyLoggedSet?.id == id else { return }
+        guard let record = session.undoLastSet(ifID: id) else {
+            recentlyLoggedSet = nil
+            return
+        }
         do {
             try store.deleteSet(id: record.id)
             // A set that never happened can't be resting from. Only the rest
@@ -150,6 +162,8 @@ final class SessionViewModel {
                 // A buzz for a set you took back is worse than no buzz at all.
                 RestNotification.cancel()
             }
+            recentlyLoggedSet = nil
+            publishActivity()
         } catch {
             // Put it back rather than leaving screen and disk disagreeing.
             session.log(record)
@@ -157,7 +171,10 @@ final class SessionViewModel {
         }
     }
 
-    var canUndo: Bool { !session.allLoggedSets.isEmpty }
+    func dismissRecentSetUndo(id: UUID) {
+        guard recentlyLoggedSet?.id == id else { return }
+        recentlyLoggedSet = nil
+    }
 
     /// Corrects an already logged row without disturbing the controls for the
     /// next set or the rest currently running (#130).
@@ -169,6 +186,9 @@ final class SessionViewModel {
             guard try store.updateSet(record, in: &session) else {
                 failure = "That set changed somewhere else. Your edits are still here; try again or cancel."
                 return false
+            }
+            if recentlyLoggedSet?.id == record.id {
+                recentlyLoggedSet = record
             }
             publishActivity()
             return true

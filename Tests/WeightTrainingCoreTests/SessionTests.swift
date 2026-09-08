@@ -317,6 +317,22 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(day.undoLastSet(), newer)
     }
 
+    func testScopedUndoDoesNotRemoveANewerSet() {
+        var day = session()
+        let now = Date()
+        let offered = SetRecord(exerciseID: day.exercises[0].id, load: Load(70), reps: 10,
+                                performedAt: now)
+        let newer = SetRecord(exerciseID: day.exercises[1].id, load: Load(50), reps: 12,
+                              performedAt: now.addingTimeInterval(300))
+        day.log(offered)
+        day.log(newer)
+
+        XCTAssertNil(day.undoLastSet(ifID: offered.id))
+        XCTAssertEqual(day.allLoggedSets, [offered, newer])
+        XCTAssertEqual(day.undoLastSet(ifID: newer.id), newer)
+        XCTAssertEqual(day.allLoggedSets, [offered])
+    }
+
     func testAllLoggedSetsComeBackInPerformedOrder() {
         var day = session()
         let now = Date()
