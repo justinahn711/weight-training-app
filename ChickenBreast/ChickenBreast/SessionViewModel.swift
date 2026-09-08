@@ -31,7 +31,13 @@ final class SessionViewModel {
     /// the stepper. Held here rather than in the view so it survives the view
     /// being rebuilt as the day advances.
     var pendingLoad: Load
-    var pendingReps: Int
+    private(set) var pendingReps: Int
+
+    /// An unlogged choice belongs to its exercise, not whichever lift happens
+    /// to be visible now. This is what lets someone enter an unusual set, jump
+    /// around occupied equipment, and return without the target silently
+    /// replacing what they had already chosen (#131).
+    private var pendingRepsByExercise: [UUID: Int] = [:]
 
     /// Pre-selected on the target so the common case — hit the target, log it —
     /// stays a single tap on the done button (#5).
@@ -226,7 +232,26 @@ final class SessionViewModel {
     }
 
     func adjustReps(by delta: Int) {
-        pendingReps = max(1, pendingReps + delta)
+        setPendingReps(max(1, pendingReps + delta))
+    }
+
+    /// Selects an exact positive count for the visible exercise.
+    func setPendingReps(_ reps: Int) {
+        guard let exerciseID = current?.id, reps > 0 else { return }
+        setPendingReps(reps, for: exerciseID)
+    }
+
+    /// Applies an exact count to the exercise whose entry UI was opened.
+    ///
+    /// Voice navigation can move the session while a sheet is presented. The
+    /// exercise ID pins this write to its original subject, just like swap and
+    /// configuration sheets do (#98, #120).
+    func setPendingReps(_ reps: Int, for exerciseID: UUID) {
+        guard reps > 0 else { return }
+        pendingRepsByExercise[exerciseID] = reps
+        if current?.id == exerciseID {
+            pendingReps = reps
+        }
     }
 
     // MARK: - Navigation
@@ -253,14 +278,19 @@ final class SessionViewModel {
         guard let current else { return }
         if let lastToday = current.loggedSets.last(where: { !$0.isWarmup }) {
             pendingLoad = lastToday.load
-            pendingReps = lastToday.reps
         } else {
             // On a cold start there's no target, so the stepper opens at the
             // lightest thing the equipment can actually be set to — an empty
             // bar, not zero.
             pendingLoad = current.prescription.load ?? current.exercise.minimumLoad
-            pendingReps = current.prescription.reps
         }
+        // A draft made after the last logged set wins. Without this ordering,
+        // entering 25 after set one, checking another exercise, and returning
+        // would replace 25 with set one's reps even though nothing was logged.
+        pendingReps = pendingRepsByExercise[current.id]
+            ?? current.loggedSets.last(where: { !$0.isWarmup })?.reps
+            ?? current.prescription.reps
+        pendingRepsByExercise[current.id] = pendingReps
         // RPE always resets to the target rather than carrying the last set's
         // value forward. Effort is the one field that genuinely differs set to
         // set, and inheriting a 9.5 from the previous set would quietly log
@@ -301,7 +331,7 @@ final class SessionViewModel {
         case .repeatLast:
             if let last = current.loggedSets.last(where: { !$0.isWarmup }) {
                 pendingLoad = last.load
-                pendingReps = last.reps
+                setPendingReps(last.reps)
                 pendingRPE = last.rpe ?? current.prescription.rpe
             }
         case .note:
@@ -321,7 +351,7 @@ final class SessionViewModel {
     func commitHeard() {
         guard let snapped = heard else { return }
         if let load = snapped.load { pendingLoad = load }
-        if let reps = snapped.reps { pendingReps = reps }
+        if let reps = snapped.reps { setPendingReps(reps) }
         if let rpe = snapped.rpe { pendingRPE = rpe }
         clearHeard()
         logSet()
@@ -579,7 +609,7 @@ final class SessionViewModel {
         case .load(let load), .deload(let load):
             pendingLoad = load
         case .reps(let reps):
-            pendingReps = reps
+            setPendingReps(reps)
         case .swap:
             // Needs slot candidates from #16 and the swap UI in #18.
             break
@@ -666,6 +696,12 @@ final class SessionViewModel {
         guard let target = current?.prescription.reps else { return Array(1...20) }
         let lowest = max(1, target - 5)
         return Array(lowest...(target + 8))
+    }
+
+    /// The fixed quick row has no selected chip when the actual count is an
+    /// exception. The secondary control uses this to show that exact value.
+    var usesOtherRepCount: Bool {
+        !repChoices.contains(pendingReps)
     }
 
     func dismissFailure() { failure = nil }
