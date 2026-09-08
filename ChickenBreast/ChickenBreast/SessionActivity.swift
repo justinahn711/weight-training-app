@@ -5,6 +5,7 @@
 
 import ActivityKit
 import Foundation
+import WeightTrainingCore
 
 /// What the lock screen and Dynamic Island show during a session (#23).
 ///
@@ -59,6 +60,51 @@ struct SessionActivityAttributes: ActivityAttributes {
 
     /// Fixed for the life of the activity.
     var dayKind: String
+    /// Optional so an activity created before resumable workouts shipped can
+    /// still be decoded and adopted after an upgrade.
+    var workoutID: String? = nil
+}
+
+struct LiveActivityDiagnosticSnapshot: Equatable {
+    enum Presence: String { case active = "Active", stale = "Stale", inactive = "Inactive" }
+    let isEnabled: Bool
+    let presence: Presence
+    let activityCount: Int
+    let lastFailure: String?
+}
+
+@MainActor
+enum LiveActivityDiagnostics {
+    private static let failureKey = "liveActivity.lastRequestFailure"
+
+    static func snapshot() -> LiveActivityDiagnosticSnapshot {
+        let activities = Activity<SessionActivityAttributes>.activities
+        let presence: LiveActivityDiagnosticSnapshot.Presence
+        if activities.contains(where: { $0.activityState == .active }) {
+            presence = .active
+        } else if activities.contains(where: { $0.activityState == .stale }) {
+            presence = .stale
+        } else {
+            presence = .inactive
+        }
+        return LiveActivityDiagnosticSnapshot(
+            isEnabled: ActivityAuthorizationInfo().areActivitiesEnabled,
+            presence: presence,
+            activityCount: activities.count,
+            lastFailure: UserDefaults.standard.string(forKey: failureKey)
+        )
+    }
+
+    static func record(_ error: Error) {
+        UserDefaults.standard.set(
+            "\(String(reflecting: type(of: error))): \(error.localizedDescription)",
+            forKey: failureKey
+        )
+    }
+
+    static func clearFailure() {
+        UserDefaults.standard.removeObject(forKey: failureKey)
+    }
 }
 
 /// Drives the session's Live Activity.
@@ -73,12 +119,13 @@ struct SessionActivityAttributes: ActivityAttributes {
 /// interrupt a lift with an error.
 @MainActor
 final class SessionActivityController {
-    /// Reattach after returning from Train or relaunching. ActivityKit owns the
-    /// activity across process boundaries; keeping only this controller's
-    /// original reference would create a duplicate on Resume and leave the old
-    /// one impossible for Finish to end.
-    private var activity: Activity<SessionActivityAttributes>? =
-        Activity<SessionActivityAttributes>.activities.first
+    private let workoutID: String
+    private var activity: Activity<SessionActivityAttributes>?
+    private var reconciliation: Task<Void, Never>?
+
+    init(workoutID: UUID) {
+        self.workoutID = workoutID.uuidString
+    }
 
     /// Whether the system will accept one at all. False when the user has
     /// turned Live Activities off for the app, which is a setting rather than
@@ -88,14 +135,57 @@ final class SessionActivityController {
     }
 
     func start(dayKind: String, state: SessionActivityAttributes.ContentState) {
-        guard isAvailable, activity == nil else {
-            update(state)
-            return
+        guard isAvailable else { return }
+        reconciliation?.cancel()
+        reconciliation = Task { [weak self] in
+            guard let self else { return }
+            let running = Activity<SessionActivityAttributes>.activities
+            // Prefer exact workout identity. A legacy activity from before
+            // #132 had no id, so the same day kind is the safe upgrade bridge.
+            let keeperID = SessionActivitySelection.keeperID(
+                workoutID: workoutID,
+                dayKind: dayKind,
+                from: running.map {
+                    SessionActivityCandidate(
+                        id: $0.id,
+                        workoutID: $0.attributes.workoutID,
+                        dayKind: $0.attributes.dayKind
+                    )
+                }
+            )
+            let keeper = running.first { $0.id == keeperID }
+
+            if let keeper {
+                activity = keeper
+                for duplicate in running where duplicate.id != keeper.id {
+                    await duplicate.end(nil, dismissalPolicy: .immediate)
+                }
+                guard !Task.isCancelled else { return }
+                LiveActivityDiagnostics.clearFailure()
+                update(state)
+                return
+            }
+
+            // No current activity: remove leftovers before requesting their
+            // replacement, so ActivityKit never has to choose which workout to
+            // show on the Lock Screen.
+            for stale in running {
+                await stale.end(nil, dismissalPolicy: .immediate)
+            }
+            guard !Task.isCancelled else { return }
+            do {
+                activity = try Activity.request(
+                    attributes: SessionActivityAttributes(
+                        dayKind: dayKind,
+                        workoutID: workoutID
+                    ),
+                    content: ActivityContent(state: state, staleDate: nil)
+                )
+                LiveActivityDiagnostics.clearFailure()
+            } catch {
+                LiveActivityDiagnostics.record(error)
+            }
         }
-        activity = try? Activity.request(
-            attributes: SessionActivityAttributes(dayKind: dayKind),
-            content: ActivityContent(state: state, staleDate: nil)
-        )
     }
 
     func update(_ state: SessionActivityAttributes.ContentState) {
@@ -119,10 +209,22 @@ final class SessionActivityController {
     /// lock screen after the session ended is worse than never having shown it,
     /// because it's indistinguishable from a session still in progress.
     func end() {
-        guard let activity else { return }
+        let inFlight = reconciliation
+        inFlight?.cancel()
+        reconciliation = nil
+        let adoptedLegacyID = activity?.attributes.workoutID == nil ? activity?.id : nil
         self.activity = nil
         Task {
-            await activity.end(nil, dismissalPolicy: .immediate)
+            // A request is synchronous once entered and can win a race with
+            // cancellation. Wait for it to settle, then query ActivityKit
+            // again so Finish cannot leave a just-created activity behind.
+            await inFlight?.value
+            let owned = Activity<SessionActivityAttributes>.activities.filter {
+                $0.attributes.workoutID == workoutID || $0.id == adoptedLegacyID
+            }
+            for activity in owned {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
         }
     }
 }

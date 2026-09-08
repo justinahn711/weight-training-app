@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 import UserNotifications
 import WeightTrainingCore
 import WeightTrainingStore
@@ -21,6 +22,7 @@ import WeightTrainingStore
 /// They aren't preferences at all; they're the answers to "is my training
 /// safe", and this is where someone goes looking for them.
 struct SettingsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     /// Nil only when the store failed to open. That is the one case where
     /// there is nothing to export and nowhere to restore to, and equally the
     /// case where the gym section has nothing to write to — both are left out
@@ -40,6 +42,7 @@ struct SettingsView: View {
     /// toggle that's on while notifications are denied at the system level is
     /// the app claiming something it can't do.
     @State private var authorization: UNAuthorizationStatus?
+    @State private var liveActivity: LiveActivityDiagnosticSnapshot?
 
     /// The gym being edited, mirrored from `GymSettings.shared` for display.
     ///
@@ -123,6 +126,45 @@ struct SettingsView: View {
                 Text("Adds a line to the rest banner reporting how late the buzz went out. Enable it while troubleshooting an alert.")
             }
 
+            Section {
+                if let liveActivity {
+                    LabeledContent("System setting", value: liveActivity.isEnabled ? "On" : "Off")
+                    LabeledContent("Current activity", value: liveActivity.presence.rawValue)
+
+                    if liveActivity.activityCount > 1 {
+                        Label(
+                            "\(liveActivity.activityCount) activities are running. Starting a workout will keep the current one and remove stale duplicates.",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    }
+
+                    if let failure = liveActivity.lastFailure {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Last start failure")
+                                .font(.subheadline.weight(.medium))
+                            Text(failure)
+                                .font(.footnote.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    if !liveActivity.isEnabled {
+                        Button("Open iOS Settings") {
+                            UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+                        }
+                    }
+                } else {
+                    ProgressView("Checking Live Activities…")
+                }
+            } header: {
+                Text("Live Activity")
+            } footer: {
+                Text("Shows the current exercise and rest on the Lock Screen and Dynamic Island. Training and rest alerts still work when this is unavailable.")
+            }
+
             if let store {
                 BackupSection(onRestored: onRestored, store: store)
 
@@ -144,12 +186,17 @@ struct SettingsView: View {
             authorization = await UNUserNotificationCenter.current()
                 .notificationSettings()
                 .authorizationStatus
+            liveActivity = LiveActivityDiagnostics.snapshot()
         }
         // Asked again on the way in, because this is the screen someone opens
         // to check rather than to be told. A state computed at launch and left
         // there would answer a question about a different moment.
         .task {
             if let store { await sync.refresh(store: store) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            liveActivity = LiveActivityDiagnostics.snapshot()
         }
     }
 
