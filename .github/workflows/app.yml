@@ -5,24 +5,35 @@ name: App
 # fails to compile because Swift Charts lacks the result builder it uses. The
 # domain suite has no such constraint, so keeping them apart means a runner image
 # lagging reads as "the app needs a newer Xcode" rather than "the domain broke".
+#
+# CI is a pre-merge gate. Running the merge commit again on main only repeats the
+# same expensive macOS build, while workflow_dispatch keeps an escape hatch for
+# validating a direct push. Drafts are checked locally and get one CI run when
+# they become ready for review instead of one run per work-in-progress push.
 on:
-  push:
-    branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
     paths:
       - 'ChickenBreast/**'
       - 'Sources/**'
+      - 'Package.swift'
       - '.github/workflows/app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     name: Build for simulator
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     # Xcode 26.6 — the app target needs it (see above).
     runs-on: macos-26
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4

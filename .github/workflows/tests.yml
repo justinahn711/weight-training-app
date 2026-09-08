@@ -1,36 +1,40 @@
 name: Tests
 
-# The package is pure Swift with no simulator dependency, which is the whole
-# point of keeping Core and Store free of UIKit — the suite runs anywhere a
-# Swift toolchain does, in a second and a half.
+# The package needs macOS for SwiftData but has no simulator dependency. Keep it
+# separate from app.yml so a runner-image/Xcode failure reads as an app failure.
+# CI is a pre-merge gate: drafts are verified locally, then run here once they
+# become ready. workflow_dispatch remains available for exceptional direct
+# pushes without paying to repeat every successfully merged PR on main.
 on:
-  push:
-    branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - 'hooks/check-core-purity.sh'
+      - '.github/workflows/tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  # A newer push supersedes an in-flight run on the same branch.
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer PR update supersedes an in-flight run for that PR.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   swift-tests:
     name: swift test
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     # macOS because SwiftData sets the floor at macOS 14, and the Store target
     # needs it.
     runs-on: macos-15
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Show toolchain
-        run: swift --version
-
-      - name: Build
-        run: swift build --build-tests
-
-      - name: Test
-        run: swift test
 
       # Guards the invariant that makes the suite fast and the domain portable:
       # Core must not acquire a dependency on SwiftData, SwiftUI or HealthKit.
@@ -48,3 +52,11 @@ jobs:
             exit 1
           fi
           echo "Core imports Foundation only."
+
+      - name: Show toolchain
+        run: swift --version
+
+      # swift test builds the test products before running them. A separate
+      # swift build --build-tests duplicated the build graph on every runner.
+      - name: Test
+        run: swift test
