@@ -521,8 +521,12 @@ struct SessionView: View {
             if isPlateRowExpanded, !model.plateOptions.isEmpty {
                 PlateRow(
                     plates: model.plateOptions,
+                    breakdown: model.plateBreakdown,
+                    sleeves: exercise.exercise.loading?.sleeves ?? 2,
+                    isBarbell: exercise.exercise.equipment.usesOlympicBar,
                     unit: exercise.exercise.loading?.unit ?? gym.unit,
                     onAdd: { model.addPlate($0) },
+                    onRemove: { model.removePlate($0) },
                     onClear: { model.clearToBar() }
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -1125,6 +1129,9 @@ enum RestAlert {
 /// barbell is 90 lb.
 private struct PlateRow: View {
     let plates: [Double]
+    let breakdown: PlateBreakdown?
+    let sleeves: Int
+    let isBarbell: Bool
 
     /// The rack's unit, so the sizes render at the precision the rack has.
     /// Passed in rather than read from `GymSettings`: a lift can carry a rack
@@ -1132,16 +1139,53 @@ private struct PlateRow: View {
     /// lift's.
     let unit: MassUnit
     let onAdd: (Double) -> Void
+    let onRemove: (Double) -> Void
     let onClear: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Add plates")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(sleeves == 1 ? "Loaded" : "Loaded · each side")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-            HStack(spacing: 8) {
+                if loadedPlates.isEmpty {
+                    Text(breakdown == nil ? "This weight is not an exact plate build" : emptyLabel)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(minHeight: 44, alignment: .leading)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(loadedPlates.enumerated()), id: \.offset) { _, plate in
+                                Button { onRemove(plate) } label: {
+                                    HStack(spacing: 5) {
+                                        Text(label(plate))
+                                        Image(systemName: "minus.circle.fill")
+                                    }
+                                    .font(.callout.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(.primary)
+                                    .frame(minWidth: 62, minHeight: 44)
+                                    .background(.tint.opacity(0.14),
+                                                in: RoundedRectangle(cornerRadius: 10))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Remove \(spokenLabel(plate))")
+                                .accessibilityHint(removalHint)
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                    }
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(sleeves == 1 ? "Add plates" : "Add plates · each side")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(plates, id: \.self) { plate in
@@ -1154,25 +1198,47 @@ private struct PlateRow: View {
                                                 in: RoundedRectangle(cornerRadius: 10))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Add \(spokenLabel(plate))")
+                            .accessibilityHint(additionHint)
                         }
                     }
                     .padding(.horizontal, 2)
                 }
-
-                // Pinned outside the scroll. Adding is only fast if starting
-                // over is too, and a reset you have to scroll to find is a
-                // reset you don't use — it was off the right edge entirely
-                // until a screenshot showed it.
-                Button(action: onClear) {
-                    Text("Bar")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(minWidth: 54, minHeight: 44)
-                        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
             }
+
+            // A reset is intentionally outside both plate rows. It is not an
+            // inverse add action: it removes everything from the apparatus.
+            Button(action: onClear) {
+                Label(resetLabel, systemImage: "arrow.counterclockwise")
+                    .font(.callout.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Removes all loaded plates")
         }
+    }
+
+    private var loadedPlates: [Double] {
+        breakdown?.perSide.flatMap { entry in
+            Array(repeating: entry.plate, count: entry.count)
+        } ?? []
+    }
+
+    private var emptyLabel: String {
+        isBarbell ? "Bar only" : "Empty apparatus"
+    }
+
+    private var resetLabel: String {
+        isBarbell ? "Reset to bar" : "Reset to empty"
+    }
+
+    private var removalHint: String {
+        sleeves == 1 ? "Removes it from the sleeve" : "Removes one from each side"
+    }
+
+    private var additionHint: String {
+        sleeves == 1 ? "Adds it to the sleeve" : "Adds one to each side"
     }
 
     /// Plate sizes are native to the rack, so the unit's own rule renders
@@ -1180,6 +1246,10 @@ private struct PlateRow: View {
     /// you tap while loading a bar would have offered a "1.2" in a metric gym.
     private func label(_ plate: Double) -> String {
         unit.format(plate, withSymbol: false)
+    }
+
+    private func spokenLabel(_ plate: Double) -> String {
+        unit.format(plate, withSymbol: true) + " plate"
     }
 }
 
@@ -1227,9 +1297,9 @@ private struct WeightStepper: View {
     var body: some View {
         HStack(spacing: 0) {
             button("minus", action: onDecrement)
-            if let onTogglePlates, let plates {
+            if let onTogglePlates {
                 Button(action: onTogglePlates) {
-                    readout(detail: plates, showsDisclosure: true)
+                    plateReadout(detail: plates)
                         // The whole readout is the target, not the tiny
                         // chevron. It remains easy to hit with chalky hands.
                         .frame(maxWidth: .infinity, minHeight: 56)
@@ -1239,7 +1309,7 @@ private struct WeightStepper: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Plate controls")
                 .accessibilityValue(
-                    "\(load.formatted(in: gym.unit)), \(plates), "
+                    "\(load.formatted(in: gym.unit)), \(plates ?? "not an exact plate build"), "
                     + (isPlateDisclosureExpanded ? "expanded" : "collapsed")
                 )
                 .accessibilityHint(
@@ -1253,6 +1323,26 @@ private struct WeightStepper: View {
         }
         .padding(.vertical, 6)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func plateReadout(detail: String?) -> some View {
+        VStack(spacing: 1) {
+            Text(load.formatted(in: gym.unit))
+                .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            HStack(spacing: 4) {
+                Text("Adjust plates")
+                    .font(.callout.weight(.semibold))
+                Image(systemName: isPlateDisclosureExpanded ? "chevron.up" : "chevron.down")
+                    .accessibilityHidden(true)
+            }
+            Text(detail ?? "Not an exact plate build")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
     }
 
     private func readout(detail: String, showsDisclosure: Bool) -> some View {

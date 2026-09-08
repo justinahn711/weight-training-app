@@ -130,6 +130,22 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
         breakdown(for: load) != nil
     }
 
+    /// Removes one displayed plate from every sleeve.
+    ///
+    /// The caller passes a plate in the rack's native unit, exactly as it is
+    /// printed on the plate and returned by `breakdown(for:)`. Requiring that
+    /// plate to be present in the current breakdown keeps a correction from
+    /// manufacturing an unrelated load when the pending weight is off-grid.
+    public func removingPlate(_ plate: Double, from load: Load) -> Load? {
+        guard plate > 0,
+              let breakdown = breakdown(for: load),
+              breakdown.perSide.contains(where: { Self.cents($0.plate) == Self.cents(plate) })
+        else { return nil }
+
+        let remaining = load.value(in: unit) - plate * Double(sleeves)
+        return Load(remaining, unit)
+    }
+
     /// The closest load this apparatus can actually be set to.
     ///
     /// The plate set, not a scalar increment, is what a plate-built lift can
