@@ -246,6 +246,31 @@ public final class TrainingStore {
         return true
     }
 
+    /// Corrects a set on disk and in a running session as one coordinated
+    /// operation (#130).
+    ///
+    /// Both sides are checked before the write. That prevents a stale sheet
+    /// from updating history while leaving the workout row unchanged, or from
+    /// changing an in-memory row whose persisted copy disappeared through
+    /// sync. Once the store commit succeeds the Core replacement cannot fail,
+    /// because the preflight established the same identity and owner.
+    @discardableResult
+    public func updateSet(_ record: SetRecord, in session: inout Session) throws -> Bool {
+        var preview = session
+        guard preview.correctSet(record) else { return false }
+
+        let id = record.id
+        var descriptor = FetchDescriptor<StoredSetLog>(
+            predicate: #Predicate { $0.id == id }
+        )
+        descriptor.fetchLimit = 1
+        guard let stored = try context.fetch(descriptor).first else { return false }
+        stored.update(from: record)
+        try commit()
+        session = preview
+        return true
+    }
+
     /// Removes a set. Backs the one-gesture undo in #8, where a mislogged set
     /// has to disappear completely rather than being marked void — a voided row
     /// would still have to be filtered out of every statistic downstream.

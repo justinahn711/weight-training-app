@@ -41,6 +41,9 @@ struct SessionView: View {
     /// edits (#138). It stays open while plates are added, then closes when
     /// the lifter moves to a different exercise.
     @State private var isPlateRowExpanded = false
+    /// Pins the logged row being corrected even if voice navigation moves the
+    /// workout while its sheet is open.
+    @State private var editingSet: ActiveSetEditTarget?
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -167,6 +170,9 @@ struct SessionView: View {
         }
         .sheet(isPresented: $isChoosingExercise) {
             exercisePicker
+        }
+        .sheet(item: $editingSet) { target in
+            ActiveSetEditor(target: target) { model.correctSet($0) }
         }
         .alert("Something went wrong",
                isPresented: Binding(get: { model.failure != nil },
@@ -432,7 +438,16 @@ struct SessionView: View {
                     .padding(.vertical, 6)
             } else {
                 ForEach(Array(exercise.loggedSets.enumerated()), id: \.element.id) { index, set in
-                    SetRow(number: index + 1, set: set)
+                    Button {
+                        editingSet = ActiveSetEditTarget(
+                            record: set,
+                            exercise: exercise.exercise
+                        )
+                    } label: {
+                        SetRow(number: index + 1, set: set)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Edits this logged set")
                 }
             }
         }
