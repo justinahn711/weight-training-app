@@ -108,4 +108,42 @@ final class TypedWeightTests: XCTestCase {
         XCTAssertEqual(TypedWeight.parse("102.5"), 102.5)
         XCTAssertEqual(TypedWeight.parse("7."), 7, "on the way to 7.5")
     }
+
+    func testExactRackWeightResolvesWithoutChangingIt() {
+        let dumbbell = Exercise(name: "Curl", muscles: [], equipment: .dumbbell,
+            progressionRule: .doubleProgression(range: RepRange(8, 12)))
+        XCTAssertEqual(TypedWeight.resolve("70", in: .pounds, for: dumbbell),
+                       .exact(Load(70)))
+    }
+
+    func testImpossibleRackWeightOffersNearestInsteadOfAcceptingIt() {
+        let dumbbell = Exercise(name: "Curl", muscles: [], equipment: .dumbbell,
+            progressionRule: .doubleProgression(range: RepRange(8, 12)))
+        XCTAssertEqual(TypedWeight.resolve("72", in: .pounds, for: dumbbell),
+                       .nearest(requested: Load(72), achievable: Load(70)))
+        XCTAssertFalse(dumbbell.canBuild(Load(72)))
+    }
+
+    func testTypedPlateLoadUsesTheConfiguredRack() {
+        let barbell = Exercise(name: "Bench", muscles: [], equipment: .barbell,
+            progressionRule: .doubleProgression(range: RepRange(5, 8)))
+        XCTAssertEqual(TypedWeight.resolve("187", in: .pounds, for: barbell),
+                       .nearest(requested: Load(187), achievable: Load(185)))
+    }
+
+    func testTypedWeightUsesTheFieldUnitBeforeBuildability() {
+        let stack = Exercise(name: "Pulldown", muscles: [], equipment: .machineStack,
+            increment: LoadIncrement(5, .kilograms),
+            progressionRule: .doubleProgression(range: RepRange(8, 12)))
+        guard case .exact(let load) = TypedWeight.resolve("75", in: .kilograms, for: stack)
+        else { return XCTFail("75 kg should be an exact stack setting") }
+        XCTAssertEqual(load.value(in: MassUnit.kilograms), 75, accuracy: 0.0001)
+    }
+
+    func testNearestTypedWeightNeverOffersZero() {
+        let dumbbell = Exercise(name: "Raise", muscles: [], equipment: .dumbbell,
+            progressionRule: .doubleProgression(range: RepRange(10, 15)))
+        XCTAssertEqual(TypedWeight.resolve("1", in: .pounds, for: dumbbell),
+                       .nearest(requested: Load(1), achievable: Load(5)))
+    }
 }
