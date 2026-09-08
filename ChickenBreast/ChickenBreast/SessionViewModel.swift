@@ -251,6 +251,18 @@ final class SessionViewModel {
         pendingLoad = Load(pendingLoad.pounds + perSleeve * Double(loading.sleeves))
     }
 
+    /// Removes one plate shown in the current breakdown from every sleeve.
+    ///
+    /// This is deliberately tied to the visible breakdown rather than acting
+    /// as another generic decrement: tapping a loaded 25 reverses adding that
+    /// 25, while the ordinary stepper continues to mean one configured step.
+    func removePlate(_ plate: Double) {
+        guard let loading = current?.exercise.loading,
+              let next = loading.removingPlate(plate, from: pendingLoad)
+        else { return }
+        pendingLoad = next
+    }
+
     /// Back to the empty apparatus, to build a weight up from scratch.
     ///
     /// The other half of plate entry: adding is fast only if starting over is

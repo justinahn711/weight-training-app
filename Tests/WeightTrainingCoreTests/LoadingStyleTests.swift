@@ -40,6 +40,35 @@ final class LoadingStyleTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(lever.breakdown(for: Load(35))).displayLine, "Empty")
     }
 
+    func testRemovingDisplayedPlateTakesOneFromEverySleeve() throws {
+        let style = LoadingStyle.olympicBarbell
+
+        XCTAssertEqual(style.removingPlate(10, from: Load(155)), Load(135))
+        XCTAssertEqual(style.breakdown(for: try XCTUnwrap(style.removingPlate(10, from: Load(155))))?.displayLine,
+                       "45")
+    }
+
+    func testRemovingDisplayedPlateUsesRackUnitAndSleeveCount() throws {
+        let style = LoadingStyle(
+            baseWeight: Load(20, .kilograms),
+            sleeves: 1,
+            availablePlates: [25, 20, 10, 5, 2.5, 1.25],
+            unit: .kilograms
+        )
+        let loaded = Load(65, .kilograms)
+
+        let remaining = try XCTUnwrap(style.removingPlate(20, from: loaded))
+        XCTAssertEqual(remaining.value(in: .kilograms), 45, accuracy: 0.000_001)
+        XCTAssertEqual(style.breakdown(for: remaining)?.displayLine, "25")
+    }
+
+    func testCannotRemovePlateThatIsNotDisplayed() {
+        let style = LoadingStyle.olympicBarbell
+
+        XCTAssertNil(style.removingPlate(25, from: Load(135)))
+        XCTAssertNil(style.removingPlate(45, from: Load(137)))
+    }
+
     // MARK: - Unmeasured machines
 
     /// Unknown base weight means the app declines to show a breakdown rather
