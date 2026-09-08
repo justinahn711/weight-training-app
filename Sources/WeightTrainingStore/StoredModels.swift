@@ -369,6 +369,59 @@ public final class StoredGymConfig {
     }
 }
 
+// MARK: - Unfinished workout
+
+/// One workout the lifter explicitly left unfinished.
+///
+/// This is navigation intent, not a stored training result. Sets and every
+/// statistic derived from them keep their existing source of truth. A fixed id
+/// lets two offline copies reconcile to one row after CloudKit imports them;
+/// the latest interaction wins.
+@Model
+public final class StoredWorkoutDraft {
+    public static let singletonID = UUID(uuidString: "AA809B5C-2010-4DE9-A1E4-E988B40C8A64")!
+
+    public var id: UUID = StoredWorkoutDraft.singletonID
+    public var draftID: UUID = UUID()
+    public var kindRaw: String = DayKind.push.rawValue
+    /// JSON `[UUID]`, preserving the exact lineup and swaps in order.
+    public var exerciseIDsData: Data = Data()
+    public var currentExerciseID: UUID?
+    public var startedAt: Date = Date()
+    public var updatedAt: Date = Date()
+
+    public init(_ draft: WorkoutDraft) {
+        id = Self.singletonID
+        update(from: draft)
+    }
+
+    public func update(from draft: WorkoutDraft) {
+        draftID = draft.id
+        kindRaw = draft.kind.rawValue
+        exerciseIDsData = encoded(draft.exerciseIDs)
+        currentExerciseID = draft.currentExerciseID
+        startedAt = draft.startedAt
+        updatedAt = draft.updatedAt
+    }
+
+    public func toDomain() throws -> WorkoutDraft {
+        do {
+            return WorkoutDraft(
+                id: draftID,
+                kind: DayKind(rawValue: kindRaw) ?? .push,
+                startedAt: startedAt,
+                exerciseIDs: exerciseIDsData.isEmpty
+                    ? []
+                    : try decoded([UUID].self, from: exerciseIDsData),
+                currentExerciseID: currentExerciseID,
+                updatedAt: updatedAt
+            )
+        } catch {
+            throw StoreError.corruptRecord(entity: "WorkoutDraft", id: draftID, underlying: error)
+        }
+    }
+}
+
 /// Every entity the app persists. Kept in one place so the container and any
 /// future migration plan can't drift apart.
 public enum TrainingSchema {
@@ -379,5 +432,6 @@ public enum TrainingSchema {
         StoredDayTemplate.self,
         StoredBodyweight.self,
         StoredGymConfig.self,
+        StoredWorkoutDraft.self,
     ]
 }

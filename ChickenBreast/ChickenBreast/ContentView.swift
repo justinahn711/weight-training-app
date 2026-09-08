@@ -24,9 +24,10 @@ struct ContentView: View {
     @State private var startupFailure: String?
     @State private var route: DayKind?
     /// The model belongs to the route, not to one rendering of its destination.
-    /// Keeping it here gives route dismissal the exact session it must finish
-    /// and prevents a temporary `SessionView` disappearance from doing so.
+    /// Keeping it here preserves the in-memory session while its route exists.
+    /// Route dismissal now means leave unfinished; only Finish completes it.
     @State private var activeSession: SessionViewModel?
+    @State private var workoutDraft: WorkoutDraft?
     @State private var sessionStartFailure: String?
     @State private var cycle: CyclePosition?
     @State private var volume: VolumeReport?
@@ -72,12 +73,16 @@ struct ContentView: View {
                 startupFailure = String(describing: error)
             }
         }
-        // Recomputed on return from a session, so finishing a push day moves
-        // the home screen on to pull without a relaunch.
+        // Recomputed on return from a session. Back leaves the draft intact;
+        // explicit Finish clears it before dismissing this route.
         .onChange(of: route) { _, newValue in
             guard newValue == nil else { return }
-            activeSession?.finish()
-            activeSession = nil
+            // Keep the live model (including rest and unlogged choices) while
+            // this process is alive. A relaunch rebuilds the same route from
+            // the durable draft instead.
+            if workoutDraft == nil {
+                activeSession = nil
+            }
             sessionStartFailure = nil
             refresh()
         }
@@ -301,35 +306,60 @@ struct ContentView: View {
             }
             .frame(height: 22)
 
-            ForEach(orderedDays, id: \.self) { kind in
-                let isNext = kind == cycle?.next
+            if let workoutDraft {
                 Button {
-                    openSession(kind, from: store)
+                    resumeWorkout(workoutDraft, from: store)
                 } label: {
                     HStack {
-                        Text(kind.rawValue.capitalized)
-                            .font(isNext ? .title.bold() : .title3.weight(.semibold))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Resume \(workoutDraft.kind.rawValue.capitalized) workout")
+                                .font(.title3.bold())
+                            Text("Your logged sets are saved")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
-                        Text(subtitle(for: kind))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "arrow.right")
+                            .font(.headline)
                     }
                     .padding(.horizontal, 20)
-                    .frame(height: isNext ? 88 : 68)
+                    .frame(height: 88)
                     .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(isNext ? AnyShapeStyle(.tint.opacity(0.15))
-                                         : AnyShapeStyle(.fill.tertiary))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(isNext ? AnyShapeStyle(.tint)
-                                                 : AnyShapeStyle(.clear), lineWidth: 2)
-                    )
+                    .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.tint, lineWidth: 2))
                 }
                 .buttonStyle(.plain)
-                .disabled(store == nil)
+            } else {
+                ForEach(orderedDays, id: \.self) { kind in
+                    let isNext = kind == cycle?.next
+                    Button {
+                        openSession(kind, from: store)
+                    } label: {
+                        HStack {
+                            Text(kind.rawValue.capitalized)
+                                .font(isNext ? .title.bold() : .title3.weight(.semibold))
+                            Spacer()
+                            Text(subtitle(for: kind))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 20)
+                        .frame(height: isNext ? 88 : 68)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(isNext ? AnyShapeStyle(.tint.opacity(0.15))
+                                             : AnyShapeStyle(.fill.tertiary))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .strokeBorder(isNext ? AnyShapeStyle(.tint)
+                                                     : AnyShapeStyle(.clear), lineWidth: 2)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store == nil)
+                }
             }
 
             Spacer()
@@ -406,7 +436,7 @@ struct ContentView: View {
     @ViewBuilder
     private func sessionDestination(for kind: DayKind) -> some View {
         if let activeSession {
-            SessionView(model: activeSession)
+            SessionView(model: activeSession, onFinish: finishActiveSession)
         } else if let sessionStartFailure {
             ContentUnavailableView(
                 "Couldn't start the session",
@@ -416,23 +446,43 @@ struct ContentView: View {
         }
     }
 
-    /// Assembles a session at the tap, then gives the route ownership of it.
-    ///
-    /// The destination used to construct its model while rendering. That left
-    /// the parent with only a `DayKind` when the route ended, so completion had
-    /// to live in `SessionView.onDisappear` and could also fire for unrelated
-    /// view removals. Holding the model until `route` becomes nil makes the
-    /// navigation transition the single finishing boundary (#126).
+    /// Assembles a session and durably marks it unfinished before navigating.
     private func openSession(_ kind: DayKind, from store: TrainingStore?) {
         guard route == nil, activeSession == nil, let store else { return }
         do {
             let session = try store.startSession(kind: kind)
-            activeSession = SessionViewModel(store: store, session: session)
+            let draft = WorkoutDraft(session: session)
+            try store.saveWorkoutDraft(draft)
+            workoutDraft = draft
+            activeSession = SessionViewModel(store: store, session: session, draftID: draft.id)
             sessionStartFailure = nil
         } catch {
             sessionStartFailure = String(describing: error)
+            return
         }
         route = kind
+    }
+
+    private func resumeWorkout(_ draft: WorkoutDraft, from store: TrainingStore?) {
+        guard route == nil, let store else { return }
+        if activeSession != nil {
+            route = draft.kind
+            return
+        }
+        do {
+            let session = try store.resumeSession(draft)
+            activeSession = SessionViewModel(store: store, session: session, draftID: draft.id)
+            sessionStartFailure = nil
+            route = draft.kind
+        } catch {
+            sessionStartFailure = String(describing: error)
+        }
+    }
+
+    private func finishActiveSession() {
+        guard let activeSession, activeSession.finish() else { return }
+        workoutDraft = nil
+        route = nil
     }
 
     /// Loads recovery when Health has already been answered, and otherwise
@@ -502,6 +552,7 @@ struct ContentView: View {
             // gym row syncs, but what each lift inherits from it does not.
             try opened.reconcileGym()
             GymSettings.shared.refresh(from: opened)
+            workoutDraft = try opened.workoutDraft()
             // Train needs the store and the cycle position. Nothing else on
             // this path is for the screen that is about to appear: volume, the
             // digest, every e1RM trend and the whole training history were all

@@ -9,9 +9,10 @@ public struct DeduplicationReport: Hashable, Sendable {
     public var progressStates: Int = 0
     public var dayTemplates: Int = 0
     public var gymConfigs: Int = 0
+    public var workoutDrafts: Int = 0
 
     public var total: Int {
-        exercises + sets + progressStates + dayTemplates + gymConfigs
+        exercises + sets + progressStates + dayTemplates + gymConfigs + workoutDrafts
     }
     public var isEmpty: Bool { total == 0 }
 }
@@ -77,6 +78,12 @@ extension TrainingStore {
             // and both descriptions are real. The later edit wins, because it
             // is the one made with the other already known about — or, if they
             // truly crossed, the one the lifter touched most recently.
+            candidates.max { $0.updatedAt < $1.updatedAt }
+        }
+
+        report.workoutDrafts = try collapse(
+            FetchDescriptor<StoredWorkoutDraft>(), key: \.id
+        ) { candidates in
             candidates.max { $0.updatedAt < $1.updatedAt }
         }
 

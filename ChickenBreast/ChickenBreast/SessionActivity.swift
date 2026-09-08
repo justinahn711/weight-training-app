@@ -73,7 +73,12 @@ struct SessionActivityAttributes: ActivityAttributes {
 /// interrupt a lift with an error.
 @MainActor
 final class SessionActivityController {
-    private var activity: Activity<SessionActivityAttributes>?
+    /// Reattach after returning from Train or relaunching. ActivityKit owns the
+    /// activity across process boundaries; keeping only this controller's
+    /// original reference would create a duplicate on Resume and leave the old
+    /// one impossible for Finish to end.
+    private var activity: Activity<SessionActivityAttributes>? =
+        Activity<SessionActivityAttributes>.activities.first
 
     /// Whether the system will accept one at all. False when the user has
     /// turned Live Activities off for the app, which is a setting rather than
