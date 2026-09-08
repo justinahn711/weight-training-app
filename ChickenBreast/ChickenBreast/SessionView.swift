@@ -819,7 +819,7 @@ private struct RestBanner: View {
     let rest: RestTimer
     let onSkip: () -> Void
 
-    @AppStorage(RestAlertSettings.timingKey) private var showsTiming = true
+    @AppStorage(RestAlertSettings.timingKey) private var showsTiming = RestAlertSettings.timingDefault
 
     /// What the buzz did, once it has done it. See `RestAlertReport`.
     @State private var report: RestAlertReport?
@@ -963,7 +963,7 @@ private struct RestBanner: View {
 /// large `+` is the wait drifting again, a large `motor` is the vibration path
 /// stalling, and those are different bugs with different fixes. A large `+` is the timer
 /// drifting; a large `motor` is the vibration path itself stalling, which
-/// would be a different fix. Turn it off in Settings once it reads right.
+/// would be a different fix. Enable the readout in Settings while investigating.
 private struct RestAlertReport {
 
     /// How far past the target the buzz went out.
