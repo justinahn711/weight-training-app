@@ -19,9 +19,10 @@ import WeightTrainingStore
 final class SessionViewModel {
     private let store: TrainingStore
     private let liveActivity = SessionActivityController()
-    /// Route completion may be observed more than once as SwiftUI reconciles
-    /// navigation. Persistent progression and Live Activity teardown still
-    /// belong to one session boundary, so repeated calls are harmless.
+    private let draftID: UUID
+    /// Finish can be tapped twice while navigation animates. Persistent
+    /// progression and Live Activity teardown still belong to one explicit
+    /// boundary, so repeated calls are harmless.
     @ObservationIgnored private var hasFinished = false
 
     private(set) var session: Session
@@ -47,9 +48,10 @@ final class SessionViewModel {
     /// so it needs nothing running to stay correct across a backgrounding (#6).
     private(set) var rest: RestTimer?
 
-    init(store: TrainingStore, session: Session) {
+    init(store: TrainingStore, session: Session, draftID: UUID) {
         self.store = store
         self.session = session
+        self.draftID = draftID
         let prescription = session.current?.prescription
         self.pendingLoad = prescription?.load ?? Load.zero
         self.pendingReps = prescription?.reps ?? 8
@@ -278,16 +280,19 @@ final class SessionViewModel {
     func advance() {
         session.advance()
         seedPendingFromCurrent()
+        saveDraft()
     }
 
     func goBack() {
         session.goBack()
         seedPendingFromCurrent()
+        saveDraft()
     }
 
     func select(exerciseID: UUID) {
         session.select(exerciseID: exerciseID)
         seedPendingFromCurrent()
+        saveDraft()
     }
 
     /// Re-centres the input on the new exercise's target, using the last set
@@ -384,33 +389,42 @@ final class SessionViewModel {
 
     // MARK: - Finishing
 
-    /// Finishes this route's session exactly once.
-    ///
-    /// Called by `ContentView` when its session route becomes nil. View
-    /// disappearance is deliberately not a finishing signal: SwiftUI can
-    /// remove and recreate a destination while the route remains active.
-    func finish() {
-        guard !hasFinished else { return }
-        hasFinished = true
-        applyProgression()
-        endActivity()
-    }
-
-    /// Turns what was performed into next session's targets.
-    ///
-    /// Leaving the session is what finishes it — there is no "done" button to
-    /// forget to press, and a session abandoned halfway still produced real
-    /// work that should count. The store owns the rule, including the
-    /// once-per-day guard that keeps walking out and back in from being worth
-    /// a load jump.
-    private func applyProgression() {
+    /// Finishes this workout exactly once. Navigation and disappearance are
+    /// deliberately not finishing signals; only the visible Finish action is.
+    @discardableResult
+    func finish() -> Bool {
+        guard !hasFinished else { return true }
         do {
-            let applied = try store.applyProgression(for: session)
+            // Pull in sets logged from the lock-screen intent while this view
+            // was not active. Disk is authoritative for performed work.
+            session = try store.resumeSession(
+                WorkoutDraft(session: session, id: draftID)
+            )
+            let applied = try store.applyProgression(for: session, now: session.startedAt)
             for entry in applied {
                 loadedStates[entry.exercise.id] = entry.result.state
             }
+            // Clear after progression. If this save fails, retrying is safe:
+            // progression is idempotent for the session day, while retaining
+            // the draft keeps a failed Finish recoverable.
+            try store.clearWorkoutDraft(id: draftID)
+            hasFinished = true
+            endActivity()
+            return true
         } catch {
-            failure = "Couldn't save your progress: \(error.localizedDescription)"
+            failure = "Couldn't finish this workout: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Keeps exercise order and position durable without storing a derived
+    /// result. Failure is visible, because otherwise Back would promise a
+    /// resume state the app had not actually saved.
+    private func saveDraft() {
+        do {
+            try store.saveWorkoutDraft(WorkoutDraft(session: session, id: draftID))
+        } catch {
+            failure = "Couldn't save where you left off: \(error.localizedDescription)"
         }
     }
 
@@ -578,6 +592,7 @@ final class SessionViewModel {
             // reset mid-set. `updateConfiguration` already asks it this way.
             let wasVisible = current?.id == replaced.id
             session.replace(exerciseWithID: replaced.id, with: replacement)
+            saveDraft()
             // Only the visible lift's pending state and advice are the screen's
             // to reset. Swapping one the day has already moved past changes the
             // day, not what is in front of you.

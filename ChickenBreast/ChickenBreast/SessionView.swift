@@ -18,6 +18,7 @@ struct SessionView: View {
     private var gym: GymSettings { .shared }
 
     @State var model: SessionViewModel
+    let onFinish: () -> Void
     /// The lift the swap sheet was opened for, rather than a bare flag (#120).
     ///
     /// Same reason as `configuring`: the sheet is decided over seconds, the mic
@@ -44,6 +45,7 @@ struct SessionView: View {
     /// Pins the logged row being corrected even if voice navigation moves the
     /// workout while its sheet is open.
     @State private var editingSet: ActiveSetEditTarget?
+    @State private var showingPartialFinishConfirmation = false
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -85,11 +87,15 @@ struct SessionView: View {
                 }
                 actionBar(exercise)
             } else {
-                ContentUnavailableView(
-                    "Nothing to train",
-                    systemImage: "figure.strengthtraining.traditional",
-                    description: Text("This day has no exercises in the library yet.")
-                )
+                VStack(spacing: 20) {
+                    ContentUnavailableView(
+                        "Nothing to train",
+                        systemImage: "figure.strengthtraining.traditional",
+                        description: Text("This day has no exercises in the library yet.")
+                    )
+                    Button("Finish workout", action: onFinish)
+                        .buttonStyle(.borderedProminent)
+                }
             }
         }
         .navigationTitle(model.session.kind.rawValue.capitalized)
@@ -181,6 +187,16 @@ struct SessionView: View {
         } message: {
             Text(model.failure ?? "")
         }
+        .confirmationDialog(
+            "Finish this workout?",
+            isPresented: $showingPartialFinishConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Finish workout") { onFinish() }
+            Button("Keep training", role: .cancel) {}
+        } message: {
+            Text("Your logged sets will stay saved. Exercises you have not started will be skipped.")
+        }
     }
 
     // MARK: - Context above
@@ -213,6 +229,13 @@ struct SessionView: View {
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
+                Spacer(minLength: 0)
+                Button("Finish") {
+                    requestFinish()
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+                .accessibilityLabel("Finish workout")
             }
             Button {
                 swapping = exercise
@@ -547,6 +570,9 @@ struct SessionView: View {
                 if !model.session.isOnLastExercise {
                     Button("Next exercise") { model.advance() }
                         .font(.subheadline.weight(.semibold))
+                } else {
+                    Button("Finish workout", action: requestFinish)
+                        .font(.subheadline.weight(.semibold))
                 }
             }
         }
@@ -554,6 +580,17 @@ struct SessionView: View {
         .padding(.top, 12)
         .padding(.bottom, 8)
         .background(.bar)
+    }
+
+    /// A normal completed workout stays one tap. Finishing while planned lifts
+    /// are untouched gets one deliberate checkpoint because it advances the
+    /// training state and cannot be mistaken for ordinary exercise navigation.
+    private func requestFinish() {
+        if model.session.startedCount < model.session.exercises.count {
+            showingPartialFinishConfirmation = true
+        } else {
+            onFinish()
+        }
     }
 }
 
