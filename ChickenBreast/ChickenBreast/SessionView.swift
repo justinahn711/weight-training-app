@@ -36,6 +36,7 @@ struct SessionView: View {
     /// The lift whose exact-rep sheet is open. Voice can advance beneath a
     /// sheet, so carrying the subject keeps Save aimed where the tap began.
     @State private var enteringReps: RepEntryTarget?
+    @State private var isChoosingExercise = false
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -157,6 +158,9 @@ struct SessionView: View {
                 model.setPendingReps(reps, for: target.id)
             }
         }
+        .sheet(isPresented: $isChoosingExercise) {
+            exercisePicker
+        }
         .alert("Something went wrong",
                isPresented: Binding(get: { model.failure != nil },
                                     set: { if !$0 { model.dismissFailure() } })) {
@@ -171,9 +175,23 @@ struct SessionView: View {
     private func header(_ exercise: SessionExercise) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(model.progressLabel)
+                Button {
+                    isChoosingExercise = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(model.progressLabel)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                    }
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Choose exercise")
+                .accessibilityValue("\(model.progressLabel), \(exercise.exercise.name)")
+                .accessibilityHint("Shows every exercise in this workout")
                 if let slot = exercise.slot {
                     // The slot is the job. Naming it makes a swap legible as a
                     // substitution rather than as abandoning the day's shape.
@@ -202,6 +220,52 @@ struct SessionView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
+    }
+
+    private var exercisePicker: some View {
+        NavigationStack {
+            List(model.session.exercises) { exercise in
+                Button {
+                    model.select(exerciseID: exercise.id)
+                    isChoosingExercise = false
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(exercise.exercise.name)
+                                .foregroundStyle(.primary)
+                            let count = exercise.workingSets.count
+                            Text("\(count) working \(count == 1 ? "set" : "sets")")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if exercise.id == model.current?.id {
+                            Image(systemName: "checkmark")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel(exercise.exercise.name)
+                .accessibilityValue(exercisePickerAccessibilityValue(for: exercise))
+                .accessibilityAddTraits(exercise.id == model.current?.id ? .isSelected : [])
+            }
+            .navigationTitle("Workout exercises")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { isChoosingExercise = false }
+                }
+            }
+        }
+    }
+
+    private func exercisePickerAccessibilityValue(for exercise: SessionExercise) -> String {
+        let count = exercise.workingSets.count
+        let progress = "\(count) working \(count == 1 ? "set" : "sets")"
+        return exercise.id == model.current?.id ? "Current exercise, \(progress)" : progress
     }
 
     /// The assumptions worth noticing, rather than every default (#122).
