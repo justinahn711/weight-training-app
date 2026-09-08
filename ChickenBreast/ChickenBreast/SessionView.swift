@@ -37,6 +37,10 @@ struct SessionView: View {
     /// sheet, so carrying the subject keeps Save aimed where the tap began.
     @State private var enteringReps: RepEntryTarget?
     @State private var isChoosingExercise = false
+    /// Plate building is the exception path, opened from the breakdown it
+    /// edits (#138). It stays open while plates are added, then closes when
+    /// the lifter moves to a different exercise.
+    @State private var isPlateRowExpanded = false
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -126,6 +130,14 @@ struct SessionView: View {
         .onChange(of: voice.parsed) { _, parsed in
             guard let parsed else { return }
             model.handle(parsed)
+        }
+        .onChange(of: model.current?.id) { _, _ in
+            isPlateRowExpanded = false
+        }
+        .onChange(of: model.plateOptions) { _, options in
+            if options.isEmpty {
+                isPlateRowExpanded = false
+            }
         }
         .onDisappear { voice.stop() }
         .sheet(item: $swapping) { replaced in
@@ -455,6 +467,12 @@ struct SessionView: View {
                 // Read off while loading the bar, so it sits directly under the
                 // number it describes (#14).
                 plates: model.plateBreakdown?.displayLine,
+                isPlateDisclosureExpanded: isPlateRowExpanded,
+                onTogglePlates: model.plateOptions.isEmpty ? nil : {
+                    withAnimation(.snappy) {
+                        isPlateRowExpanded.toggle()
+                    }
+                },
                 onDecrement: { model.adjustLoad(by: -1) },
                 onIncrement: { model.adjustLoad(by: 1) }
             )
@@ -462,13 +480,14 @@ struct SessionView: View {
             // Building a weight the way it's built in the gym (#77). Only for
             // apparatus that has been measured, since a running total on an
             // unknown bar would be a guess presented as a number.
-            if !model.plateOptions.isEmpty {
+            if isPlateRowExpanded, !model.plateOptions.isEmpty {
                 PlateRow(
                     plates: model.plateOptions,
                     unit: exercise.exercise.loading?.unit ?? gym.unit,
                     onAdd: { model.addPlate($0) },
                     onClear: { model.clearToBar() }
                 )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             RepChoiceRow(
@@ -1100,6 +1119,8 @@ private struct WeightStepper: View {
     let load: Load
     let increment: LoadIncrement
     let plates: String?
+    let isPlateDisclosureExpanded: Bool
+    let onTogglePlates: (() -> Void)?
     let onDecrement: () -> Void
     let onIncrement: () -> Void
 
@@ -1108,22 +1129,52 @@ private struct WeightStepper: View {
     var body: some View {
         HStack(spacing: 0) {
             button("minus", action: onDecrement)
-            VStack(spacing: 0) {
-                Text(load.formatted(in: gym.unit))
-                    .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text(plates ?? "\(increment.formatted) steps")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+            if let onTogglePlates, let plates {
+                Button(action: onTogglePlates) {
+                    readout(detail: plates, showsDisclosure: true)
+                        // The whole readout is the target, not the tiny
+                        // chevron. It remains easy to hit with chalky hands.
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Plate controls")
+                .accessibilityValue(
+                    "\(load.formatted(in: gym.unit)), \(plates), "
+                    + (isPlateDisclosureExpanded ? "expanded" : "collapsed")
+                )
+                .accessibilityHint(
+                    isPlateDisclosureExpanded ? "Hides plate buttons" : "Shows plate buttons"
+                )
+            } else {
+                readout(detail: plates ?? "\(increment.formatted) steps", showsDisclosure: false)
+                    .frame(maxWidth: .infinity, minHeight: 56)
             }
-            .frame(maxWidth: .infinity)
             button("plus", action: onIncrement)
         }
         .padding(.vertical, 6)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func readout(detail: String, showsDisclosure: Bool) -> some View {
+        VStack(spacing: 0) {
+            Text(load.formatted(in: gym.unit))
+                .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            HStack(spacing: 4) {
+                Text(detail)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if showsDisclosure {
+                    Image(systemName: isPlateDisclosureExpanded ? "chevron.up" : "chevron.down")
+                        .accessibilityHidden(true)
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
     }
 
     private func button(_ symbol: String, action: @escaping () -> Void) -> some View {
