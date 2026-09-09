@@ -10,8 +10,8 @@ import WeightTrainingCore
 /// What was heard, before it becomes a set (#22).
 ///
 /// Voice fills the form; it never silently writes. This is that promise made
-/// visible: the values appear, a ring counts down, and any tap anywhere
-/// cancels. Anything uncertain — a bare number, a weight that had to be moved
+/// visible: the values appear, a ring counts down, and Cancel stays explicit.
+/// Anything uncertain — a bare number, a weight that had to be moved
 /// to fit the bar, a field that was thrown out — shows without a countdown and
 /// waits to be tapped.
 struct HeardBanner: View {
@@ -44,8 +44,18 @@ struct HeardBanner: View {
                     Button("Log it", action: onCommit)
                         .font(.subheadline.weight(.semibold))
                         .buttonStyle(.borderedProminent)
+                        .frame(minHeight: 44)
+                        .accessibilityHint("Logs the values shown")
+                        .accessibilityIdentifier("session.voice.commit")
                 }
             }
+
+            Button("Cancel", role: .cancel, action: onCancel)
+                .font(.subheadline.weight(.semibold))
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityLabel("Cancel voice input")
+                .accessibilityHint("Discards the values shown without logging a set")
+                .accessibilityIdentifier("session.voice.cancel")
 
             ForEach(heard.rejections, id: \.self) { rejection in
                 Label(rejection, systemImage: "exclamationmark.triangle")
@@ -69,9 +79,8 @@ struct HeardBanner: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.fill.tertiary)
-        // Any tap cancels, including one that lands on the banner itself.
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onCancel)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("session.voice.confirmation")
         .onAppear {
             // A tap you can feel, so the phone can stay in your pocket-adjacent
             // spot on the bench rather than being watched.

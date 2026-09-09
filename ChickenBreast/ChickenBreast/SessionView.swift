@@ -92,6 +92,13 @@ struct SessionView: View {
                     Image(systemName: voice.isListening ? "waveform.circle.fill" : "mic")
                         .symbolEffect(.pulse, isActive: voice.isListening)
                 }
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityIdentifier("session.voice.toggle")
+                .accessibilityLabel(voice.isListening ? "Stop listening" : "Use voice input")
+                .accessibilityValue(voice.isListening ? "Listening" : "Not listening")
+                .accessibilityHint(voice.isListening
+                                   ? "Stops voice input"
+                                   : "Listens for weight, reps, and RPE")
             }
         }
         // Heard values reach the form only through the snapper — the view has
@@ -299,6 +306,7 @@ struct SessionView: View {
                 .accessibilityLabel("Choose exercise")
                 .accessibilityValue("\(model.progressLabel), \(exercise.exercise.name)")
                 .accessibilityHint("Shows every exercise in this workout")
+                .accessibilityIdentifier("session.exercise.choose")
                 if let slot = exercise.slot {
                     // The slot is the job. Naming it makes a swap legible as a
                     // substitution rather than as abandoning the day's shape.
@@ -314,6 +322,7 @@ struct SessionView: View {
                 .font(.subheadline.weight(.semibold))
                 .frame(minHeight: 44)
                 .accessibilityLabel("Finish workout")
+                .accessibilityIdentifier("session.finish.header")
             }
             Button {
                 swapping = exercise
@@ -331,6 +340,10 @@ struct SessionView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .accessibilityLabel("Swap \(exercise.exercise.name)")
+            .accessibilityHint("Chooses a different exercise for this slot")
+            .accessibilityIdentifier("session.exercise.swap")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
@@ -490,7 +503,11 @@ struct SessionView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .accessibilityLabel("Configure \(exercise.exercise.name)")
+            .accessibilityValue(configSummary(exercise))
             .accessibilityHint("Corrects what the app assumes about this lift")
+            .accessibilityIdentifier("session.exercise.configure")
 
             // Keeps the once-ever tap from reading as a third row of the pair
             // below, which are read every set and are not controls at all.
@@ -700,17 +717,17 @@ struct SessionView: View {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 8) {
                         repChoices(exercise)
-                        rpeChoices
+                        rpeChoices(exercise)
                     }
                 } else {
                     HStack(alignment: .top, spacing: 8) {
                         repChoices(exercise)
-                        rpeChoices
+                        rpeChoices(exercise)
                     }
                 }
             } else {
                 repChoices(exercise)
-                rpeChoices
+                rpeChoices(exercise)
             }
 
             Button {
@@ -722,25 +739,30 @@ struct SessionView: View {
                     .frame(height: isCompact ? 50 : 56)
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("session.log-set")
 
             HStack {
                 Button("Warmup") { model.logSet(isWarmup: true) }
                     .font(.subheadline)
                     .frame(minHeight: 44)
+                    .accessibilityIdentifier("session.log-warmup")
                 Spacer()
                 if model.session.currentIndex > 0 {
                     Button("Back") { model.goBack() }
                         .font(.subheadline)
                         .frame(minHeight: 44)
+                        .accessibilityIdentifier("session.exercise.previous")
                 }
                 if !model.session.isOnLastExercise {
                     Button("Next exercise") { model.advance() }
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
+                        .accessibilityIdentifier("session.exercise.next")
                 } else {
                     Button("Finish workout", action: requestFinish)
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
+                        .accessibilityIdentifier("session.finish.footer")
                 }
             }
         }
@@ -764,10 +786,11 @@ struct SessionView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var rpeChoices: some View {
+    private func rpeChoices(_ exercise: SessionExercise) -> some View {
         ChoiceRow(
             caption: "RPE",
             values: RPE.sessionChips,
+            selectionContext: exercise.id,
             isSelected: { $0 == model.pendingRPE },
             label: { $0.value == $0.value.rounded()
                 ? String(format: "%.0f", $0.value)
@@ -1004,6 +1027,11 @@ private struct SuggestionChip: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .accessibilityLabel("Use suggestion: \(suggestion.title(in: gym.unit))")
+            .accessibilityValue(suggestion.reason)
+            .accessibilityHint("Changes the pending set without logging it")
+            .accessibilityIdentifier("session.suggestion.accept.\(suggestion.id)")
 
             // A sibling of the accept button, never inside its label — a nested
             // button never receives its own taps.
@@ -1011,10 +1039,13 @@ private struct SuggestionChip: View {
                 Image(systemName: "xmark")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss \(suggestion.title(in: gym.unit)) suggestion")
+            .accessibilityHint("Hides this suggestion for the rest of the workout")
+            .accessibilityIdentifier("session.suggestion.dismiss.\(suggestion.id)")
         }
         .padding(.leading, 12)
         .padding(.trailing, 2)
@@ -1065,11 +1096,20 @@ private struct WarmupBlock: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .frame(minHeight: 44)
+                .accessibilityLabel("Warmup ramp")
+                .accessibilityValue(isExpanded ? "Expanded, \(summary)" : "Collapsed, \(summary)")
+                .accessibilityHint(isExpanded ? "Hides warmup sets" : "Shows warmup sets")
+                .accessibilityIdentifier("session.warmup.disclosure")
 
                 Button("Clear", action: onClear)
                     .font(.subheadline)
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("Clear warmup ramp")
+                    .accessibilityHint("Removes every remaining warmup set")
+                    .accessibilityIdentifier("session.warmup.clear")
             }
 
             if isExpanded {
@@ -1089,11 +1129,14 @@ private struct WarmupBlock: View {
                             Image(systemName: "plus.circle")
                                 .foregroundStyle(.tint)
                         }
+                        .frame(minHeight: 44)
                         .padding(.vertical, 8)
                         .padding(.horizontal, 12)
                         .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Log warmup, \(rung.load.formatted(in: gym.unit)), \(rung.reps) reps")
+                    .accessibilityIdentifier("session.warmup.log.\(rung.id)")
                 }
             }
         }
@@ -1635,6 +1678,7 @@ private struct WeightStepper: View {
 struct ChoiceRow<Value: Hashable>: View {
     let caption: String
     let values: [Value]
+    var selectionContext: AnyHashable? = nil
     let isSelected: (Value) -> Bool
     let label: (Value) -> String
     let onSelect: (Value) -> Void
@@ -1665,6 +1709,10 @@ struct ChoiceRow<Value: Hashable>: View {
                                     )
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("\(caption), \(label(value))")
+                            .accessibilityValue(selected ? "Selected" : "Not selected")
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityIdentifier(choiceIdentifier(for: value))
                             .id(value)
                         }
                     }
@@ -1677,8 +1725,26 @@ struct ChoiceRow<Value: Hashable>: View {
                         proxy.scrollTo(selected, anchor: .center)
                     }
                 }
+                .onChange(of: values.first(where: isSelected)) { _, selected in
+                    if let selected {
+                        proxy.scrollTo(selected, anchor: .center)
+                    }
+                }
+                .onChange(of: selectionContext) {
+                    if let selected = values.first(where: isSelected) {
+                        proxy.scrollTo(selected, anchor: .center)
+                    }
+                }
             }
         }
+    }
+
+    private func choiceIdentifier(for value: Value) -> String {
+        let row = caption.lowercased().replacingOccurrences(of: " ", with: "-")
+        let choice = label(value).lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: ".", with: "-")
+        return "choice.\(row).\(choice)"
     }
 }
 
@@ -1723,7 +1789,9 @@ private struct RepChoiceRow: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("\(value) reps")
+                                .accessibilityValue(isSelected ? "Selected" : "Not selected")
                                 .accessibilityAddTraits(isSelected ? .isSelected : [])
+                                .accessibilityIdentifier("session.reps.\(value)")
                                 .id(value)
                             }
                         }
@@ -1764,6 +1832,8 @@ private struct RepChoiceRow: View {
                                     ? "\(selected) reps selected"
                                     : "Current selection, \(selected) reps")
                 .accessibilityAddTraits(usesOtherCount ? .isSelected : [])
+                .accessibilityHint("Opens exact rep entry")
+                .accessibilityIdentifier("session.reps.other")
             }
         }
     }

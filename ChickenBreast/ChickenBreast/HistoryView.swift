@@ -119,6 +119,9 @@ private struct MonthHeader: View {
             Button(action: onBack) {
                 Image(systemName: "chevron.left").font(.body.weight(.semibold))
             }
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityLabel("Previous month")
+            .accessibilityIdentifier("history.month.previous")
             Spacer()
             Text(month.formatted(.dateTime.month(.wide).year()))
                 .font(.headline)
@@ -126,6 +129,9 @@ private struct MonthHeader: View {
             Button(action: onForward) {
                 Image(systemName: "chevron.right").font(.body.weight(.semibold))
             }
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityLabel("Next month")
+            .accessibilityIdentifier("history.month.next")
             .disabled(!canGoForward)
         }
         .padding(.top, 8)
@@ -205,8 +211,17 @@ private struct DayCell: View {
             if let day {
                 Button { onTap(day) } label: { square(for: day) }
                     .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(fullDate)
+                    .accessibilityValue(trainingDescription(day))
+                    .accessibilityHint("Shows this workout")
+                    .accessibilityIdentifier(dayIdentifier)
             } else {
                 square(for: nil)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(fullDate)
+                    .accessibilityValue(isToday ? "Today, no workout" : "No workout")
+                    .accessibilityIdentifier(dayIdentifier)
             }
         }
     }
@@ -223,7 +238,7 @@ private struct DayCell: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 44)
+        .frame(minHeight: 44)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(day == nil ? AnyShapeStyle(.fill.quaternary) : AnyShapeStyle(tint(for: day!)))
@@ -233,6 +248,23 @@ private struct DayCell: View {
                 .strokeBorder(isToday ? AnyShapeStyle(.primary) : AnyShapeStyle(.clear),
                               lineWidth: 1.5)
         )
+    }
+
+    private var fullDate: String {
+        date.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
+    }
+
+    private var dayIdentifier: String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "history.day.%04d-%02d-%02d",
+                      components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    }
+
+    private func trainingDescription(_ day: TrainingDay) -> String {
+        let workout = day.kind?.rawValue.capitalized ?? "Workout"
+        let sets = day.exercises.reduce(0) { $0 + $1.sets.count }
+        let setLabel = sets == 1 ? "set" : "sets"
+        return "\(workout), \(sets) \(setLabel)"
     }
 
     /// A letter rather than a colour alone, so the day kind survives a

@@ -323,7 +323,8 @@ struct ContentView: View {
                             .font(.headline)
                     }
                     .padding(.horizontal, 20)
-                    .frame(height: 88)
+                    .padding(.vertical, 12)
+                    .frame(minHeight: 88)
                     .frame(maxWidth: .infinity)
                     .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
                     .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.tint, lineWidth: 2))
@@ -344,7 +345,8 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 20)
-                        .frame(height: isNext ? 88 : 68)
+                        .padding(.vertical, 10)
+                        .frame(minHeight: isNext ? 88 : 68)
                         .frame(maxWidth: .infinity)
                         .background(
                             RoundedRectangle(cornerRadius: 16)
