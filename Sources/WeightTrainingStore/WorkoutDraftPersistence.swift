@@ -34,7 +34,11 @@ extension TrainingStore {
 
         let rebuilt = try draft.exerciseIDs.enumerated().compactMap { index, id -> SessionExercise? in
             guard let exercise = exercisesByID[id] else { return nil }
-            let slot = template.slots.indices.contains(index) ? template.slots[index] : nil
+            // New drafts preserve the slot attached to each exact roster row.
+            // The index fallback reads drafts written before #137.
+            let slot = draft.slots.indices.contains(index)
+                ? draft.slots[index]
+                : (template.slots.indices.contains(index) ? template.slots[index] : nil)
             let state = try progressState(forExercise: exercise.id)
             let history = try sets(forExercise: exercise.id)
             // A draft names an actual start instant, so it can safely span

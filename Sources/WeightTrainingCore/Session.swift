@@ -96,6 +96,41 @@ public struct Session: Hashable, Sendable {
         currentIndex = index
     }
 
+    // MARK: - Pre-workout roster
+
+    /// Reorders today's plan. Once any set exists, roster editing is no longer
+    /// a planning action; the running-session swap/skip controls take over.
+    public mutating func movePlannedExercises(fromOffsets: IndexSet, toOffset: Int) {
+        guard allLoggedSets.isEmpty,
+              fromOffsets.allSatisfy(exercises.indices.contains) else { return }
+        let moving = fromOffsets.map { exercises[$0] }
+        for index in fromOffsets.sorted(by: >) { exercises.remove(at: index) }
+        let removedBeforeDestination = fromOffsets.filter { $0 < toOffset }.count
+        let destination = min(max(0, toOffset - removedBeforeDestination), exercises.count)
+        exercises.insert(contentsOf: moving, at: destination)
+        currentIndex = 0
+    }
+
+    public mutating func removePlannedExercises(atOffsets offsets: IndexSet) {
+        guard allLoggedSets.isEmpty,
+              offsets.allSatisfy(exercises.indices.contains) else { return }
+        for index in offsets.sorted(by: >) { exercises.remove(at: index) }
+        currentIndex = 0
+    }
+
+    public mutating func appendPlannedExercise(_ exercise: SessionExercise) {
+        guard allLoggedSets.isEmpty,
+              !exercises.contains(where: { $0.id == exercise.id }) else { return }
+        exercises.append(exercise)
+        currentIndex = 0
+    }
+
+    /// Gives an edited preview its deliberate start instant without changing
+    /// its exact order, choices, or slot associations.
+    public func starting(at date: Date = Date()) -> Session {
+        Session(kind: kind, exercises: exercises, startedAt: date)
+    }
+
     // MARK: - Logging
 
     /// Records a set against the current exercise.

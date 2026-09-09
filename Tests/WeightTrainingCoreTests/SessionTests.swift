@@ -342,6 +342,45 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(day.allLoggedSets.map(\.reps), [10, 12])
     }
 
+    func testPreWorkoutRosterCanBeReorderedRemovedAndExtended() {
+        var day = session(["A", "B", "C"])
+        let added = SessionExercise(
+            exercise: exercise("D"),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+
+        day.movePlannedExercises(fromOffsets: IndexSet(integer: 2), toOffset: 0)
+        day.removePlannedExercises(atOffsets: IndexSet(integer: 1))
+        day.appendPlannedExercise(added)
+
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["C", "B", "D"])
+        XCTAssertEqual(day.currentIndex, 0)
+    }
+
+    func testRosterEditingStopsAfterTrainingBegins() {
+        var day = session(["A", "B", "C"])
+        let originalIDs = day.exercises.map(\.id)
+        day.log(SetRecord(exerciseID: originalIDs[0], load: Load(50), reps: 8,
+                          performedAt: Date(timeIntervalSince1970: 1_772_000_000)))
+
+        day.movePlannedExercises(fromOffsets: IndexSet(integer: 2), toOffset: 0)
+        day.removePlannedExercises(atOffsets: IndexSet(integer: 1))
+
+        XCTAssertEqual(day.exercises.map(\.id), originalIDs)
+    }
+
+    func testStartingEditedPlanKeepsRosterAndResetsPosition() {
+        var preview = session(["A", "B", "C"])
+        preview.select(exerciseID: preview.exercises[2].id)
+        let start = Date(timeIntervalSince1970: 1_772_000_000)
+
+        let started = preview.starting(at: start)
+
+        XCTAssertEqual(started.exercises.map(\.id), preview.exercises.map(\.id))
+        XCTAssertEqual(started.startedAt, start)
+        XCTAssertEqual(started.currentIndex, 0)
+    }
+
     // MARK: - Reconfiguring the lift on screen (#98)
 
     private func machine() -> Exercise {

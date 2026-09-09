@@ -386,6 +386,7 @@ public final class StoredWorkoutDraft {
     public var kindRaw: String = DayKind.push.rawValue
     /// JSON `[UUID]`, preserving the exact lineup and swaps in order.
     public var exerciseIDsData: Data = Data()
+    public var slotsData: Data = Data()
     public var currentExerciseID: UUID?
     public var startedAt: Date = Date()
     public var updatedAt: Date = Date()
@@ -399,6 +400,7 @@ public final class StoredWorkoutDraft {
         draftID = draft.id
         kindRaw = draft.kind.rawValue
         exerciseIDsData = encoded(draft.exerciseIDs)
+        slotsData = encoded(draft.slots)
         currentExerciseID = draft.currentExerciseID
         startedAt = draft.startedAt
         updatedAt = draft.updatedAt
@@ -413,6 +415,7 @@ public final class StoredWorkoutDraft {
                 exerciseIDs: exerciseIDsData.isEmpty
                     ? []
                     : try decoded([UUID].self, from: exerciseIDsData),
+                slots: slotsData.isEmpty ? [] : try decoded([Slot?].self, from: slotsData),
                 currentExerciseID: currentExerciseID,
                 updatedAt: updatedAt
             )

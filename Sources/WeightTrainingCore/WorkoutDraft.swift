@@ -10,6 +10,8 @@ public struct WorkoutDraft: Codable, Hashable, Sendable {
     public let kind: DayKind
     public let startedAt: Date
     public let exerciseIDs: [UUID]
+    /// Parallel to exerciseIDs. Nil marks a lift added only for this workout.
+    public let slots: [Slot?]
     public let currentExerciseID: UUID?
     public let updatedAt: Date
 
@@ -18,6 +20,7 @@ public struct WorkoutDraft: Codable, Hashable, Sendable {
         kind: DayKind,
         startedAt: Date,
         exerciseIDs: [UUID],
+        slots: [Slot?] = [],
         currentExerciseID: UUID?,
         updatedAt: Date = Date()
     ) {
@@ -25,6 +28,7 @@ public struct WorkoutDraft: Codable, Hashable, Sendable {
         self.kind = kind
         self.startedAt = startedAt
         self.exerciseIDs = exerciseIDs
+        self.slots = slots
         self.currentExerciseID = currentExerciseID
         self.updatedAt = updatedAt
     }
@@ -35,6 +39,7 @@ public struct WorkoutDraft: Codable, Hashable, Sendable {
             kind: session.kind,
             startedAt: session.startedAt,
             exerciseIDs: session.exercises.map(\.id),
+            slots: session.exercises.map(\.slot),
             currentExerciseID: session.current?.id,
             updatedAt: updatedAt
         )

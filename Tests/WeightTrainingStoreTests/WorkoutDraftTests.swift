@@ -66,6 +66,30 @@ final class WorkoutDraftTests: XCTestCase {
         XCTAssertEqual(resumed.current?.loggedSets, [logged])
     }
 
+    func testEditedRosterOrderAndSlotsSurviveRelaunch() throws {
+        let store = try openStore()
+        var session = try store.startSession(kind: .push, startedAt: todayAtNoon)
+        let original = session.exercises
+        session.movePlannedExercises(fromOffsets: IndexSet(integer: 1), toOffset: 0)
+        session.removePlannedExercises(atOffsets: IndexSet(integer: 1))
+        let extra = try XCTUnwrap(try store.exercises().first {
+            candidate in !session.exercises.contains(where: { $0.id == candidate.id })
+        })
+        session.appendPlannedExercise(try store.sessionExercise(
+            for: extra, slot: nil, startedAt: todayAtNoon
+        ))
+        let draft = WorkoutDraft(session: session)
+        try store.saveWorkoutDraft(draft)
+
+        let saved = try XCTUnwrap(try store.workoutDraft())
+        let resumed = try store.resumeSession(saved)
+
+        XCTAssertEqual(resumed.exercises.map(\.id), session.exercises.map(\.id))
+        XCTAssertEqual(resumed.exercises.map(\.slot), session.exercises.map(\.slot))
+        XCTAssertNotEqual(resumed.exercises.map(\.id), original.map(\.id))
+        XCTAssertNil(resumed.exercises.last?.slot)
+    }
+
     func testClearingDraftDoesNotDeleteLoggedSets() throws {
         let store = try openStore()
         var session = try store.startSession(kind: .pull, startedAt: todayAtNoon)
