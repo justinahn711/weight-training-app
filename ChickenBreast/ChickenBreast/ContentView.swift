@@ -27,6 +27,9 @@ struct ContentView: View {
     /// Keeping it here preserves the in-memory session while its route exists.
     /// Route dismissal now means leave unfinished; only Finish completes it.
     @State private var activeSession: SessionViewModel?
+    /// A today-only roster assembled from the template but not yet started.
+    @State private var plannedSession: Session?
+    @State private var previewLibrary: [Exercise] = []
     @State private var workoutDraft: WorkoutDraft?
     @State private var sessionStartFailure: String?
     @State private var cycle: CyclePosition?
@@ -83,6 +86,8 @@ struct ContentView: View {
             if workoutDraft == nil {
                 activeSession = nil
             }
+            plannedSession = nil
+            previewLibrary = []
             sessionStartFailure = nil
             refresh()
         }
@@ -333,7 +338,7 @@ struct ContentView: View {
                 ForEach(orderedDays, id: \.self) { kind in
                     let isNext = kind == cycle?.next
                     Button {
-                        openSession(kind, from: store)
+                        previewSession(kind, from: store)
                     } label: {
                         HStack {
                             Text(kind.rawValue.capitalized)
@@ -437,6 +442,15 @@ struct ContentView: View {
     private func sessionDestination(for kind: DayKind) -> some View {
         if let activeSession {
             SessionView(model: activeSession, onFinish: finishActiveSession)
+        } else if let plannedSession {
+            WorkoutPreviewView(
+                session: plannedSession,
+                library: previewLibrary,
+                onMove: movePlannedExercises,
+                onRemove: removePlannedExercises,
+                onAdd: addPlannedExercise,
+                onStart: startPlannedSession
+            )
         } else if let sessionStartFailure {
             ContentUnavailableView(
                 "Couldn't start the session",
@@ -446,21 +460,57 @@ struct ContentView: View {
         }
     }
 
-    /// Assembles a session and durably marks it unfinished before navigating.
-    private func openSession(_ kind: DayKind, from store: TrainingStore?) {
+    /// Assembles today's editable roster without creating a durable workout.
+    private func previewSession(_ kind: DayKind, from store: TrainingStore?) {
         guard route == nil, activeSession == nil, let store else { return }
         do {
-            let session = try store.startSession(kind: kind)
-            let draft = WorkoutDraft(session: session)
-            try store.saveWorkoutDraft(draft)
-            workoutDraft = draft
-            activeSession = SessionViewModel(store: store, session: session, draftID: draft.id)
+            plannedSession = try store.startSession(kind: kind)
+            previewLibrary = try store.exercises()
             sessionStartFailure = nil
         } catch {
             sessionStartFailure = String(describing: error)
             return
         }
         route = kind
+    }
+
+    private func movePlannedExercises(_ offsets: IndexSet, _ destination: Int) {
+        plannedSession?.movePlannedExercises(fromOffsets: offsets, toOffset: destination)
+    }
+
+    private func removePlannedExercises(_ offsets: IndexSet) {
+        plannedSession?.removePlannedExercises(atOffsets: offsets)
+    }
+
+    private func addPlannedExercise(_ exercise: Exercise) {
+        guard var plan = plannedSession, let store else { return }
+        do {
+            let row = try store.sessionExercise(
+                for: exercise, slot: nil, startedAt: plan.startedAt
+            )
+            plan.appendPlannedExercise(row)
+            plannedSession = plan
+        } catch {
+            sessionStartFailure = String(describing: error)
+        }
+    }
+
+    /// The deliberate boundary: only now does the workout get a start time and
+    /// durable draft. Preview edits never touch the recurring template.
+    private func startPlannedSession() {
+        guard let store, let plan = plannedSession, !plan.isEmpty else { return }
+        do {
+            let session = plan.starting()
+            let draft = WorkoutDraft(session: session)
+            try store.saveWorkoutDraft(draft)
+            workoutDraft = draft
+            activeSession = SessionViewModel(store: store, session: session, draftID: draft.id)
+            plannedSession = nil
+            previewLibrary = []
+            sessionStartFailure = nil
+        } catch {
+            sessionStartFailure = String(describing: error)
+        }
     }
 
     private func resumeWorkout(_ draft: WorkoutDraft, from store: TrainingStore?) {
@@ -580,6 +630,98 @@ struct ContentView: View {
         } catch {
             startupFailure = String(describing: error)
         }
+    }
+}
+
+/// The deliberate pause between choosing a day and beginning it (#137).
+/// Editing is scoped to this value and its eventual draft; templates are never
+/// written from here.
+private struct WorkoutPreviewView: View {
+    let session: Session
+    let library: [Exercise]
+    let onMove: (IndexSet, Int) -> Void
+    let onRemove: (IndexSet) -> Void
+    let onAdd: (Exercise) -> Void
+    let onStart: () -> Void
+
+    @State private var showingAdd = false
+    @State private var query = ""
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(session.exercises) { row in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(row.exercise.name).font(.body.weight(.semibold))
+                        Text(row.slot?.name ?? "Added for today")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 3)
+                }
+                .onMove(perform: onMove)
+                .onDelete(perform: onRemove)
+            } header: {
+                Text("Today's exercises")
+            } footer: {
+                Text("Changes affect this workout only. Your recurring plan stays the same.")
+            }
+        }
+        .navigationTitle("\(session.kind.rawValue.capitalized) workout")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                EditButton()
+                Button("Add exercise", systemImage: "plus") { showingAdd = true }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            Button(action: onStart) {
+                Text("Start workout")
+                    .font(.title3.bold())
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(session.exercises.isEmpty)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(.bar)
+        }
+        .sheet(isPresented: $showingAdd) {
+            NavigationStack {
+                List(filteredCandidates) { exercise in
+                    Button {
+                        onAdd(exercise)
+                        showingAdd = false
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(exercise.name).foregroundStyle(.primary)
+                            Text(exercise.equipment.displayName)
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .searchable(text: $query, prompt: "Exercise name")
+                .navigationTitle("Add for today")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showingAdd = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var filteredCandidates: [Exercise] {
+        let existing = Set(session.exercises.map(\.id))
+        let available = library.filter { !existing.contains($0.id) }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return available.sorted { $0.name < $1.name } }
+        return available.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+            .sorted { $0.name < $1.name }
     }
 }
 
