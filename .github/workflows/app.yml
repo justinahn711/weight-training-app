@@ -13,11 +13,10 @@ name: App
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
-    paths:
-      - 'ChickenBreast/**'
-      - 'Sources/**'
-      - 'Package.swift'
-      - '.github/workflows/app.yml'
+    # Unfiltered for the same reason as tests.yml: this job's name is a
+    # required status check, and a required check that is filtered out never
+    # reports, which blocks the PR permanently rather than passing it. A
+    # hooks-only or docs-only PR hit exactly that.
   workflow_dispatch:
 
 permissions:
