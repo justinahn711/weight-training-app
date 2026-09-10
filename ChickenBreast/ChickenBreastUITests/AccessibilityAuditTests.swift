@@ -24,13 +24,14 @@ final class AccessibilityAuditTests: XCTestCase {
         continueAfterFailure = false
     }
 
-    private func launch() -> XCUIApplication {
+    private func launch(arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         // Deliberately no launch arguments. A `-seed-sample-data` flag would
         // need a branch in the real launch path, and a test-only branch in
         // production startup is a liability that outlives the test. The suite
         // runs against a freshly installed simulator app instead, whose seeded
         // library is deterministic on its own.
+        app.launchArguments = arguments
         app.launch()
         return app
     }
@@ -153,6 +154,54 @@ final class AccessibilityAuditTests: XCTestCase {
         // Exactly one: a row where none is selected reads as "no RPE chosen"
         // when one plainly is, and more than one is incoherent.
         XCTAssertEqual(selected, 1, "exactly one RPE chip should report the selected trait")
+    }
+
+    /// A partial finish must be a bottom sheet, never an unanchored bubble at
+    /// the top of the workout (#158).
+    func testPartialFinishConfirmationIsBottomAnchored() throws {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = launch(arguments: [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+        ])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        try assertPartialFinishSheet(in: app, requiresBottomPosition: true)
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.buttons["Finish workout"].firstMatch.waitForExistence(timeout: 5))
+        // Compact-height iOS may expand a sheet to full screen. That is still
+        // the platform's bottom-sheet presentation, not the stray popover this
+        // regression guards; in landscape the important invariant is that both
+        // decisions remain reachable at the largest text size.
+        try assertPartialFinishSheet(in: app, requiresBottomPosition: false)
+    }
+
+    private func assertPartialFinishSheet(
+        in app: XCUIApplication,
+        requiresBottomPosition: Bool
+    ) throws {
+        let finish = app.buttons["Finish workout"].firstMatch
+        XCTAssertTrue(finish.waitForExistence(timeout: 20) && finish.isHittable)
+        finish.tap()
+
+        let sheet = app.descendants(matching: .any)["finish.confirmation.sheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        if requiresBottomPosition {
+            XCTAssertGreaterThan(
+                sheet.frame.minY,
+                app.frame.height * 0.35,
+                "partial-finish confirmation should rise from the bottom, not float near the top"
+            )
+        }
+        XCTAssertTrue(app.buttons["finish.confirmation.finish"].isHittable)
+
+        let keepTraining = app.buttons["finish.confirmation.cancel"]
+        XCTAssertTrue(keepTraining.isHittable)
+        keepTraining.tap()
+        XCTAssertFalse(sheet.waitForExistence(timeout: 1))
     }
 
     /// The weekly goal is useful only if the calendar actually exposes the
