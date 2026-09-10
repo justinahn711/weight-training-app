@@ -166,6 +166,12 @@ private struct MonthHeader: View {
             Button(action: onBack) {
                 Image(systemName: "chevron.left").font(.body.weight(.semibold))
             }
+            // The glyph is 17pt; the tap target it sat in was exactly that,
+            // in a row flanked by 20pt of horizontal padding either side —
+            // salvaged from #153, which main never had a hit-area fix for (#114).
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityLabel("Previous month")
+            .accessibilityIdentifier("history.month.previous")
             Spacer()
             Text(month.formatted(.dateTime.month(.wide).year()))
                 .font(.headline)
@@ -173,6 +179,9 @@ private struct MonthHeader: View {
             Button(action: onForward) {
                 Image(systemName: "chevron.right").font(.body.weight(.semibold))
             }
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityLabel("Next month")
+            .accessibilityIdentifier("history.month.next")
             .disabled(!canGoForward)
         }
         .padding(.top, 8)

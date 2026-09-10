@@ -11,9 +11,10 @@ import WeightTrainingCore
 ///
 /// Voice fills the form; it never silently writes. This is that promise made
 /// visible: the values appear, a ring counts down, and any tap anywhere
-/// cancels. Anything uncertain — a bare number, a weight that had to be moved
-/// to fit the bar, a field that was thrown out — shows without a countdown and
-/// waits to be tapped.
+/// cancels, alongside a visible Cancel button for anyone who cannot use — or
+/// cannot see — "anywhere" (#114). Anything uncertain — a bare number, a
+/// weight that had to be moved to fit the bar, a field that was thrown out —
+/// shows without a countdown and waits to be tapped.
 struct HeardBanner: View {
     let heard: SnappedInput
     let autoCommitAt: Date?
@@ -30,9 +31,19 @@ struct HeardBanner: View {
                 Image(systemName: "waveform")
                     .font(.headline)
                     .foregroundStyle(.tint)
+                    // Decorative — the values it sits beside already carry the
+                    // meaning; a screen reader gains nothing from "waveform,
+                    // image" ahead of them.
+                    .accessibilityHidden(true)
 
                 Text(spoken)
                     .font(.title3.weight(.semibold).monospacedDigit())
+                    // Raw punctuation read badly on its own — "185 lb × 5 @ 8"
+                    // as "185 lb x 5 at 8" — which mattered less while this sat
+                    // inside one combined element with a hand-written label.
+                    // Now that `.contain` below exposes this Text as its own
+                    // stop, it needs that fix directly (#114).
+                    .accessibilityLabel(spokenAccessibilityLabel)
 
                 Spacer()
 
@@ -44,8 +55,26 @@ struct HeardBanner: View {
                     Button("Log it", action: onCommit)
                         .font(.subheadline.weight(.semibold))
                         .buttonStyle(.borderedProminent)
+                        .frame(minHeight: 44)
+                        .accessibilityHint("Logs the values shown")
+                        .accessibilityIdentifier("session.voice.commit")
                 }
             }
+
+            // A visible peer of the tap-anywhere gesture below, not a
+            // replacement for it (#114). The gesture is a deliberate
+            // sighted quick-dismiss — see the haptic note in `onAppear` for
+            // why the phone stays face-down on the bench rather than being
+            // watched — but a gesture on a container is not an accessibility
+            // action, so it was the one way to stop an auto-committing set
+            // that never existed for a screen-reader user. This button is
+            // that path, independent of the gesture.
+            Button("Cancel", role: .cancel, action: onCancel)
+                .font(.subheadline.weight(.semibold))
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityLabel("Cancel voice input")
+                .accessibilityHint("Discards the values shown without logging a set")
+                .accessibilityIdentifier("session.voice.cancel")
 
             ForEach(heard.rejections, id: \.self) { rejection in
                 Label(rejection, systemImage: "exclamationmark.triangle")
@@ -69,19 +98,30 @@ struct HeardBanner: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.fill.tertiary)
-        // Any tap cancels, including one that lands on the banner itself.
+        // Any tap cancels, including one that lands on the banner itself —
+        // kept alongside the Cancel button above, not replaced by it: this is
+        // the deliberate sighted quick-dismiss, and the button is what makes
+        // the same action reachable without sight (#114).
         .contentShape(Rectangle())
         .onTapGesture(perform: onCancel)
-        // The tap-anywhere gesture above is invisible to VoiceOver: a gesture
-        // on a container is not an action, so the one way to stop an
-        // auto-committing set did not exist for a screen-reader user (#114).
-        // Reading the banner as a single element also keeps the countdown from
-        // being swiped past as loose text on the way to it.
-        .accessibilityElement(children: .combine)
+        // `.contain`, not `.combine` (#114). `.combine` folds every child into
+        // one element and reports one label for the lot — the shape this
+        // banner had before a visible Cancel button existed, when the only
+        // way to stop the countdown by touch was a tap on the container
+        // itself. `.combine` also hides children from the rotor, which once
+        // Cancel and Log It are real buttons would make one of them
+        // unreachable — the opposite of what #114 asks for. `.contain` keeps
+        // this a navigable group — still labelled below, still `.isModal`,
+        // still escapable — while both buttons stay individually reachable.
+        // The cost is the old single rich sentence read in one breath; it is
+        // mitigated two ways: the spoken values above get their own corrected
+        // label directly (raw punctuation is not what a screen reader hears),
+        // and the caveat rows below ("Adjusted to a weight you can load",
+        // "Not sure — check it") stay their own elements, so nothing here
+        // becomes unreadable, only reachable one stop later.
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint(autoCommitAt == nil
-                           ? "Double tap to discard."
-                           : "Logs automatically. Double tap to discard it.")
+        .accessibilityIdentifier("session.voice.confirmation")
         .accessibilityAddTraits(.isModal)
         // Named actions rather than the bare gesture, so both outcomes are
         // reachable from the rotor and neither depends on hitting a target.
@@ -97,22 +137,27 @@ struct HeardBanner: View {
         }
     }
 
-    /// What the banner says, read aloud in full.
-    ///
-    /// `spoken` alone is punctuation a screen reader mangles — "185 lb × 5 @ 8"
-    /// becomes "185 lb x 5 at 8". Worse, the caveats underneath it are the
-    /// whole reason this banner waits for confirmation, and they were separate
-    /// labels a reader could stop before. Anything uncertain has to arrive in
-    /// the same breath as the numbers it qualifies.
-    private var accessibilityLabel: String {
+    /// What was heard, without the caveats — used on the spoken values
+    /// themselves so they read correctly in isolation, one stop among several
+    /// now that `.contain` exposes them as their own element (#114).
+    private var spokenAccessibilityLabel: String {
         var parts: [String] = []
         if let load = heard.load {
             parts.append("\(load.formatted(in: GymSettings.shared.unit))")
         }
         if let reps = heard.reps { parts.append("for \(reps) reps") }
         if let rpe = heard.rpe { parts.append("at RPE \(rpe)") }
+        return parts.isEmpty ? "Didn't catch that" : "Heard \(parts.joined(separator: " "))"
+    }
 
-        var sentence = parts.isEmpty ? "Didn't catch that" : "Heard \(parts.joined(separator: " "))"
+    /// The container's own summary, read when a rotor or swipe lands on the
+    /// group as a whole rather than on one of its children. Kept in full —
+    /// values plus every caveat in one sentence — as the mitigation for
+    /// `.contain` no longer folding the whole banner into a single element:
+    /// the one-sentence version survives here even though each caveat is also
+    /// now reachable on its own below (#114).
+    private var accessibilityLabel: String {
+        var sentence = spokenAccessibilityLabel
         if heard.wasSnapped { sentence += ". Adjusted to a weight you can load" }
         if !heard.isConfident { sentence += ". Not sure — check it" }
         for rejection in heard.rejections { sentence += ". \(rejection)" }
