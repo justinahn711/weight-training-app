@@ -205,11 +205,40 @@ private struct DayCell: View {
             if let day {
                 Button { onTap(day) } label: { square(for: day) }
                     .buttonStyle(.plain)
+                    .accessibilityHint("Double tap to open this workout.")
             } else {
                 square(for: nil)
             }
         }
+        // Read as one thing saying a real date and what was trained, rather
+        // than a number and a letter: "14" then "P" is not a day, and the
+        // letter's meaning is entirely in a colour legend a reader cannot
+        // see (#114).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier("history.day.\(Self.identifierFormatter.string(from: date))")
     }
+
+    private var accessibilityLabel: String {
+        var sentence = date.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        if isToday { sentence += ", today" }
+        if let day {
+            sentence += day.kind.map { ", \($0.rawValue) day" } ?? ", trained"
+        } else {
+            sentence += ", no workout"
+        }
+        return sentence
+    }
+
+    /// Stable and locale-independent, unlike the visible label — a UI test
+    /// looking for a cell must not depend on the tester's region format.
+    private static let identifierFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 
     private func square(for day: TrainingDay?) -> some View {
         VStack(spacing: 2) {

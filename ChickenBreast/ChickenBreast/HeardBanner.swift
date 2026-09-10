@@ -72,11 +72,51 @@ struct HeardBanner: View {
         // Any tap cancels, including one that lands on the banner itself.
         .contentShape(Rectangle())
         .onTapGesture(perform: onCancel)
+        // The tap-anywhere gesture above is invisible to VoiceOver: a gesture
+        // on a container is not an action, so the one way to stop an
+        // auto-committing set did not exist for a screen-reader user (#114).
+        // Reading the banner as a single element also keeps the countdown from
+        // being swiped past as loose text on the way to it.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(autoCommitAt == nil
+                           ? "Double tap to discard."
+                           : "Logs automatically. Double tap to discard it.")
+        .accessibilityAddTraits(.isModal)
+        // Named actions rather than the bare gesture, so both outcomes are
+        // reachable from the rotor and neither depends on hitting a target.
+        .accessibilityAction(named: "Log it", onCommit)
+        .accessibilityAction(named: "Discard", onCancel)
+        // Escape is the system gesture for "get me out of this" — a two-finger
+        // scrub. Cancelling is the safe direction, matching the tap.
+        .accessibilityAction(.escape, onCancel)
         .onAppear {
             // A tap you can feel, so the phone can stay in your pocket-adjacent
             // spot on the bench rather than being watched.
             haptics.impactOccurred()
         }
+    }
+
+    /// What the banner says, read aloud in full.
+    ///
+    /// `spoken` alone is punctuation a screen reader mangles — "185 lb × 5 @ 8"
+    /// becomes "185 lb x 5 at 8". Worse, the caveats underneath it are the
+    /// whole reason this banner waits for confirmation, and they were separate
+    /// labels a reader could stop before. Anything uncertain has to arrive in
+    /// the same breath as the numbers it qualifies.
+    private var accessibilityLabel: String {
+        var parts: [String] = []
+        if let load = heard.load {
+            parts.append("\(load.formatted(in: GymSettings.shared.unit))")
+        }
+        if let reps = heard.reps { parts.append("for \(reps) reps") }
+        if let rpe = heard.rpe { parts.append("at RPE \(rpe)") }
+
+        var sentence = parts.isEmpty ? "Didn't catch that" : "Heard \(parts.joined(separator: " "))"
+        if heard.wasSnapped { sentence += ". Adjusted to a weight you can load" }
+        if !heard.isConfident { sentence += ". Not sure — check it" }
+        for rejection in heard.rejections { sentence += ". \(rejection)" }
+        return sentence
     }
 
     /// `185 lb × 5 @ RPE 8`, with absent fields left out rather than filled in.

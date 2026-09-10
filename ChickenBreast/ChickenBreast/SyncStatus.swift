@@ -225,7 +225,12 @@ struct SyncBadge: View {
     private func line(_ text: String) -> some View {
         Label(text, systemImage: "icloud.slash")
             .font(.caption)
-            .foregroundStyle(.secondary)
+            // `.secondary` at caption size fails WCAG contrast — the system
+            // audit measured it (#114). Secondary was the wrong role anyway:
+            // every string this renders is a warning that training may not be
+            // reaching the other device, which is the last thing on the screen
+            // that should recede into the background.
+            .foregroundStyle(.primary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
