@@ -92,6 +92,12 @@ struct SessionView: View {
                     Image(systemName: voice.isListening ? "waveform.circle.fill" : "mic")
                         .symbolEffect(.pulse, isActive: voice.isListening)
                 }
+                // Listening was conveyed by a filled glyph and a pulse, both
+                // invisible to a screen reader — so the one control whose whole
+                // point is hands-free use could not report whether it was on.
+                .accessibilityLabel(voice.isListening ? "Stop listening" : "Log a set by voice")
+                .accessibilityValue(voice.isListening ? "Listening" : "Off")
+                .accessibilityIdentifier("session.microphone")
             }
         }
         // Heard values reach the form only through the snapper — the view has
@@ -312,7 +318,12 @@ struct SessionView: View {
                     requestFinish()
                 }
                 .font(.subheadline.weight(.semibold))
+                // The frame alone grows the layout slot while the tappable and
+                // audited region stays the glyphs' own 18pt — which is what the
+                // system audit measured here (#114). contentShape is what makes
+                // the reserved height real.
                 .frame(minHeight: 44)
+                .contentShape(Rectangle())
                 .accessibilityLabel("Finish workout")
             }
             Button {
@@ -487,6 +498,11 @@ struct SessionView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.tint)
+                // A caption's glyphs are 14pt, and contentShape without a
+                // minimum shapes exactly that — so the route into every
+                // per-lift setting was a 14pt target, in a room, mid-set. The
+                // audit measured it; nobody had (#114).
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -727,20 +743,24 @@ struct SessionView: View {
                 Button("Warmup") { model.logSet(isWarmup: true) }
                     .font(.subheadline)
                     .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 Spacer()
                 if model.session.currentIndex > 0 {
                     Button("Back") { model.goBack() }
                         .font(.subheadline)
                         .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 if !model.session.isOnLastExercise {
                     Button("Next exercise") { model.advance() }
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 } else {
                     Button("Finish workout", action: requestFinish)
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
             }
         }
@@ -1004,6 +1024,12 @@ private struct SuggestionChip: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Title and reason are two labels sighted readers take in at once;
+            // combined they are one announcement rather than two stops.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(suggestion.title(in: gym.unit)). \(suggestion.reason)")
+            .accessibilityHint("Double tap to apply this suggestion.")
+            .accessibilityIdentifier("suggestion.accept")
 
             // A sibling of the accept button, never inside its label — a nested
             // button never receives its own taps.
@@ -1015,6 +1041,10 @@ private struct SuggestionChip: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // "X mark" said nothing about which of several suggestions this
+            // would discard — the glyph's meaning was entirely positional.
+            .accessibilityLabel("Dismiss suggestion: \(suggestion.title(in: gym.unit))")
+            .accessibilityIdentifier("suggestion.dismiss")
         }
         .padding(.leading, 12)
         .padding(.trailing, 2)
@@ -1639,6 +1669,10 @@ struct ChoiceRow<Value: Hashable>: View {
     let label: (Value) -> String
     let onSelect: (Value) -> Void
 
+    /// Stable handle for UI tests, derived from the caption so a row cannot
+    /// drift from its identifier the way a second hand-written string would.
+    private var identifierPrefix: String { caption.lowercased() }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(caption)
@@ -1666,6 +1700,15 @@ struct ChoiceRow<Value: Hashable>: View {
                             }
                             .buttonStyle(.plain)
                             .id(value)
+                            // Selection was carried by fill and weight alone,
+                            // so every chip read identically and the current
+                            // one was unfindable without sight (#114). The
+                            // trait is what VoiceOver appends "selected" to.
+                            .accessibilityAddTraits(selected ? [.isSelected] : [])
+                            // Otherwise each chip announces a bare number with
+                            // no hint of what it sets — "8" in a row of "8"s.
+                            .accessibilityLabel("\(caption) \(label(value))")
+                            .accessibilityIdentifier("\(identifierPrefix).\(label(value))")
                         }
                     }
                     .padding(.horizontal, 2)

@@ -117,6 +117,7 @@ struct ContentView: View {
         return Button { showingVolume = true } label: {
             HStack(spacing: 6) {
                 Image(systemName: starved ? "exclamationmark.triangle.fill" : "chart.bar")
+                    .foregroundStyle(starved ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
                 Text(starved ? starvedSummary(volume) : "Volume this week")
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -125,7 +126,17 @@ struct ContentView: View {
                 }
             }
             .font(.subheadline)
-            .foregroundStyle(starved ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
+            // `.orange` at subheadline size fails WCAG on the system
+            // background, and this is the one line on Train that reports a
+            // training problem — the case where being read matters most (#114).
+            // The icon keeps the colour, so the row still reads as a warning at
+            // a glance without the words depending on hue to be legible.
+            .foregroundStyle(starved ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
+            // 44pt, not the 18pt the text happened to be. The row spans the
+            // screen so it never looked hard to hit, but a control sized by its
+            // font is one a shaking hand or a thumb on a rack misses — the
+            // system audit named this one before a person did (#114).
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -235,19 +246,26 @@ struct ContentView: View {
             Task { await connectHealth() }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "heart.text.square")
+                Image(systemName: "heart.text.square").foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Use recovery data")
                         .font(.subheadline.weight(.medium))
                     Text("Sleep and HRV from Health add a readiness line here. Nothing is written back.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tint)
             }
-            .foregroundStyle(.tint)
+            // Tint on a 12% tint wash reads fine to me and fails WCAG — the
+            // title and the caption under it were both tint-coloured, and the
+            // caption is `.secondary` on top of that. This card is mine, from
+            // #110, and the audit caught it on its first run (#114). Primary
+            // for the words, tint kept for the icon and the chevron, where
+            // colour is decoration rather than the thing being read.
+            .foregroundStyle(.primary)
             .padding(.vertical, 10)
             .padding(.horizontal, 14)
             .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
@@ -265,7 +283,11 @@ struct ContentView: View {
             if let cycle {
                 Text(cycle.summary())
                     .font(.headline)
-                    .foregroundStyle(.secondary)
+                    // Was `.secondary`, which fails contrast at this size (#114).
+                    // This line is the answer to "what am I training today" —
+                    // the question the screen exists for — so receding was the
+                    // wrong instinct twice over.
+                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -276,13 +298,19 @@ struct ContentView: View {
             if let digest, !digest.isEmpty {
                 Button { showingDigest = true } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "sparkles")
+                        Image(systemName: "sparkles").foregroundStyle(.tint)
                         Text("\(digest.bullets.count) thing\(digest.bullets.count == 1 ? "" : "s") to look at")
                             .font(.subheadline.weight(.medium))
                         Spacer(minLength: 0)
-                        Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.tint)
                     }
-                    .foregroundStyle(.tint)
+                    // Same correction as the recovery card above: tinted words
+                    // on a tint wash fail contrast, so the words go primary and
+                    // the tint stays on the icons, where it decorates rather
+                    // than carries meaning (#114).
+                    .foregroundStyle(.primary)
                     .padding(.vertical, 10)
                     .padding(.horizontal, 14)
                     .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
@@ -309,7 +337,12 @@ struct ContentView: View {
                     volumeRow(volume)
                 }
             }
-            .frame(height: 22)
+            // 44 rather than 22, matching the row's own minimum. The
+            // reservation still does its #115 job — the space is claimed at
+            // first paint so the day buttons never move under a thumb — but
+            // reserving less than the control needs made the outer frame the
+            // real hit area, which is how a full-width row ended up 18pt tall.
+            .frame(height: 44)
 
             if let workoutDraft {
                 Button {
@@ -321,11 +354,16 @@ struct ContentView: View {
                                 .font(.title3.bold())
                             Text("Your logged sets are saved")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                // `.secondary` on the tint wash behind this
+                                // card fails contrast (#114). It is also the
+                                // sentence that answers "did I lose my
+                                // workout?", which is not a detail to mute.
+                                .foregroundStyle(.primary)
                         }
                         Spacer()
                         Image(systemName: "arrow.right")
                             .font(.headline)
+                            .foregroundStyle(.tint)
                     }
                     .padding(.horizontal, 20)
                     .frame(height: 88)
@@ -334,6 +372,8 @@ struct ContentView: View {
                     .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.tint, lineWidth: 2))
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("home.resume")
+                .accessibilityHint("Double tap to continue where you left off.")
             } else {
                 ForEach(orderedDays, id: \.self) { kind in
                     let isNext = kind == cycle?.next
@@ -363,6 +403,12 @@ struct ContentView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    // "Push" is the day; the subtitle beside it is context.
+                    // Combined they read as one sentence, which is right for a
+                    // reader and useless as a test handle — hence the id (#114).
+                    .accessibilityIdentifier("day.\(kind.rawValue)")
+                    .accessibilityHint(isNext ? "Next in your cycle. Double tap to review it."
+                                              : "Double tap to review this workout.")
                     .disabled(store == nil)
                 }
             }
