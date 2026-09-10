@@ -43,6 +43,13 @@ jobs:
       # No signing: a simulator build doesn't need it, and CI has no
       # certificates. Device signing is verified locally, where the entitlements
       # can be checked against a real profile.
+      #
+      # This is a compile check ONLY — it proves the source builds and nothing
+      # more. Stripping signing also strips entitlements, so the binary this
+      # produces cannot launch (#155: NSPersistentCloudKitContainer aborts with
+      # "containerIdentifier can not be nil" before the first frame). The
+      # `ui-test` job below is what actually proves the app starts; keep this
+      # one fast and let that one carry the launch guarantee.
       - name: Build app and widget
         run: |
           xcodebuild \
@@ -51,3 +58,66 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+  ui-test:
+    name: UI launch test
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    # Same image as `build` (see the top-of-file comment) — this also builds
+    # the app target, and it runs the actual simulator, so it needs a matching
+    # simulator runtime too.
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      # Deliberately does NOT pass CODE_SIGNING_ALLOWED=NO (#155).
+      #
+      # A plain `xcodebuild test` for a Simulator destination signs ad hoc
+      # ("Sign to Run Locally") with no certificate and no Apple ID — that part
+      # was never the problem. Alongside it, Xcode also writes a separate
+      # "Simulated" entitlements section into the binary containing the real
+      # capability list (iCloud, HealthKit) from ChickenBreast.entitlements.
+      # That mechanism exists specifically so capability-gated frameworks work
+      # on Simulator without a developer account, and it is NOT produced when
+      # code signing is turned off outright — which is exactly what rung 4
+      # above does, and why it builds a binary that cannot launch.
+      #
+      # Verified locally before writing this: `build` (as above, with
+      # CODE_SIGNING_ALLOWED=NO) installs and crashes with the CKException in
+      # the issue on first launch; a completely default `xcodebuild build` —
+      # no signing flags touched at all — installs and reaches
+      # "App did become active" every time. So the fix is exactly not passing
+      # that flag here, not a certificate or a provisioning profile.
+      #
+      # This also means CI never needs a real signing secret for this check,
+      # which is worth keeping true: a certificate in Actions is manageable,
+      # but it is one more secret to rotate and scope for a problem the
+      # Simulated-entitlements mechanism already solves for free.
+      #
+      # ChickenBreastUITests (#114) is the actual launch check: it installs
+      # the app and taps through it, so a crash on launch fails a test and
+      # names launching as the thing that broke, instead of a build step
+      # quietly reporting green over a binary nobody ran.
+      - name: Build and run UI tests (installs and launches the real app)
+        run: |
+          xcodebuild test \
+            -project ChickenBreast/ChickenBreast.xcodeproj \
+            -scheme ChickenBreast \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -resultBundlePath UITestResults.xcresult
+
+      # Not a required check (see PR #155): a UI test suite that boots a
+      # simulator is slower and more failure-prone than the domain suite, and
+      # branch protection already has swift test + Build for simulator. This
+      # runs on every PR and reports, but a flake here should not be able to
+      # block every merge in the repo the way a required check's flake would.
+      - name: Upload UI test result bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-results
+          path: UITestResults.xcresult
