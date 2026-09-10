@@ -738,29 +738,44 @@ struct SessionView: View {
                     .frame(height: isCompact ? 50 : 56)
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("session.log-set")
 
             HStack {
-                Button("Warmup") { model.logSet(isWarmup: true) }
+                // Renamed from a bare "Warmup" (#157). That word already
+                // named the ramp above — a suggested sequence generated from
+                // today's working load — so a second, unrelated control with
+                // the same name read as the same feature twice, and the one
+                // that suggests nothing was the one every lift showed. This
+                // button logs whatever is currently dialled in as a warmup
+                // set; it exists for an extra rep beyond the ramp, or for a
+                // lift the ramp doesn't offer one on at all, so its name says
+                // "in addition to" rather than "instead of".
+                Button("Extra warmup") { model.logSet(isWarmup: true) }
                     .font(.subheadline)
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
+                    .accessibilityHint("Logs the current values as an extra warmup set")
+                    .accessibilityIdentifier("session.log-warmup")
                 Spacer()
                 if model.session.currentIndex > 0 {
                     Button("Back") { model.goBack() }
                         .font(.subheadline)
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
+                        .accessibilityIdentifier("session.exercise.previous")
                 }
                 if !model.session.isOnLastExercise {
                     Button("Next exercise") { model.advance() }
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
+                        .accessibilityIdentifier("session.exercise.next")
                 } else {
                     Button("Finish workout", action: requestFinish)
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
+                        .accessibilityIdentifier("session.finish.footer")
                 }
             }
         }
@@ -1056,11 +1071,13 @@ private struct SuggestionChip: View {
     }
 }
 
-/// The warmup ramp, collapsed by default (#15).
+/// The warmup ramp (#15).
 ///
-/// Collapsed because on most days the ramp is glanced at rather than read —
-/// the weights are obvious once you've done the lift twice. Expanded, each rung
-/// is tappable and logs exactly what it shows, so ramping never means dialling
+/// Collapsed by default on most exercises — the weights are obvious once
+/// you've done the lift twice — but open for the first exercise of the day
+/// (#157), where it's read rather than glanced at, and where being invisible
+/// once cost the feature its own discoverability. Expanded, each rung is
+/// tappable and logs exactly what it shows, so ramping never means dialling
 /// the stepper up and back down.
 private struct WarmupBlock: View {
     private var gym: GymSettings { .shared }
@@ -1095,11 +1112,20 @@ private struct WarmupBlock: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .frame(minHeight: 44)
+                .accessibilityLabel("Warmup ramp")
+                .accessibilityValue(isExpanded ? "Expanded, \(summary)" : "Collapsed, \(summary)")
+                .accessibilityHint(isExpanded ? "Hides the suggested warmup sets" : "Shows the suggested warmup sets")
+                .accessibilityIdentifier("session.warmup.disclosure")
 
                 Button("Clear", action: onClear)
                     .font(.subheadline)
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("Clear warmup ramp")
+                    .accessibilityHint("Dismisses the remaining suggested warmup sets for this lift")
+                    .accessibilityIdentifier("session.warmup.clear")
             }
 
             if isExpanded {
@@ -1124,6 +1150,11 @@ private struct WarmupBlock: View {
                         .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .buttonStyle(.plain)
+                    .frame(minHeight: 44)
+                    .accessibilityLabel(
+                        "Log warmup, \(rung.load.formatted(in: gym.unit)), \(rung.reps) reps"
+                    )
+                    .accessibilityIdentifier("session.warmup.log.\(rung.id)")
                 }
             }
         }

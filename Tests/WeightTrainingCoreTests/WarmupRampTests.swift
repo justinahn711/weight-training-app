@@ -15,8 +15,13 @@ final class WarmupRampTests: XCTestCase {
         ExerciseLibrary.all.first { $0.name == "Incline DB Press" }!
     }
 
-    /// #15's done-when, first half: ramps appear for flagged lifts only.
-    func testOnlyFlaggedLiftsGetARamp() {
+    private var skullCrushers: Exercise {
+        ExerciseLibrary.all.first { $0.name == "Skull Crushers" }!
+    }
+
+    /// #157's done-when, first half: ramps appear for plate-built equipment
+    /// only, derived rather than hand-flagged.
+    func testOnlyPlateBuiltLiftsGetARamp() {
         XCTAssertFalse(WarmupRamp.generate(for: bench, workingLoad: Load(225)).isEmpty)
         XCTAssertTrue(
             WarmupRamp.generate(for: lateralRaise, workingLoad: Load(30)).isEmpty,
@@ -24,14 +29,34 @@ final class WarmupRampTests: XCTestCase {
         )
         XCTAssertTrue(
             WarmupRamp.generate(for: inclinePress, workingLoad: Load(70)).isEmpty,
-            "not flagged, so no ramp regardless of load"
+            "a dumbbell pair isn't plate-built, so no ramp regardless of load"
         )
     }
 
-    func testEveryFlaggedLibraryLiftProducesARamp() {
-        for exercise in ExerciseLibrary.all where exercise.needsWarmupRamp {
+    /// The actual bug #157 reports: eligibility used to run through a
+    /// hand-set flag that only 4 of 19 library lifts carried. Skull Crushers
+    /// and Preacher Curls are both barbell lifts that never had the flag set
+    /// — proof that a plate-built lift now offers a ramp on its equipment
+    /// alone, with no flag required.
+    func testPlateBuiltLiftGetsARampEvenWithoutTheLegacyFlag() {
+        XCTAssertFalse(skullCrushers.needsWarmupRamp,
+                       "the fixture for this test only proves something if the flag is unset")
+        XCTAssertFalse(WarmupRamp.generate(for: skullCrushers, workingLoad: Load(135)).isEmpty)
+    }
+
+    /// The flag is no longer consulted at all — setting it on equipment that
+    /// isn't plate-built must not manufacture a ramp out of thin air.
+    func testTheLegacyFlagNoLongerGrantsARampOnNonPlateBuiltEquipment() {
+        var flagged = inclinePress
+        flagged.needsWarmupRamp = true
+        XCTAssertTrue(WarmupRamp.generate(for: flagged, workingLoad: Load(70)).isEmpty,
+                      "a dumbbell press stays ineligible regardless of the flag")
+    }
+
+    func testEveryPlateBuiltLibraryLiftProducesARamp() {
+        for exercise in ExerciseLibrary.all where exercise.equipment.isPlateBuilt {
             let ramp = WarmupRamp.generate(for: exercise, workingLoad: Load(225))
-            XCTAssertFalse(ramp.isEmpty, "\(exercise.name) is flagged but produced nothing")
+            XCTAssertFalse(ramp.isEmpty, "\(exercise.name) is plate-built but produced nothing")
         }
     }
 

@@ -108,13 +108,17 @@ final class ExerciseLibraryTests: XCTestCase {
 
     // MARK: - Warmups
 
-    /// Ramps are worth generating for heavy plate-built compounds and are pure
-    /// noise on a cable lateral.
-    func testWarmupRampsOnlyOnPlateBuiltLifts() {
+    /// `WarmupRamp.generate` no longer reads `needsWarmupRamp` at all (#157) —
+    /// eligibility is derived from `equipment.isPlateBuilt` instead, so Skull
+    /// Crushers and Preacher Curls get ramps too even though this flag was
+    /// never set on them. What is left to check about the flag itself is a
+    /// data sanity fact, not a behaviour: nobody hand-flagged a lift that
+    /// isn't plate-built, which would have been a lie the moment it was read.
+    func testLegacyWarmupFlagWasOnlyEverSetOnPlateBuiltLifts() {
         for exercise in ExerciseLibrary.all where exercise.needsWarmupRamp {
             XCTAssertTrue(
                 exercise.equipment.isPlateBuilt,
-                "\(exercise.name) asks for a ramp but isn't plate-built"
+                "\(exercise.name) was flagged but isn't plate-built"
             )
         }
         XCTAssertEqual(
