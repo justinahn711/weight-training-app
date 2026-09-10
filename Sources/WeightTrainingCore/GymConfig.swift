@@ -33,6 +33,15 @@ import Foundation
 /// than opening a second, independent way for two devices to disagree.
 public struct GymConfig: Hashable, Codable, Sendable {
 
+    /// How many distinct training days make a consistent week (#65).
+    ///
+    /// This is stored with the other synced preferences rather than locally,
+    /// so History does not tell the same lifter two different stories on two
+    /// devices. Three is deliberately ordinary rather than inferred from the
+    /// split: a three-day PPL and a six-day PPL use the same rotation but have
+    /// very different realistic frequencies.
+    public var weeklySessionTarget: Int
+
     /// The selected training rotation. `nil` means setup hasn't happened yet —
     /// distinct from having chosen push/pull/legs — so a fresh install can
     /// still ask once (#136); `effectiveTrainingSplit` is what every reader
@@ -67,12 +76,14 @@ public struct GymConfig: Hashable, Codable, Sendable {
         unit: MassUnit = .pounds,
         availablePlates: [Double]? = nil,
         barWeight: Load? = nil,
-        trainingSplit: TrainingSplit? = nil
+        trainingSplit: TrainingSplit? = nil,
+        weeklySessionTarget: Int = 3
     ) {
         self.unit = unit
         self.availablePlates = availablePlates ?? unit.standardPlates
         self.barWeight = barWeight ?? unit.standardBar
         self.trainingSplit = trainingSplit
+        self.weeklySessionTarget = min(max(weeklySessionTarget, 1), 7)
     }
 
     /// Rows written before this landed describe a pound gym, because that is
@@ -92,6 +103,10 @@ public struct GymConfig: Hashable, Codable, Sendable {
             try container.decodeIfPresent(Load.self, forKey: .barWeight) ?? unit.standardBar
         self.trainingSplit =
             try container.decodeIfPresent(TrainingSplit.self, forKey: .trainingSplit)
+        self.weeklySessionTarget = min(max(
+            try container.decodeIfPresent(Int.self, forKey: .weeklySessionTarget) ?? 3,
+            1
+        ), 7)
     }
 
     /// The split to actually train from: what's chosen, or push/pull/legs

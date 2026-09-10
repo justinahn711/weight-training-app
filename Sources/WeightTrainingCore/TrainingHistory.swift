@@ -53,6 +53,21 @@ public struct TrainingDay: Hashable, Sendable, Identifiable {
     }
 }
 
+/// The compact answer History needs for a recovery-safe consistency streak.
+public struct WeeklyConsistency: Equatable, Sendable {
+    public let weeks: Int
+    public let currentWeekDays: Int
+    public let target: Int
+
+    public var currentWeekMeetsTarget: Bool { currentWeekDays >= target }
+
+    public init(weeks: Int, currentWeekDays: Int, target: Int) {
+        self.weeks = weeks
+        self.currentWeekDays = currentWeekDays
+        self.target = target
+    }
+}
+
 /// Reads training back out of the sets that were logged (#63).
 ///
 /// Reconstructed rather than stored, for the same reason `CycleEngine` infers a
@@ -60,6 +75,51 @@ public struct TrainingDay: Hashable, Sendable, Identifiable {
 /// having been running and on the session having been "started" properly, and a
 /// session logged across a restart would lose itself. The sets are the record.
 public enum TrainingHistory {
+
+    /// Consecutive weeks meeting a frequency target (#65).
+    ///
+    /// Rest days never break this streak. The current, unfinished week is
+    /// neutral until its target is reached; then it counts immediately. A
+    /// completed week below target breaks the chain without a hidden grace
+    /// rule. Each calendar day counts once even if it contains many sets.
+    public static func weeklyConsistency(
+        days: [TrainingDay],
+        target: Int,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> WeeklyConsistency {
+        let target = min(max(target, 1), 7)
+        guard let currentWeek = calendar.dateInterval(of: .weekOfYear, for: now)?.start else {
+            return WeeklyConsistency(weeks: 0, currentWeekDays: 0, target: target)
+        }
+
+        let weekStarts = days.reduce(into: [Date: Set<Date>]()) { weeks, day in
+            // A warmup-only day remains visible in History but is not a
+            // completed training day. The project-wide rule is that warmups
+            // feed no insight or progression signal.
+            guard day.workingSetCount > 0,
+                  day.date <= now,
+                  let week = calendar.dateInterval(of: .weekOfYear, for: day.date)?.start
+            else { return }
+            weeks[week, default: []].insert(calendar.startOfDay(for: day.date))
+        }
+        let currentCount = weekStarts[currentWeek]?.count ?? 0
+        var week = currentCount >= target
+            ? currentWeek
+            : calendar.date(byAdding: .weekOfYear, value: -1, to: currentWeek)
+        var streak = 0
+
+        while let candidate = week, (weekStarts[candidate]?.count ?? 0) >= target {
+            streak += 1
+            week = calendar.date(byAdding: .weekOfYear, value: -1, to: candidate)
+        }
+
+        return WeeklyConsistency(
+            weeks: streak,
+            currentWeekDays: currentCount,
+            target: target
+        )
+    }
 
     /// Training days, newest first.
     ///

@@ -339,6 +339,9 @@ public final class StoredGymConfig {
     /// but this device hasn't written yet, which reads the same as an
     /// explicit `null` — both mean "nobody has picked a split here".
     public var trainingSplitData: Data = Data()
+    /// Distinct training days needed for one consistent week (#65).
+    /// A default keeps the CloudKit schema compatible with existing rows.
+    public var weeklySessionTarget: Int = 3
 
     /// When this was last written, used to settle a sync conflict.
     public var updatedAt: Date = Date()
@@ -349,6 +352,7 @@ public final class StoredGymConfig {
         self.platesData = encoded(config.availablePlates)
         self.barPounds = config.barWeight.pounds
         self.trainingSplitData = encoded(config.trainingSplit)
+        self.weeklySessionTarget = config.weeklySessionTarget
         self.updatedAt = updatedAt
     }
 
@@ -357,6 +361,7 @@ public final class StoredGymConfig {
         platesData = encoded(config.availablePlates)
         barPounds = config.barWeight.pounds
         trainingSplitData = encoded(config.trainingSplit)
+        weeklySessionTarget = config.weeklySessionTarget
         updatedAt = date
     }
 
@@ -374,7 +379,8 @@ public final class StoredGymConfig {
                 barWeight: Load(barPounds),
                 trainingSplit: trainingSplitData.isEmpty
                     ? nil
-                    : try decoded(TrainingSplit?.self, from: trainingSplitData)
+                    : try decoded(TrainingSplit?.self, from: trainingSplitData),
+                weeklySessionTarget: weeklySessionTarget
             )
         } catch {
             throw StoreError.corruptRecord(entity: "GymConfig", id: id, underlying: error)
