@@ -197,19 +197,6 @@ public enum ExerciseLibrary {
         ),
     ]
 
-    /// The lifts belonging to one day of the cycle.
-    ///
-    /// Until day templates land (#16), the library grouping *is* the day. That
-    /// keeps M1 walkable without pulling the slot-and-rotation engine forward,
-    /// at the cost of custom exercises not appearing in a day until then.
-    public static func exercises(for kind: DayKind) -> [Exercise] {
-        switch kind {
-        case .push: return push
-        case .pull: return pull
-        case .legs: return legs
-        }
-    }
-
     /// Parses a fixed library id.
     ///
     /// Force-style failure is correct here: these are compile-time literals, so
