@@ -155,6 +155,23 @@ final class AccessibilityAuditTests: XCTestCase {
         XCTAssertEqual(selected, 1, "exactly one RPE chip should report the selected trait")
     }
 
+    /// The weekly goal is useful only if the calendar actually exposes the
+    /// derived result; this guards the app-level wiring that Core tests cannot.
+    func testHistoryExposesWeeklyConsistency() throws {
+        let app = launch()
+        XCTAssertTrue(try reachTrainScreen(app))
+
+        let history = app.tabBars.buttons["History"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5) && history.isHittable)
+        history.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["history.weeklyStreak"]
+                .waitForExistence(timeout: 10),
+            "History should show weekly consistency above the calendar"
+        )
+    }
+
     /// Answers first-launch setup when it covers Train, then waits for a day
     /// or resumable workout that can actually receive a tap.
     @discardableResult

@@ -15,6 +15,7 @@ final class GymConfigTests: XCTestCase {
         XCTAssertEqual(gym.unit, .pounds)
         XCTAssertEqual(gym.availablePlates, [45, 35, 25, 10, 5, 2.5])
         XCTAssertEqual(gym.barWeight, Load(45))
+        XCTAssertEqual(gym.weeklySessionTarget, 3)
     }
 
     /// The kg gym is chosen, not converted: a 20 kg bar, not 20.41.
@@ -146,6 +147,25 @@ final class GymConfigTests: XCTestCase {
     func testAnEmptyGymRecordReadsAsThePoundGym() throws {
         let decoded = try JSONDecoder().decode(GymConfig.self, from: "{}".data(using: .utf8)!)
         XCTAssertEqual(decoded, .standard)
+    }
+
+    func testWeeklyTargetSurvivesARoundTrip() throws {
+        let gym = GymConfig(weeklySessionTarget: 4)
+        let data = try JSONEncoder().encode(gym)
+        XCTAssertEqual(try JSONDecoder().decode(GymConfig.self, from: data).weeklySessionTarget, 4)
+    }
+
+    func testLegacyConfigDefaultsToThreeTrainingDays() throws {
+        let json = """
+        {"unit":"pounds","availablePlates":[45,25,10,5,2.5],
+         "barWeight":{"pounds":45}}
+        """.data(using: .utf8)!
+        XCTAssertEqual(try JSONDecoder().decode(GymConfig.self, from: json).weeklySessionTarget, 3)
+    }
+
+    func testWeeklyTargetIsKeptInsideARealCalendarWeek() {
+        XCTAssertEqual(GymConfig(weeklySessionTarget: 0).weeklySessionTarget, 1)
+        XCTAssertEqual(GymConfig(weeklySessionTarget: 9).weeklySessionTarget, 7)
     }
 
     // MARK: - Training split (#136)

@@ -118,4 +118,119 @@ final class TrainingHistoryTests: XCTestCase {
         ]
         XCTAssertEqual(days(history).count, 2)
     }
+
+    // MARK: - Weekly consistency (#65)
+
+    private var utcCalendar: Calendar {
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar
+    }
+
+    private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
+        utcCalendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12))!
+    }
+
+    private func trainingDay(
+        _ year: Int, _ month: Int, _ day: Int, warmupOnly: Bool = false
+    ) -> TrainingDay {
+        let performedAt = date(year, month, day)
+        let exercise = lift("Flat Bench")
+        let record = SetRecord(
+            exerciseID: exercise.id,
+            load: Load(135),
+            reps: 5,
+            rpe: warmupOnly ? nil : RPE(8),
+            isWarmup: warmupOnly,
+            performedAt: performedAt
+        )
+        return TrainingDay(
+            date: utcCalendar.startOfDay(for: performedAt),
+            kind: .push,
+            exercises: [PerformedExercise(exercise: exercise, sets: [record])]
+        )
+    }
+
+    func testRestDaysDoNotBreakAWeeklyStreak() {
+        let history = [
+            trainingDay(2026, 8, 17), trainingDay(2026, 8, 19), trainingDay(2026, 8, 21),
+            trainingDay(2026, 8, 24), trainingDay(2026, 8, 26), trainingDay(2026, 8, 28),
+            trainingDay(2026, 8, 31), trainingDay(2026, 9, 2), trainingDay(2026, 9, 4),
+        ]
+
+        let result = TrainingHistory.weeklyConsistency(
+            days: history, target: 3, now: date(2026, 9, 9), calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.weeks, 3)
+        XCTAssertEqual(result.currentWeekDays, 0)
+    }
+
+    func testCurrentWeekCountsAsSoonAsItMeetsTheTarget() {
+        let history = [
+            trainingDay(2026, 8, 31), trainingDay(2026, 9, 2), trainingDay(2026, 9, 4),
+            trainingDay(2026, 9, 7), trainingDay(2026, 9, 8), trainingDay(2026, 9, 9),
+        ]
+
+        let result = TrainingHistory.weeklyConsistency(
+            days: history, target: 3, now: date(2026, 9, 9), calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.weeks, 2)
+        XCTAssertTrue(result.currentWeekMeetsTarget)
+    }
+
+    func testIncompleteCurrentWeekNeitherCountsNorBreaksTheStreak() {
+        let history = [
+            trainingDay(2026, 8, 31), trainingDay(2026, 9, 2), trainingDay(2026, 9, 4),
+            trainingDay(2026, 9, 8),
+        ]
+
+        let result = TrainingHistory.weeklyConsistency(
+            days: history, target: 3, now: date(2026, 9, 9), calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.weeks, 1)
+        XCTAssertEqual(result.currentWeekDays, 1)
+        XCTAssertFalse(result.currentWeekMeetsTarget)
+    }
+
+    func testTargetMinusOneInACompletedWeekBreaksTheStreak() {
+        let history = [
+            trainingDay(2026, 8, 24), trainingDay(2026, 8, 26), trainingDay(2026, 8, 28),
+            trainingDay(2026, 8, 31), trainingDay(2026, 9, 2),
+        ]
+
+        let result = TrainingHistory.weeklyConsistency(
+            days: history, target: 3, now: date(2026, 9, 9), calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.weeks, 0)
+    }
+
+    func testTwoEntriesOnOneDateCountAsOneTrainingDay() {
+        let monday = trainingDay(2026, 9, 7)
+        let result = TrainingHistory.weeklyConsistency(
+            days: [monday, monday], target: 2,
+            now: date(2026, 9, 9), calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.currentWeekDays, 1)
+        XCTAssertFalse(result.currentWeekMeetsTarget)
+    }
+
+    func testWarmupOnlyDayDoesNotAdvanceConsistency() {
+        let result = TrainingHistory.weeklyConsistency(
+            days: [
+                trainingDay(2026, 9, 7),
+                trainingDay(2026, 9, 8, warmupOnly: true),
+            ],
+            target: 2,
+            now: date(2026, 9, 9),
+            calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.currentWeekDays, 1)
+        XCTAssertEqual(result.weeks, 0)
+    }
 }

@@ -25,6 +25,7 @@ struct HistoryView: View {
     @State private var days: [TrainingDay]
     @State private var month: Date = Calendar.current.startOfDay(for: Date())
     @State private var selected: TrainingDay?
+    @State private var weeklyTarget = 3
 
     init(days: [TrainingDay], store: TrainingStore) {
         self.store = store
@@ -41,6 +42,12 @@ struct HistoryView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                WeeklyStreakCard(
+                    consistency: TrainingHistory.weeklyConsistency(
+                        days: days, target: weeklyTarget, calendar: calendar
+                    )
+                )
+
                 MonthHeader(
                     month: month,
                     canGoForward: canGoForward,
@@ -90,6 +97,7 @@ struct HistoryView: View {
     /// rather than leaving it showing a session that no longer exists.
     private func reload() {
         days = (try? store.trainingDays()) ?? []
+        weeklyTarget = (try? store.gymConfig().weeklySessionTarget) ?? 3
         if let open = selected {
             let sameDay = Calendar.current.startOfDay(for: open.date)
             selected = days.first { Calendar.current.startOfDay(for: $0.date) == sameDay }
@@ -105,6 +113,45 @@ struct HistoryView: View {
     private func shift(by months: Int) {
         guard let moved = calendar.date(byAdding: .month, value: months, to: month) else { return }
         month = moved
+    }
+}
+
+private struct WeeklyStreakCard: View {
+    let consistency: WeeklyConsistency
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "calendar.badge.checkmark")
+                .font(.title2)
+                .foregroundStyle(.tint)
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                Text(progress)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("history.weeklyStreak")
+    }
+
+    private var title: String {
+        guard consistency.weeks > 0 else { return "Build your weekly streak" }
+        let unit = consistency.weeks == 1 ? "week" : "weeks"
+        return "\(consistency.weeks) \(unit) running"
+    }
+
+    private var progress: String {
+        if consistency.currentWeekMeetsTarget {
+            return "Target met · \(consistency.currentWeekDays)/\(consistency.target) training days this week"
+        }
+        return "\(consistency.currentWeekDays)/\(consistency.target) training days this week"
     }
 }
 

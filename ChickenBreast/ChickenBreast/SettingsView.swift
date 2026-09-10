@@ -217,10 +217,18 @@ struct SettingsView: View {
                 LabeledContent("Split", value: gym.effectiveTrainingSplit.kind.displayName)
             }
             .frame(minHeight: 44)
+
+            Stepper(value: weeklyTargetBinding, in: 1...7) {
+                LabeledContent(
+                    "Weekly goal",
+                    value: "\(gym.weeklySessionTarget) \(gym.weeklySessionTarget == 1 ? "day" : "days")"
+                )
+            }
+            .accessibilityIdentifier("settings.weeklySessionTarget")
         } header: {
             Text("Training")
         } footer: {
-            Text("Changing this restarts your rotation at day one. Nothing you've already logged is affected — a set belongs to the exercise and the day it was performed, not to the split that suggested it.")
+            Text("Changing the split restarts your rotation at day one. Changing the weekly goal recalculates your streak from training history. Nothing you've logged is changed.")
         }
     }
 
@@ -234,6 +242,17 @@ struct SettingsView: View {
         var updated = gym
         updated.trainingSplit = split
         commit(updated)
+    }
+
+    private var weeklyTargetBinding: Binding<Int> {
+        Binding(
+            get: { gym.weeklySessionTarget },
+            set: { target in
+                var updated = gym
+                updated.weeklySessionTarget = target
+                commit(updated)
+            }
+        )
     }
 
     // MARK: - Gym
@@ -336,7 +355,11 @@ struct SettingsView: View {
                 // `GymConfig(unit:)` here would silently reset "what do you
                 // train" every time someone toggles pounds/kilograms, since
                 // `commit` writes the whole row.
-                commit(GymConfig(unit: unit, trainingSplit: gym.trainingSplit))
+                commit(GymConfig(
+                    unit: unit,
+                    trainingSplit: gym.trainingSplit,
+                    weeklySessionTarget: gym.weeklySessionTarget
+                ))
             }
         )
     }
