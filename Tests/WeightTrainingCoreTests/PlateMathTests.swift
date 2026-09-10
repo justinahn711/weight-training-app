@@ -166,8 +166,13 @@ final class SuggestionsAreAlwaysBuildableTests: XCTestCase {
         }
     }
 
+    /// Ramp eligibility is derived from `equipment.isPlateBuilt` (#157), not
+    /// the legacy `needsWarmupRamp` flag — checking every plate-built lift
+    /// here, rather than only the 4 that used to carry the flag, is what
+    /// gives Skull Crushers and Preacher Curls the same buildability coverage
+    /// Flat Bench already had.
     func testWarmupRungsAreAlwaysBuildable() {
-        for exercise in ExerciseLibrary.all where exercise.needsWarmupRamp {
+        for exercise in ExerciseLibrary.all where exercise.equipment.isPlateBuilt {
             for pounds in stride(from: 45.0, through: 405.0, by: exercise.increment.pounds) {
                 for rung in WarmupRamp.generate(for: exercise, workingLoad: Load(pounds)) {
                     assertBuildable(rung.load, exercise, "warmup for \(pounds)")

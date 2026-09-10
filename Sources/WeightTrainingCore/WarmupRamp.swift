@@ -44,16 +44,31 @@ public enum WarmupRamp {
     /// The ramp for an exercise, or empty when one isn't wanted.
     ///
     /// Returns nothing at all when:
-    /// - the lift isn't flagged for ramps (`needsWarmupRamp`), which is what
-    ///   keeps cable laterals from sprouting a warmup block
+    /// - the equipment isn't plate-built (#157), which is what keeps a cable
+    ///   lateral or a dumbbell curl from sprouting a warmup block
     /// - there's no working load yet, on a cold start
     /// - the working load is so light that every rung collapses onto it
+    ///
+    /// Eligibility used to be `Exercise.needsWarmupRamp`, a flag set by hand
+    /// per lift. Only 4 of the library's 19 exercises ever had it set, so 15
+    /// offered nothing — which read as "no warmup feature" rather than
+    /// "no ramp for this equipment", and was the actual bug in #157: the
+    /// ramp worked, nobody ever saw it. `equipment.isPlateBuilt` is the same
+    /// judgement the flag was trying to encode — a bar or a plate-loaded sled
+    /// takes a real sequence of loading changes to reach a working weight,
+    /// where a dumbbell pair or a stack pin is one motion regardless of the
+    /// number on it — except it is derived from data every exercise already
+    /// carries, so it applies uniformly and is exercised by
+    /// `WarmupRampTests` instead of depending on whoever adds the next lift
+    /// remembering to flip a flag. `needsWarmupRamp` itself is untouched: it
+    /// is stored and decoded outside this module and removing it is a
+    /// separate, cross-module change.
     public static func generate(
         for exercise: Exercise,
         workingLoad: Load?,
         bar: Load = PlateMath.standardBar
     ) -> [WarmupSet] {
-        guard exercise.needsWarmupRamp, let working = workingLoad, working.pounds > 0 else {
+        guard exercise.equipment.isPlateBuilt, let working = workingLoad, working.pounds > 0 else {
             return []
         }
 

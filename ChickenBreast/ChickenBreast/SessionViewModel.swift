@@ -364,6 +364,15 @@ final class SessionViewModel {
         // set, and inheriting a 9.5 from the previous set would quietly log
         // fatigue that hasn't happened yet.
         pendingRPE = current.prescription.rpe
+        // Open only for the first exercise of the day (#157) — everywhere
+        // else stays collapsed, per #15's original reasoning. Comparing
+        // identity rather than `session.currentIndex == 0` survives a swap:
+        // whichever lift is actually first in the lineup gets read, not
+        // whichever one happened to be first when the day was planned. Safe
+        // to recompute on every visit, including a return trip: once the
+        // ramp for a lift disappears behind a logged working set, this value
+        // has nothing left to show either way.
+        isWarmupRampExpanded = current.id == session.exercises.first?.id
     }
 
     // MARK: - Voice
@@ -642,9 +651,13 @@ final class SessionViewModel {
             // day, not what is in front of you.
             guard wasVisible else { return }
             seedPendingFromCurrent()
-            // The old lift's advice has nothing to say about this one.
+            // The old lift's advice has nothing to say about this one. The
+            // ramp disclosure is not reset here (#157) — `seedPendingFromCurrent`
+            // already recomputed it for whichever exercise now occupies this
+            // slot, and overriding that unconditionally to collapsed would
+            // undefault an expanded ramp every time the *first* slot's lift
+            // was swapped.
             rest = nil
-            isWarmupRampExpanded = false
         } catch {
             failure = "Couldn't swap that exercise: \(error.localizedDescription)"
         }
@@ -739,8 +752,15 @@ final class SessionViewModel {
     /// this session — clearing the block on bench says nothing about RDL later.
     private var clearedRamps: Set<UUID> = []
 
-    /// Whether the ramp block is expanded. Collapsed by default (#15): on most
-    /// days the ramp is glanced at, not read.
+    /// Whether the ramp block is expanded.
+    ///
+    /// Collapsed by default (#15): on most days the ramp is glanced at, not
+    /// read. #157 is the report that "most days" was doing all the work in
+    /// that sentence — collapsed *and* absent on 15 of 19 library lifts meant
+    /// it was never seen once. `seedPendingFromCurrent` now opens this for the
+    /// first exercise of the day specifically, where a ramp is the first thing
+    /// on the screen worth reading rather than a footnote on the way to
+    /// something already warmed up from the exercise before it.
     var isWarmupRampExpanded = false
 
     /// The ramp for the current lift, or empty when one isn't wanted.
