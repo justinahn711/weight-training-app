@@ -449,6 +449,7 @@ struct TrainingSplitEditorView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("splitEditor.kind.\(kind.rawValue)")
                 }
             } header: {
                 Text(isOnboarding ? "What do you train?" : "Split")
@@ -470,6 +471,7 @@ struct TrainingSplitEditorView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(!canSave)
+            .accessibilityIdentifier("splitEditor.save")
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
             .background(.bar)
@@ -526,6 +528,7 @@ struct TrainingSplitEditorView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("splitEditor.day.\(day.kind.rawValue)")
             }
             .onDelete { offsets in customDays.remove(atOffsets: offsets) }
 
@@ -533,8 +536,11 @@ struct TrainingSplitEditorView: View {
                 addingDay = true
             } label: {
                 Label("Add day", systemImage: "plus")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            .accessibilityIdentifier("splitEditor.addDay")
         } header: {
             Text("Your days")
         } footer: {
@@ -613,6 +619,7 @@ private struct CustomDayEditorSheet: View {
             List {
                 Section {
                     TextField("Day name", text: $name)
+                        .accessibilityIdentifier("splitEditor.dayName")
                 } footer: {
                     if !trimmedName.isEmpty && existingNames.contains(trimmedName) {
                         Text("Another day is already named \(trimmedName).")
@@ -642,6 +649,7 @@ private struct CustomDayEditorSheet: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("splitEditor.exercise.\(exercise.id)")
                     }
                 }
             }
@@ -650,6 +658,7 @@ private struct CustomDayEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .accessibilityIdentifier("splitEditor.dayCancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
@@ -657,6 +666,7 @@ private struct CustomDayEditorSheet: View {
                         dismiss()
                     }
                     .disabled(!canSave)
+                    .accessibilityIdentifier("splitEditor.dayDone")
                 }
             }
         }

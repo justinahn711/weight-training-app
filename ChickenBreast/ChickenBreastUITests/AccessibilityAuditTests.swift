@@ -92,9 +92,8 @@ final class AccessibilityAuditTests: XCTestCase {
     func testTrainScreenPassesSystemAudit() throws {
         let app = launch()
         // Either shape of the Train screen is valid; both must pass the audit.
-        let ready = app.buttons["day.push"].waitForExistence(timeout: 30)
-            || app.buttons["home.resume"].waitForExistence(timeout: 3)
-        XCTAssertTrue(ready, "Train should offer a day to start or a workout to resume")
+        XCTAssertTrue(try reachTrainScreen(app),
+                      "Train should offer a day to start or a workout to resume")
         let issues = try audit(app)
         // Printed rather than asserted to zero: the held-open types above are
         // known, and this is where the list to work through comes from.
@@ -103,7 +102,7 @@ final class AccessibilityAuditTests: XCTestCase {
 
     func testSessionScreenPassesSystemAudit() throws {
         let app = launch()
-        openPushDay(app)
+        try openPushDay(app)
         startSessionIfPreviewed(app)
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
@@ -118,7 +117,7 @@ final class AccessibilityAuditTests: XCTestCase {
     /// being guarded — rather than when a layout moves.
     func testLogSetAndUndoIsReachableWithoutSight() throws {
         let app = launch()
-        openPushDay(app)
+        try openPushDay(app)
         startSessionIfPreviewed(app)
 
         let mic = app.buttons["session.microphone"]
@@ -140,7 +139,7 @@ final class AccessibilityAuditTests: XCTestCase {
     /// Selection on the rep and RPE chips has to survive being unseen.
     func testChipSelectionIsExposedAsATrait() throws {
         let app = launch()
-        openPushDay(app)
+        try openPushDay(app)
         startSessionIfPreviewed(app)
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20))
 
@@ -156,23 +155,54 @@ final class AccessibilityAuditTests: XCTestCase {
         XCTAssertEqual(selected, 1, "exactly one RPE chip should report the selected trait")
     }
 
+    /// Answers first-launch setup when it covers Train, then waits for a day
+    /// or resumable workout that can actually receive a tap.
+    @discardableResult
+    private func reachTrainScreen(_ app: XCUIApplication,
+                                  timeout: TimeInterval = 30) throws -> Bool {
+        let push = app.buttons["day.push"]
+        let resume = app.buttons["home.resume"]
+        let save = app.buttons["splitEditor.save"]
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            // Elements behind a full-screen cover still exist in XCUI's
+            // hierarchy. Handle the cover first and require the destination
+            // controls to be hittable so a hidden day never wins this race.
+            if save.exists && save.isHittable {
+                let issues = try audit(app)
+                if !issues.isEmpty {
+                    print("Onboarding cover a11y backlog:\n" + issues.joined(separator: "\n"))
+                }
+                save.tap()
+            }
+            if (push.exists && push.isHittable) || (resume.exists && resume.isHittable) {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        return false
+    }
+
     /// Opens the Push day, waiting for the store to finish its first load.
     ///
     /// The wait is generous because launch does real work — seeding the
     /// library, deduplicating, reconciling the gym — and a first launch on a
     /// cold simulator is the slowest this ever gets.
-    private func openPushDay(_ app: XCUIApplication) {
+    private func openPushDay(_ app: XCUIApplication) throws {
+        XCTAssertTrue(try reachTrainScreen(app), "the Train screen should become reachable")
         // A workout left in progress by an earlier test replaces the day list
         // with Resume — correct behaviour (#132), and it makes these tests
         // order-dependent. Adopting the draft is the honest reaction: the goal
         // is to be in a session, and resuming reaches one.
         let resume = app.buttons["home.resume"]
-        if resume.waitForExistence(timeout: 3) {
+        if resume.exists && resume.isHittable {
             resume.tap()
             return
         }
         let push = app.buttons["day.push"]
-        XCTAssertTrue(push.waitForExistence(timeout: 30), "the Push day should be offered")
+        XCTAssertTrue(push.waitForExistence(timeout: 5) && push.isHittable,
+                      "the Push day should be offered and tappable")
         push.tap()
     }
 
