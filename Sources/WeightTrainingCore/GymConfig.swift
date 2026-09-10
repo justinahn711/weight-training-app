@@ -16,7 +16,28 @@ import Foundation
 /// way that looks right" failure #67 was opened about. Keeping it in the synced
 /// store also means walking into your gym with a new phone doesn't mean
 /// describing the rack again.
+///
+/// The training split (#136) lives here too, which stretches this type past
+/// "the room" — a split is a fact about the person, not the gym. It was put
+/// here anyway rather than in a record of its own, because the thing worth
+/// reusing isn't the room's meaning, it's the machinery a synced singleton
+/// already needed: a fixed id so two offline devices collapse to one row
+/// instead of two gyms, `updatedAt` to break a real conflict, and wiring
+/// through `deduplicate()` and the backup archive. A second synced model would
+/// have needed every one of those again for one more field. The cost is a
+/// shared one: `saveGymConfig` already resolves two devices disagreeing about
+/// the rack with "the later edit wins, whole row" — extending that to the
+/// split means a plate toggle on one phone can now, in the same rare crossed-
+/// wire window, revert a split change made on the other. That trade already
+/// existed for unit/plates/bar; this asks it to cover one more field rather
+/// than opening a second, independent way for two devices to disagree.
 public struct GymConfig: Hashable, Codable, Sendable {
+
+    /// The selected training rotation. `nil` means setup hasn't happened yet —
+    /// distinct from having chosen push/pull/legs — so a fresh install can
+    /// still ask once (#136); `effectiveTrainingSplit` is what every reader
+    /// beyond the picker itself should call, since it also covers that case.
+    public var trainingSplit: TrainingSplit?
 
     /// The unit this gym is marked in. Everything the lifter reads and types
     /// is in this; what's stored stays canonically pounds.
@@ -45,15 +66,21 @@ public struct GymConfig: Hashable, Codable, Sendable {
     public init(
         unit: MassUnit = .pounds,
         availablePlates: [Double]? = nil,
-        barWeight: Load? = nil
+        barWeight: Load? = nil,
+        trainingSplit: TrainingSplit? = nil
     ) {
         self.unit = unit
         self.availablePlates = availablePlates ?? unit.standardPlates
         self.barWeight = barWeight ?? unit.standardBar
+        self.trainingSplit = trainingSplit
     }
 
     /// Rows written before this landed describe a pound gym, because that is
-    /// the only kind the app could previously represent.
+    /// the only kind the app could previously represent. Rows written before
+    /// #136 have no split at all, which decodes to `nil` — exactly the "setup
+    /// hasn't happened" state a genuinely fresh install is in, so an existing
+    /// install updating into this feature is asked the same question a new
+    /// one is, rather than being silently defaulted onto push/pull/legs.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let unit = try container.decodeIfPresent(MassUnit.self, forKey: .unit) ?? .pounds
@@ -63,6 +90,23 @@ public struct GymConfig: Hashable, Codable, Sendable {
             ?? unit.standardPlates
         self.barWeight =
             try container.decodeIfPresent(Load.self, forKey: .barWeight) ?? unit.standardBar
+        self.trainingSplit =
+            try container.decodeIfPresent(TrainingSplit.self, forKey: .trainingSplit)
+    }
+
+    /// The split to actually train from: what's chosen, or push/pull/legs
+    /// while nothing has been (#136).
+    ///
+    /// Every reader of the active split — `cyclePosition()`, `startSession`,
+    /// the Train screen — should call this rather than `trainingSplit`
+    /// directly, so "nobody has picked yet" and "an empty custom split
+    /// somehow got stored" both land on a rotation that actually has days in
+    /// it, instead of dividing by zero somewhere downstream.
+    public var effectiveTrainingSplit: TrainingSplit {
+        guard let trainingSplit, !trainingSplit.days.isEmpty else {
+            return DayTemplateLibrary.split(.pushPullLegs, startedAt: .distantPast)
+        }
+        return trainingSplit
     }
 
     /// What the app assumes until somebody says otherwise: a pound gym with an

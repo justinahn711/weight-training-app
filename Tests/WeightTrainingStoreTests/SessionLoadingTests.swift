@@ -320,3 +320,109 @@ final class ProgressionApplicationTests: XCTestCase {
         XCTAssertEqual(suggestion?.to, Load(70), "80 less 10%, snapped to a real dumbbell")
     }
 }
+
+/// #136's hard requirement and its two open questions, exercised against the
+/// real store rather than `CycleEngine`/`GymConfig` in isolation.
+@MainActor
+final class TrainingSplitTests: XCTestCase {
+    private var store: TrainingStore!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        store = try TrainingStore.inMemory()
+        try store.seedLibraryIfNeeded()
+    }
+
+    override func tearDownWithError() throws {
+        store = nil
+        try super.tearDownWithError()
+    }
+
+    private var incline: Exercise { ExerciseLibrary.push[0] }
+
+    private func midday(daysAgo: Int) -> Date {
+        let today = Calendar.current.startOfDay(for: Date())
+        return today.addingTimeInterval(Double(-daysAgo) * 86_400 + 12 * 3_600)
+    }
+
+    /// The hard requirement, stated as a test: a set belongs to an exercise
+    /// and a date, not to whichever split suggested it. Switching from
+    /// push/pull/legs to upper/lower must not touch a single logged set.
+    func testChangingTheSplitNeverTouchesALoggedSet() throws {
+        let record = SetRecord(exerciseID: incline.id, load: Load(80), reps: 8,
+                               rpe: RPE(8), performedAt: midday(daysAgo: 3))
+        try store.log(record)
+
+        try store.saveGymConfig(GymConfig(trainingSplit: DayTemplateLibrary.split(.upperLower)))
+
+        XCTAssertEqual(try store.allSets(), [record])
+        let day = try XCTUnwrap(try store.trainingDays().first { $0.date == Calendar.current.startOfDay(for: record.performedAt) })
+        XCTAssertEqual(day.exercises.map(\.exercise.id), [incline.id])
+    }
+
+    /// Decision #2: a mid-cycle split change restarts the rotation rather
+    /// than trying to carry a position across two differently-shaped ones.
+    func testChangingTheSplitRestartsTheRotationAtTheNewSplitsFirstDay() throws {
+        // A full push/pull/legs cycle, most recently pull — under the old
+        // split this would put legs next.
+        try store.log(SetRecord(exerciseID: incline.id, load: Load(80), reps: 8,
+                                rpe: RPE(8), performedAt: midday(daysAgo: 3)))
+        let row = ExerciseLibrary.pull[0]
+        try store.log(SetRecord(exerciseID: row.id, load: Load(80), reps: 8,
+                                rpe: RPE(8), performedAt: midday(daysAgo: 1)))
+        XCTAssertEqual(try store.cyclePosition().next, .legs, "sanity check under the old split")
+
+        let upperLower = DayTemplateLibrary.split(.upperLower)
+        try store.saveGymConfig(GymConfig(trainingSplit: upperLower))
+
+        XCTAssertEqual(
+            try store.cyclePosition().next, upperLower.days[0].kind,
+            "the new split starts at its own first day, not wherever the old cycle left off"
+        )
+    }
+
+    /// The other half of the restart: sessions from before the change are
+    /// excluded from *this read* only. They still show up in full elsewhere.
+    func testHistoryFromBeforeTheChangeStillAppearsInTrainingDays() throws {
+        // Flat Bench is push-only — unlike incline, it's not also a candidate
+        // on the upper template — so classification here is unambiguous.
+        let flatBench = ExerciseLibrary.all.first { $0.name == "Flat Bench" }!
+        try store.log(SetRecord(exerciseID: flatBench.id, load: Load(80), reps: 8,
+                                rpe: RPE(8), performedAt: midday(daysAgo: 10)))
+        try store.saveGymConfig(GymConfig(trainingSplit: DayTemplateLibrary.split(.upperLower)))
+
+        let days = try store.trainingDays()
+        XCTAssertEqual(days.count, 1, "the pre-change session is still there")
+        XCTAssertEqual(days.first?.kind, .push, "still classified as push against the built-in shapes")
+    }
+
+    /// Starting a session reads whatever split is active, not always PPL.
+    func testStartSessionUsesTheActiveSplitsTemplate() throws {
+        try store.saveGymConfig(GymConfig(trainingSplit: DayTemplateLibrary.split(.upperLower)))
+        let upper = DayTemplateLibrary.upper
+
+        let session = try store.startSession(kind: upper.kind)
+        XCTAssertEqual(session.exercises.count, upper.slots.count)
+    }
+
+    /// A custom split's day, built and saved through the same path Settings
+    /// will use, opens a session with exactly the exercises picked for it.
+    func testACustomDayOpensWithExactlyItsChosenExercises() throws {
+        let chosen = [ExerciseLibrary.push[0], ExerciseLibrary.legs[0]]
+        let day = DayTemplateLibrary.customDay(name: "Arms and Legs", exercises: chosen)
+        try store.saveGymConfig(GymConfig(trainingSplit: TrainingSplit(kind: .custom, days: [day])))
+
+        let session = try store.startSession(kind: day.kind)
+        XCTAssertEqual(Set(session.exercises.map(\.exercise.id)), Set(chosen.map(\.id)))
+    }
+
+    /// The gym config round trip through SwiftData, not just through
+    /// `Codable` in isolation — `GymConfigTests` in the Core target already
+    /// covers the JSON shape; this is the same claim against the real store.
+    func testTheChosenSplitSurvivesBeingWrittenAndReadBack() throws {
+        let split = DayTemplateLibrary.split(.fullBody, startedAt: midday(daysAgo: 2))
+        try store.saveGymConfig(GymConfig(trainingSplit: split))
+
+        XCTAssertEqual(try store.gymConfig().trainingSplit, split)
+    }
+}
