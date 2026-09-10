@@ -8,12 +8,15 @@ name: Tests
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
-    paths:
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - 'hooks/check-core-purity.sh'
-      - '.github/workflows/tests.yml'
+    # Deliberately unfiltered. These paths used to be narrowed to skip the 10x
+    # macOS multiplier on a private repo's 2000-minute allowance — which the
+    # repo going public removed entirely.
+    #
+    # Keeping the filter after that had a cost nobody had priced: `swift test`
+    # is a required status check, and a required check that never runs never
+    # reports, so branch protection blocks the PR forever. Every app-only PR
+    # was permanently unmergeable. A filter that decides whether a *required*
+    # gate exists is not an optimisation, it is a trap.
   workflow_dispatch:
 
 permissions:
