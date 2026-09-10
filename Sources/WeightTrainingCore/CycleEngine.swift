@@ -98,13 +98,26 @@ public enum CycleEngine {
     /// The next day follows the last one performed, regardless of how long ago
     /// that was. Three weeks off with an injury doesn't skip anything — you
     /// come back to the day you hadn't done yet.
+    ///
+    /// - Parameter startingAt: sessions before this date are excluded from
+    ///   what "next" is derived from (#136). A changed split restarts its
+    ///   rotation rather than trying to carry a position across two
+    ///   differently-shaped ones — going from a 3-day cycle to a 4-day one has
+    ///   no honest mapping from "pull was last" onto a slot the new shape may
+    ///   not even have. The filter reaches only this function's own read of
+    ///   history; nothing is deleted, and every excluded session still shows
+    ///   up wherever else history is read.
     public static func position(
         history: [SetRecord],
         templates: [DayTemplate] = DayTemplateLibrary.all,
+        startingAt: Date = .distantPast,
         calendar: Calendar = .current
     ) -> CyclePosition {
-        let sessions = labelledSessions(history: history, templates: templates,
-                                        calendar: calendar)
+        let sessions = labelledSessions(
+            history: history.filter { $0.performedAt >= startingAt },
+            templates: templates,
+            calendar: calendar
+        )
 
         var lastPerformed: [DayKind: Date] = [:]
         for session in sessions {
@@ -112,11 +125,22 @@ public enum CycleEngine {
             lastPerformed[session.kind] = session.date
         }
 
-        // A fresh install starts at the top of the cycle.
+        // A fresh install — or a split with no sessions logged since it
+        // started — begins at the top of its own rotation.
         guard let latest = sessions.last else {
-            return CyclePosition(next: .push, lastPerformed: [:])
+            return CyclePosition(next: templates.first?.kind ?? .push, lastPerformed: [:])
         }
-        return CyclePosition(next: latest.kind.next, lastPerformed: lastPerformed)
+
+        // Steps through the split's own ordered days rather than `DayKind`'s
+        // fixed triad-only `next` (#136), so this works for a 2-day, 4-day, or
+        // any other shape a custom split names. `latest.kind` is always found
+        // here: it came from classifying against this same `templates` array.
+        guard !templates.isEmpty,
+              let index = templates.firstIndex(where: { $0.kind == latest.kind }) else {
+            return CyclePosition(next: templates.first?.kind ?? .push, lastPerformed: lastPerformed)
+        }
+        let next = templates[(index + 1) % templates.count].kind
+        return CyclePosition(next: next, lastPerformed: lastPerformed)
     }
 
     /// How many times a day has been trained, which is what drives which side
@@ -124,14 +148,22 @@ public enum CycleEngine {
     ///
     /// Derived from history rather than stored as a counter, so it stays right
     /// when sessions are skipped, abandoned, or logged out of order.
+    ///
+    /// - Parameter startingAt: see `position(history:templates:startingAt:)` —
+    ///   the same restart-on-change rule applies to a rotating slot's count.
     public static func completedSessions(
         of kind: DayKind,
         history: [SetRecord],
         templates: [DayTemplate] = DayTemplateLibrary.all,
+        startingAt: Date = .distantPast,
         calendar: Calendar = .current
     ) -> Int {
-        labelledSessions(history: history, templates: templates, calendar: calendar)
-            .filter { $0.kind == kind }
-            .count
+        labelledSessions(
+            history: history.filter { $0.performedAt >= startingAt },
+            templates: templates,
+            calendar: calendar
+        )
+        .filter { $0.kind == kind }
+        .count
     }
 }

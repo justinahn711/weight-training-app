@@ -392,6 +392,43 @@ final class ArchiveTests: XCTestCase {
         XCTAssertEqual(try fresh.gymConfig().unit, .kilograms)
     }
 
+    /// A file exported before #136 has `"kind":"push"` as a bare JSON string
+    /// and no `"name"` key on a day template at all, and its `gymConfig` (when
+    /// present) has no `"trainingSplit"` key either. This is the actual shape
+    /// on disk for anyone who backed up before this landed, and #87's whole
+    /// premise is that the file "has to still open" — proven here against the
+    /// real archive-reading path, not just `DayKind`/`DayTemplate` in
+    /// isolation (see `DayTemplateTests`).
+    func testAPreSplitArchiveStillOpensAndRestores() throws {
+        let json = """
+        {
+          "version": 1,
+          "exportedAt": "2025-01-01T00:00:00Z",
+          "exercises": [],
+          "sets": [],
+          "progressStates": [],
+          "dayTemplates": [
+            {"id":"CB00000A-0000-4000-8000-000000000001","kind":"push","slots":[]}
+          ],
+          "bodyweights": [],
+          "gymConfig": {"unit":"pounds","availablePlates":[45,35,25,10,5,2.5],
+                        "barWeight":{"pounds":45}}
+        }
+        """
+        let archive = try TrainingArchive(json: Data(json.utf8))
+
+        XCTAssertEqual(archive.dayTemplates.first?.kind, .push)
+        XCTAssertEqual(archive.dayTemplates.first?.name, "Push",
+                       "no stored name falls back to the kind's own word")
+        XCTAssertNil(archive.gymConfig?.trainingSplit,
+                    "no stored split reads as 'nobody has picked yet', not push/pull/legs")
+
+        let fresh = try TrainingStore.inMemory()
+        let report = try fresh.restore(from: archive)
+        XCTAssertEqual(report.dayTemplates, 1)
+        XCTAssertEqual(try fresh.dayTemplate(kind: .push)?.name, "Push")
+    }
+
 }
 
 private extension TrainingStore {

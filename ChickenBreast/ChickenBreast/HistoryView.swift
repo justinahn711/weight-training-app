@@ -277,6 +277,12 @@ private struct DayCell: View {
         case .pull:  return .green
         case .legs:  return .orange
         case nil:    return .gray
+        // `DayKind` stopped being a closed push/pull/legs enum in #136 so a
+        // split could name upper/lower, full body, and custom days, and a
+        // switch over it can no longer be proven exhaustive. Indigo keeps
+        // every other day kind visibly distinct from both the fixed three
+        // and "untrained" (gray).
+        default: return .indigo
         }
     }
 }

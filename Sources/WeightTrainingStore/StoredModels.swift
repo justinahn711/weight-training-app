@@ -312,14 +312,18 @@ public final class StoredBodyweight {
 
 // MARK: - Gym
 
-/// The lifter's gym: unit, plate rack, bar (#73, #67).
+/// The lifter's gym: unit, plate rack, bar (#73, #67) — and, since #136, which
+/// split they're running. The split isn't a fact about the room, but it rides
+/// along on the same row rather than a new one of its own; see `GymConfig`'s
+/// doc comment for why.
 ///
 /// A single row, kept at a fixed id rather than "whichever one exists", so two
 /// devices that both write one before ever syncing produce the same identity
 /// and collapse into one in `deduplicate()` instead of leaving the app with two
 /// gyms and no way to choose. Unlike every other entity here, the duplicates
-/// genuinely conflict — each device has a different opinion about the rack — so
-/// the merge needs `updatedAt` to break the tie.
+/// genuinely conflict — each device has a different opinion about the rack (or
+/// now, the split) — so the merge needs `updatedAt` to break the tie, one row
+/// at a time: whichever device wrote last wins the whole row, split included.
 @Model
 public final class StoredGymConfig {
     /// The one row. There is exactly one gym until a gym picker exists (#73),
@@ -331,6 +335,10 @@ public final class StoredGymConfig {
     /// JSON `[Double]`, plate sizes in `unitRaw`.
     public var platesData: Data = Data()
     public var barPounds: Double = MassUnit.pounds.standardBar.pounds
+    /// JSON `TrainingSplit?` (#136). Empty is a row CloudKit has materialised
+    /// but this device hasn't written yet, which reads the same as an
+    /// explicit `null` — both mean "nobody has picked a split here".
+    public var trainingSplitData: Data = Data()
 
     /// When this was last written, used to settle a sync conflict.
     public var updatedAt: Date = Date()
@@ -340,6 +348,7 @@ public final class StoredGymConfig {
         self.unitRaw = config.unit.rawValue
         self.platesData = encoded(config.availablePlates)
         self.barPounds = config.barWeight.pounds
+        self.trainingSplitData = encoded(config.trainingSplit)
         self.updatedAt = updatedAt
     }
 
@@ -347,6 +356,7 @@ public final class StoredGymConfig {
         unitRaw = config.unit.rawValue
         platesData = encoded(config.availablePlates)
         barPounds = config.barWeight.pounds
+        trainingSplitData = encoded(config.trainingSplit)
         updatedAt = date
     }
 
@@ -361,7 +371,10 @@ public final class StoredGymConfig {
                 availablePlates: platesData.isEmpty
                     ? unit.standardPlates
                     : try decoded([Double].self, from: platesData),
-                barWeight: Load(barPounds)
+                barWeight: Load(barPounds),
+                trainingSplit: trainingSplitData.isEmpty
+                    ? nil
+                    : try decoded(TrainingSplit?.self, from: trainingSplitData)
             )
         } catch {
             throw StoreError.corruptRecord(entity: "GymConfig", id: id, underlying: error)

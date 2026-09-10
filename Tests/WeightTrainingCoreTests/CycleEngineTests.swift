@@ -90,6 +90,10 @@ final class CycleEngineTests: XCTestCase {
         case .push: names = ["Incline DB Press", "Flat Bench", "Lateral Raise"]
         case .pull: names = ["Chest-Supported T-Bar Row", "Lat Pulldown", "Shrugs"]
         case .legs: names = ["Hack Squat", "RDL", "Leg Curl"]
+        // `DayKind` is no longer a closed enum as of #136 (upper/lower/full
+        // body/custom), so this test-only helper — which only ever builds a
+        // push, pull, or legs session — needs a default it will never hit.
+        default: names = []
         }
         return names.enumerated().map { index, name in
             SetRecord(
@@ -224,5 +228,82 @@ final class CycleEngineTests: XCTestCase {
     func testSetsOnTheSameDayAreOneSession() {
         let history = session(.push, daysAgo: 1)
         XCTAssertEqual(CycleEngine.completedSessions(of: .push, history: history), 1)
+    }
+
+    // MARK: - A changed split restarts the rotation (#136)
+
+    /// The decision #136 asks for: a mid-cycle split change restarts rather
+    /// than tries to carry a position across two differently-shaped
+    /// rotations. `startingAt` is how the store expresses "the split changed
+    /// here" — a session before it is real history everywhere else, but
+    /// doesn't count toward what's next.
+    func testStartingAtExcludesSessionsBeforeTheSplitBegan() {
+        let history = session(.push, daysAgo: 5)
+        let position = CycleEngine.position(
+            history: history, startingAt: day0.addingTimeInterval(-4 * 86_400)
+        )
+        XCTAssertEqual(position.next, .push,
+                       "the excluded push doesn't count, so the rotation hasn't moved off the top")
+        XCTAssertTrue(position.lastPerformed.isEmpty)
+    }
+
+    func testStartingAtExcludesEarlierHistoryFromCompletedCount() {
+        let history = session(.push, daysAgo: 5) + session(.push, daysAgo: 1)
+        XCTAssertEqual(CycleEngine.completedSessions(of: .push, history: history), 2,
+                       "both count with no restart in effect")
+        XCTAssertEqual(
+            CycleEngine.completedSessions(
+                of: .push, history: history, startingAt: day0.addingTimeInterval(-3 * 86_400)
+            ),
+            1,
+            "only the one logged after the restart counts"
+        )
+    }
+
+    /// "Next" follows the active split's own ordered days, not the fixed
+    /// triad `DayKind.next` still exists for — this is what makes a 2-day,
+    /// 4-day, or arbitrarily-named custom rotation work at all.
+    func testPositionStepsThroughACustomOrderedRotation() {
+        let legDay = DayTemplate(kind: DayKind(rawValue: "Leg Day")!, slots: [
+            Slot(name: "Squat", candidateExerciseIDs: [lift("Hack Squat").id]),
+        ])
+        let pushDay = DayTemplate(kind: DayKind(rawValue: "Push Day")!, slots: [
+            Slot(name: "Press", candidateExerciseIDs: [lift("Incline DB Press").id]),
+        ])
+        let templates = [legDay, pushDay]
+
+        let history = [SetRecord(
+            exerciseID: lift("Hack Squat").id, load: Load(200), reps: 5, rpe: RPE(8),
+            performedAt: day0.addingTimeInterval(-86_400)
+        )]
+        let position = CycleEngine.position(history: history, templates: templates)
+        XCTAssertEqual(position.next, pushDay.kind)
+    }
+
+    /// A one-day split (full body) simply proposes the same day again —
+    /// index modulo one is always zero, with no special case needed.
+    func testPositionOnAOneDaySplitRepeatsTheSameDay() {
+        let fullBody = DayTemplate(kind: DayKind(rawValue: "full body")!, slots: [
+            Slot(name: "Squat", candidateExerciseIDs: [lift("Hack Squat").id]),
+        ])
+        let history = [SetRecord(
+            exerciseID: lift("Hack Squat").id, load: Load(200), reps: 5, rpe: RPE(8),
+            performedAt: day0.addingTimeInterval(-86_400)
+        )]
+        let position = CycleEngine.position(history: history, templates: [fullBody])
+        XCTAssertEqual(position.next, fullBody.kind)
+    }
+
+    func testPositionOnAFreshSplitStartsAtItsFirstDay() {
+        let legDay = DayTemplate(kind: DayKind(rawValue: "Leg Day")!, slots: [])
+        let position = CycleEngine.position(history: [], templates: [legDay])
+        XCTAssertEqual(position.next, legDay.kind)
+    }
+
+    /// A defensive backstop only — the store never actually calls this with
+    /// no templates — but public Core API shouldn't divide by zero even so.
+    func testPositionNeverCrashesOnEmptyTemplates() {
+        let position = CycleEngine.position(history: [], templates: [])
+        XCTAssertEqual(position.next, .push)
     }
 }

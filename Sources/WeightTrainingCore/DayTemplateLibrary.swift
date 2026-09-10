@@ -13,13 +13,161 @@ public enum DayTemplateLibrary {
 
     public static let all: [DayTemplate] = [push, pull, legs]
 
+    /// Every built-in shape, independent of which split is currently active.
+    ///
+    /// Used only for classifying history (#136): a lifter who trained under
+    /// push/pull/legs for a year and then switched to upper/lower must not
+    /// have that year's sessions stop matching anything just because the
+    /// active split no longer includes a push day. `all` deliberately stays
+    /// PPL-only above — it's the historical default `CycleEngine` and its
+    /// tests are pinned to — this is the superset used only for labelling.
+    public static let allBuiltIn: [DayTemplate] = [push, pull, legs, upper, lower, fullBody]
+
     public static func template(for kind: DayKind) -> DayTemplate {
+        if kind == .push { return push }
+        if kind == .pull { return pull }
+        if kind == .legs { return legs }
+        // A defensive backstop, not a real path: every ordinary caller asks
+        // for a kind that's already in the templates it's working from. An
+        // honestly empty day is the right answer for the rest, rather than
+        // silently handing back push (#136).
+        return DayTemplate(kind: kind, name: kind.rawValue.capitalized, slots: [])
+    }
+
+    /// The starting templates for one of the four built-in split shapes.
+    ///
+    /// `.custom` has no built-in days to hand back — its shape is whatever
+    /// the person names — so it starts empty and Settings fills it in via
+    /// `customDay(name:exercises:)`.
+    public static func split(_ kind: TrainingSplitKind, startedAt: Date = Date()) -> TrainingSplit {
         switch kind {
-        case .push: return push
-        case .pull: return pull
-        case .legs: return legs
+        case .pushPullLegs: return TrainingSplit(kind: kind, days: all, startedAt: startedAt)
+        case .upperLower: return TrainingSplit(kind: kind, days: [upper, lower], startedAt: startedAt)
+        case .fullBody: return TrainingSplit(kind: kind, days: [fullBody], startedAt: startedAt)
+        case .custom: return TrainingSplit(kind: kind, days: [], startedAt: startedAt)
         }
     }
+
+    /// Builds one day of a custom split.
+    ///
+    /// `kind`'s raw value is the exact name typed in, not a synthesized id —
+    /// see `DayKind`'s doc comment for why: it's what lets the session title
+    /// and Live Activity, both outside #136's file ownership, already show
+    /// the right thing with no changes on their end. One slot per exercise,
+    /// none of them rotating: a custom day is a flat list the person picked
+    /// by hand, not a shape with alternatives to choose between.
+    public static func customDay(name: String, exercises: [Exercise]) -> DayTemplate {
+        DayTemplate(
+            kind: DayKind(rawValue: name) ?? DayKind(rawValue: "Day")!,
+            name: name,
+            slots: exercises.map { Slot(name: $0.name, candidateExerciseIDs: [$0.id]) }
+        )
+    }
+
+    /// Disambiguates a proposed day name against the ones already in a
+    /// custom split.
+    ///
+    /// Two days sharing a name would collide onto the same `DayKind` —
+    /// `customDay` uses the name as the identity — silently merging their
+    /// rotation and "last performed" tracking. Settings calls this before
+    /// adding a day rather than allowing the collision and explaining it
+    /// later.
+    public static func uniqueDayName(_ proposed: String, among existing: [String]) -> String {
+        guard existing.contains(proposed) else { return proposed }
+        var suffix = 2
+        while existing.contains("\(proposed) \(suffix)") { suffix += 1 }
+        return "\(proposed) \(suffix)"
+    }
+
+    // MARK: - Upper / Lower / Full body
+
+    /// A conventional two-day split: everything above the waist, then
+    /// everything below it. One slot per lift, no rotating pairs — those exist
+    /// on push day specifically to hold *that* day's length down, and there's
+    /// no equivalent pressure here.
+    public static let upper = DayTemplate(
+        id: id("CB00000A-0000-4000-8000-000000000004"),
+        kind: DayKind(rawValue: "upper")!,
+        slots: [
+            Slot(id: id("CB00000E-0000-4000-8000-000000000001"),
+                 name: "Incline press",
+                 candidateExerciseIDs: [library("Incline DB Press")]),
+            Slot(id: id("CB00000E-0000-4000-8000-000000000002"),
+                 name: "Row",
+                 candidateExerciseIDs: [library("Chest-Supported T-Bar Row")]),
+            Slot(id: id("CB00000E-0000-4000-8000-000000000003"),
+                 name: "Overhead press",
+                 candidateExerciseIDs: [library("Seated DB OHP")]),
+            Slot(id: id("CB00000E-0000-4000-8000-000000000004"),
+                 name: "Vertical pull",
+                 candidateExerciseIDs: [library("Lat Pulldown")]),
+            Slot(id: id("CB00000E-0000-4000-8000-000000000005"),
+                 name: "Side delts",
+                 candidateExerciseIDs: [library("Lateral Raise")]),
+            Slot(id: id("CB00000E-0000-4000-8000-000000000006"),
+                 name: "Biceps",
+                 candidateExerciseIDs: [library("Hammer Curls")]),
+            Slot(id: id("CB00000E-0000-4000-8000-000000000007"),
+                 name: "Triceps",
+                 candidateExerciseIDs: [library("Tricep Pressdown")]),
+        ]
+    )
+
+    public static let lower = DayTemplate(
+        id: id("CB00000A-0000-4000-8000-000000000005"),
+        kind: DayKind(rawValue: "lower")!,
+        slots: [
+            Slot(id: id("CB00000F-0000-4000-8000-000000000001"),
+                 name: "Squat pattern",
+                 candidateExerciseIDs: [library("Hack Squat")]),
+            Slot(id: id("CB00000F-0000-4000-8000-000000000002"),
+                 name: "Hinge",
+                 candidateExerciseIDs: [library("RDL")]),
+            Slot(id: id("CB00000F-0000-4000-8000-000000000003"),
+                 name: "Hamstrings",
+                 candidateExerciseIDs: [library("Leg Curl")]),
+            Slot(id: id("CB00000F-0000-4000-8000-000000000004"),
+                 name: "Quads",
+                 candidateExerciseIDs: [library("Leg Extension")]),
+            Slot(id: id("CB00000F-0000-4000-8000-000000000005"),
+                 name: "Calves",
+                 candidateExerciseIDs: [library("Calf Raise")]),
+        ]
+    )
+
+    /// A single repeating day. `CycleEngine.position` steps through a split's
+    /// `days` by index modulo count, so a one-day split simply proposes the
+    /// same day again every time — no special case needed for it here.
+    ///
+    /// The raw value is `"full body"`, with the space kept deliberately: it's
+    /// what makes `kind.rawValue.capitalized` — which is what the session
+    /// title and Live Activity actually render, outside this issue's reach —
+    /// come out as "Full Body" rather than a hyphenated compromise.
+    public static let fullBody = DayTemplate(
+        id: id("CB00000A-0000-4000-8000-000000000006"),
+        kind: DayKind(rawValue: "full body")!,
+        name: "Full Body",
+        slots: [
+            Slot(id: id("CB000010-0000-4000-8000-000000000001"),
+                 name: "Squat pattern",
+                 candidateExerciseIDs: [library("Hack Squat")]),
+            Slot(id: id("CB000010-0000-4000-8000-000000000002"),
+                 name: "Press",
+                 candidateExerciseIDs: [library("Incline DB Press")]),
+            Slot(id: id("CB000010-0000-4000-8000-000000000003"),
+                 name: "Row",
+                 candidateExerciseIDs: [library("Chest-Supported T-Bar Row")]),
+            Slot(id: id("CB000010-0000-4000-8000-000000000004"),
+                 name: "Hinge",
+                 candidateExerciseIDs: [library("RDL")]),
+            Slot(id: id("CB000010-0000-4000-8000-000000000005"),
+                 name: "Overhead press",
+                 candidateExerciseIDs: [library("Seated DB OHP")]),
+            Slot(id: id("CB000010-0000-4000-8000-000000000006"),
+                 name: "Vertical pull",
+                 candidateExerciseIDs: [library("Lat Pulldown")]),
+        ]
+    )
 
     // MARK: - Push
 

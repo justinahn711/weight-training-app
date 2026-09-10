@@ -20,10 +20,17 @@ extension TrainingStore {
     }
 
     /// Where the cycle stands, read from what's actually been trained.
+    ///
+    /// Measured only from sessions logged since the active split began
+    /// (#136): a split change restarts the rotation rather than trying to
+    /// carry a position across two differently-shaped ones, so a session from
+    /// before the change is excluded from *this* read even though it remains
+    /// fully intact everywhere else — `trainingDays()`, the digest, e1RM.
     public func cyclePosition(calendar: Calendar = .current) throws -> CyclePosition {
+        let split = try gymConfig().effectiveTrainingSplit
         let templates = try storedTemplatesOrLibrary()
         return CycleEngine.position(history: try allSets(), templates: templates,
-                                    calendar: calendar)
+                                    startingAt: split.startedAt, calendar: calendar)
     }
 
     /// Assembles a session for one day of the cycle.
@@ -43,6 +50,7 @@ extension TrainingStore {
         startedAt: Date = Date(),
         calendar: Calendar = .current
     ) throws -> Session {
+        let split = try gymConfig().effectiveTrainingSplit
         let templates = try storedTemplatesOrLibrary()
         let template = templates.first { $0.kind == kind }
             ?? DayTemplateLibrary.template(for: kind)
@@ -51,10 +59,13 @@ extension TrainingStore {
         let byID = Dictionary(uniqueKeysWithValues: stored.map { ($0.id, $0) })
 
         // Which side of a rotating slot is due depends on how many of this day
-        // have been completed, derived from history rather than stored.
+        // have been completed, derived from history rather than stored. Only
+        // sessions since the active split began count (#136), matching
+        // `cyclePosition()` — the same restart-on-change rule.
         let history = try allSets()
         let completed = CycleEngine.completedSessions(
-            of: kind, history: history, templates: templates, calendar: calendar
+            of: kind, history: history, templates: templates,
+            startingAt: split.startedAt, calendar: calendar
         )
 
         let sessionExercises = try template.slots.compactMap { slot -> SessionExercise? in
@@ -108,13 +119,22 @@ extension TrainingStore {
         )
     }
 
-    /// Stored templates, falling back to the seeded ones.
+    /// The active split's days, with any persisted per-template edit applied
+    /// over the top.
     ///
-    /// The fallback matters on a database written before templates existed:
-    /// the day still opens instead of coming up empty.
+    /// `dayTemplates()` has never had a UI write to it — the candidate-list
+    /// edit it was built for hasn't landed yet — but its contract already
+    /// promised "a template the user has since edited must not be reverted",
+    /// and that has to keep meaning something once which templates exist is a
+    /// per-person choice (#136) rather than always push/pull/legs: an edit
+    /// saved before a split existed, or against one day of it, is looked up by
+    /// id and preferred over the split's own baseline shape for that day.
     private func storedTemplatesOrLibrary() throws -> [DayTemplate] {
-        let stored = try dayTemplates()
-        return stored.isEmpty ? DayTemplateLibrary.all : stored
+        let split = try gymConfig().effectiveTrainingSplit
+        let overrides = Dictionary(
+            uniqueKeysWithValues: try dayTemplates().map { ($0.id, $0) }
+        )
+        return split.days.map { overrides[$0.id] ?? $0 }
     }
 }
 
@@ -197,11 +217,19 @@ extension TrainingStore {
     /// Reconstructed from sets rather than read from stored sessions, because
     /// there are no stored sessions — the sets are the record, and a day is
     /// what happened to be logged on it.
+    ///
+    /// Classified against every built-in shape plus the active split (#136),
+    /// not the active split alone: a lifter who switches from push/pull/legs
+    /// to upper/lower must not have last year's push days stop matching
+    /// anything just because push is no longer in rotation. A *previous*
+    /// custom split's days aren't recoverable this way once replaced — only
+    /// one split is kept — which is a real, narrower gap than losing the sets
+    /// themselves; the sets are never touched.
     public func trainingDays(calendar: Calendar = .current) throws -> [TrainingDay] {
         TrainingHistory.days(
             history: try allSets(),
             exercises: try exercises(),
-            templates: try storedTemplatesOrLibrary(),
+            templates: try storedTemplatesOrLibrary() + DayTemplateLibrary.allBuiltIn,
             calendar: calendar
         )
     }

@@ -147,4 +147,42 @@ final class GymConfigTests: XCTestCase {
         let decoded = try JSONDecoder().decode(GymConfig.self, from: "{}".data(using: .utf8)!)
         XCTAssertEqual(decoded, .standard)
     }
+
+    // MARK: - Training split (#136)
+
+    /// Nil is "nobody has picked yet", not "picked push/pull/legs" — a row
+    /// from before #136 has to land here, not be silently defaulted onto a
+    /// choice the person never made.
+    func testANewGymHasNoSplitUntilOneIsChosen() {
+        XCTAssertNil(GymConfig.standard.trainingSplit)
+    }
+
+    /// `effectiveTrainingSplit` is what every reader beyond the picker itself
+    /// should call — it's what keeps "nobody has picked" behaving exactly as
+    /// it always did (push/pull/legs) everywhere except the one screen that
+    /// needs to know the difference.
+    func testEffectiveSplitFallsBackToPushPullLegsWhenUnset() {
+        let split = GymConfig.standard.effectiveTrainingSplit
+        XCTAssertEqual(split.kind, .pushPullLegs)
+        XCTAssertEqual(split.days.map(\.kind), [.push, .pull, .legs])
+    }
+
+    /// An empty custom split — chosen but not yet given any days — is exactly
+    /// as unusable as no split at all, and must fall back the same way rather
+    /// than handing `CycleEngine` a rotation with nothing in it.
+    func testEffectiveSplitFallsBackWhenTheChosenSplitHasNoDays() {
+        var gym = GymConfig.standard
+        gym.trainingSplit = TrainingSplit(kind: .custom, days: [])
+        XCTAssertEqual(gym.effectiveTrainingSplit.kind, .pushPullLegs)
+    }
+
+    func testAChosenSplitSurvivesARoundTrip() throws {
+        var gym = GymConfig.standard
+        gym.trainingSplit = DayTemplateLibrary.split(
+            .upperLower, startedAt: Date(timeIntervalSince1970: 1000)
+        )
+        let data = try JSONEncoder().encode(gym)
+        let decoded = try JSONDecoder().decode(GymConfig.self, from: data)
+        XCTAssertEqual(decoded.trainingSplit, gym.trainingSplit)
+    }
 }
