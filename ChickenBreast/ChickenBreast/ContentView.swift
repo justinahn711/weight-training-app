@@ -47,6 +47,15 @@ struct ContentView: View {
     @State private var days: [TrainingDay] = []
     @State private var showingSettings = false
 
+    /// The rotation currently in play, used for day names and ordering
+    /// (#136). Read alongside `cycle` because both come from the same
+    /// `GymConfig` read and both drive the same screen.
+    @State private var activeSplit: TrainingSplit?
+    /// True until the split has been chosen once, on this store or a synced
+    /// one — `GymConfig.trainingSplit` is `nil` for exactly that reason.
+    /// Distinct from "chose push/pull/legs", which never sets this.
+    @State private var needsSplitSetup = false
+
     var body: some View {
         // Three durable destinations, each with a home rather than a toolbar
         // button (#112). The old bar gave Train, History, Progress, Volume and
@@ -65,6 +74,23 @@ struct ContentView: View {
                 .tabItem { Label("Progress", systemImage: "chart.xyaxis.line") }
         }
         .task { await openStore() }
+        // Asked once, on a store that has never had an answer — including a
+        // pre-#136 install updating into this feature, which reads the same
+        // as brand new (#136). Not dismissable by a swipe: the whole point is
+        // that this gets answered rather than skipped past.
+        .fullScreenCover(isPresented: $needsSplitSetup) {
+            if let store {
+                NavigationStack {
+                    TrainingSplitEditorView(
+                        store: store,
+                        current: nil,
+                        isOnboarding: true,
+                        onSave: saveInitialSplit
+                    )
+                }
+                .interactiveDismissDisabled()
+            }
+        }
         // Keyed on the store arriving, so this runs after SwiftUI has updated
         // for it — which is the point: Train is on screen and interactive
         // before anything reads every set ever logged.
@@ -350,7 +376,7 @@ struct ContentView: View {
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Resume \(workoutDraft.kind.rawValue.capitalized) workout")
+                            Text("Resume \(dayName(for: workoutDraft.kind)) workout")
                                 .font(.title3.bold())
                             Text("Your logged sets are saved")
                                 .font(.subheadline)
@@ -375,16 +401,16 @@ struct ContentView: View {
                 .accessibilityIdentifier("home.resume")
                 .accessibilityHint("Double tap to continue where you left off.")
             } else {
-                ForEach(orderedDays, id: \.self) { kind in
-                    let isNext = kind == cycle?.next
+                ForEach(orderedDays) { template in
+                    let isNext = template.kind == cycle?.next
                     Button {
-                        previewSession(kind, from: store)
+                        previewSession(template.kind, from: store)
                     } label: {
                         HStack {
-                            Text(kind.rawValue.capitalized)
+                            Text(template.name)
                                 .font(isNext ? .title.bold() : .title3.weight(.semibold))
                             Spacer()
-                            Text(subtitle(for: kind))
+                            Text(subtitle(for: template))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -406,7 +432,7 @@ struct ContentView: View {
                     // "Push" is the day; the subtitle beside it is context.
                     // Combined they read as one sentence, which is right for a
                     // reader and useless as a test handle — hence the id (#114).
-                    .accessibilityIdentifier("day.\(kind.rawValue)")
+                    .accessibilityIdentifier("day.\(template.kind.rawValue)")
                     .accessibilityHint(isNext ? "Next in your cycle. Double tap to review it."
                                               : "Double tap to review this workout.")
                     .disabled(store == nil)
@@ -422,9 +448,26 @@ struct ContentView: View {
     private func refresh() {
         guard let store else { return }
         cycle = try? store.cyclePosition()
+        activeSplit = try? store.gymConfig().effectiveTrainingSplit
         // Deliberately not surfaced: a reload after a session must not replace
         // a working screen with a startup failure.
         try? loadInsights(from: store)
+    }
+
+    /// Records the split chosen at first launch (#136).
+    ///
+    /// Reads the current config rather than starting from `.standard`, so
+    /// this can't silently discard a gym that arrived from CloudKit before
+    /// setup finished — unlikely on a genuinely fresh install, but this path
+    /// is also what a pre-#136 install updating into the feature runs.
+    private func saveInitialSplit(_ split: TrainingSplit) {
+        guard let store else { return }
+        var config = (try? store.gymConfig()) ?? .standard
+        config.trainingSplit = split
+        try? store.saveGymConfig(config)
+        GymSettings.shared.refresh(from: store)
+        needsSplitSetup = false
+        refresh()
     }
 
     /// Everything the Train screen does not need to become usable.
@@ -468,20 +511,34 @@ struct ContentView: View {
             : "Behind on \(list)"
     }
 
-    /// The due day first, then the rest of the cycle in order.
-    private var orderedDays: [DayKind] {
-        guard let next = cycle?.next else { return DayKind.allCases }
-        return [next, next.next, next.next.next]
+    /// The due day first, then the rest of the active split's rotation in
+    /// order (#136) — whatever its length, not always three.
+    private var orderedDays: [DayTemplate] {
+        let days = activeSplit?.days ?? DayTemplateLibrary.split(.pushPullLegs).days
+        guard let next = cycle?.next,
+              let index = days.firstIndex(where: { $0.kind == next }) else {
+            return days
+        }
+        return Array(days[index...] + days[..<index])
     }
 
-    private func subtitle(for kind: DayKind) -> String {
-        let slots = DayTemplateLibrary.template(for: kind).slots.count
-        guard let days = cycle?.daysSince(kind) else { return "\(slots) slots" }
+    private func subtitle(for template: DayTemplate) -> String {
+        guard let days = cycle?.daysSince(template.kind) else {
+            return "\(template.slots.count) slots"
+        }
         switch days {
         case 0:  return "today"
         case 1:  return "yesterday"
         default: return "\(days) days ago"
         }
+    }
+
+    /// The active split's own name for a day, falling back to the kind's own
+    /// word for a draft resumed from a split no longer active (#136) — a
+    /// draft always finishes under the shape it was started with; only the
+    /// label here has nothing better to read.
+    private func dayName(for kind: DayKind) -> String {
+        activeSplit?.days.first { $0.kind == kind }?.name ?? kind.rawValue.capitalized
     }
 
     @ViewBuilder
@@ -491,6 +548,7 @@ struct ContentView: View {
         } else if let plannedSession {
             WorkoutPreviewView(
                 session: plannedSession,
+                dayName: dayName(for: plannedSession.kind),
                 library: previewLibrary,
                 onMove: movePlannedExercises,
                 onRemove: removePlannedExercises,
@@ -656,6 +714,12 @@ struct ContentView: View {
             // Progress before anyone asked to see them — and that cost grows
             // with exactly the thing a working app accumulates (#115).
             cycle = try opened.cyclePosition()
+            let gym = try opened.gymConfig()
+            activeSplit = gym.effectiveTrainingSplit
+            // Read before `store` is set, so the cover is already primed by
+            // the frame Train appears — asked once, the moment there's a
+            // screen underneath it to ask over (#136).
+            needsSplitSetup = gym.trainingSplit == nil
             store = opened
 
             // Recovery arrives after the screen does. It's context, never a
@@ -684,6 +748,11 @@ struct ContentView: View {
 /// written from here.
 private struct WorkoutPreviewView: View {
     let session: Session
+    /// The active split's name for this day (#136) — not derived from
+    /// `session.kind.rawValue.capitalized` here, because a custom day's
+    /// kind can be any typed name and this screen has its own chance to get
+    /// the casing right instead of leaning on `.capitalized`.
+    let dayName: String
     let library: [Exercise]
     let onMove: (IndexSet, Int) -> Void
     let onRemove: (IndexSet) -> Void
@@ -713,7 +782,7 @@ private struct WorkoutPreviewView: View {
                 Text("Changes affect this workout only. Your recurring plan stays the same.")
             }
         }
-        .navigationTitle("\(session.kind.rawValue.capitalized) workout")
+        .navigationTitle("\(dayName) workout")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {

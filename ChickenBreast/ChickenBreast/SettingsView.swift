@@ -63,6 +63,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             if store != nil {
+                trainingSplitSection
                 gymSection
                 plateSection
             }
@@ -200,6 +201,41 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Training split (#136)
+
+    private var trainingSplitSection: some View {
+        Section {
+            NavigationLink {
+                if let store {
+                    TrainingSplitEditorView(
+                        store: store,
+                        current: gym.trainingSplit,
+                        onSave: saveSplit
+                    )
+                }
+            } label: {
+                LabeledContent("Split", value: gym.effectiveTrainingSplit.kind.displayName)
+            }
+            .frame(minHeight: 44)
+        } header: {
+            Text("Training")
+        } footer: {
+            Text("Changing this restarts your rotation at day one. Nothing you've already logged is affected — a set belongs to the exercise and the day it was performed, not to the split that suggested it.")
+        }
+    }
+
+    /// Writes a newly chosen split through the same path as every other gym
+    /// edit (#136), so it gets the same synced-singleton machinery — no new
+    /// model, no new conflict rule. Building from `gym` rather than a bare
+    /// `GymConfig(trainingSplit:)` is what keeps this from being the same
+    /// clobber `unitBinding` had to be fixed for: only the split changes here,
+    /// the rack and unit come along exactly as they were.
+    private func saveSplit(_ split: TrainingSplit) {
+        var updated = gym
+        updated.trainingSplit = split
+        commit(updated)
+    }
+
     // MARK: - Gym
 
     private var gymSection: some View {
@@ -294,7 +330,13 @@ struct SettingsView: View {
                 // plates, which is not a thing anyone owns — the honest move is
                 // to hand back the standard rack of the new world and let it be
                 // corrected from there.
-                commit(GymConfig(unit: unit))
+                //
+                // The split is carried through explicitly (#136) rather than
+                // left at `GymConfig`'s default `nil` — a bare
+                // `GymConfig(unit:)` here would silently reset "what do you
+                // train" every time someone toggles pounds/kilograms, since
+                // `commit` writes the whole row.
+                commit(GymConfig(unit: unit, trainingSplit: gym.trainingSplit))
             }
         )
     }
@@ -341,5 +383,282 @@ struct SettingsView: View {
         // follower, so no gym save can change which lifts are exceptions — the
         // recount was provably a no-op, and it cost a second full fetch and
         // decode of the library on the main actor for every plate toggle.
+    }
+}
+
+// MARK: - Training split picker (#136)
+
+/// Choosing what to train: push/pull/legs, upper/lower, full body, or a
+/// custom set of named days.
+///
+/// Shared between two contexts with the same content and different framing —
+/// first launch (`isOnboarding`, presented as a full-screen cover with no way
+/// out but choosing) and Settings (pushed, with the back button as the
+/// natural cancel). Saving never touches a logged set: it only changes what
+/// `TrainingStore.cyclePosition()` and `startSession(kind:)` propose next.
+struct TrainingSplitEditorView: View {
+    let store: TrainingStore
+    let current: TrainingSplit?
+    var isOnboarding: Bool = false
+    let onSave: (TrainingSplit) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedKind: TrainingSplitKind
+    @State private var customDays: [DayTemplate]
+    @State private var exercises: [Exercise] = []
+    @State private var editingDay: DayTemplate?
+    @State private var addingDay = false
+
+    init(
+        store: TrainingStore,
+        current: TrainingSplit?,
+        isOnboarding: Bool = false,
+        onSave: @escaping (TrainingSplit) -> Void
+    ) {
+        self.store = store
+        self.current = current
+        self.isOnboarding = isOnboarding
+        self.onSave = onSave
+        _selectedKind = State(initialValue: current?.kind ?? .pushPullLegs)
+        _customDays = State(initialValue: current?.kind == .custom ? (current?.days ?? []) : [])
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(TrainingSplitKind.allCases, id: \.self) { kind in
+                    Button {
+                        selectedKind = kind
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(kind.displayName).foregroundStyle(.primary)
+                                Text(subtitle(for: kind))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if selectedKind == kind {
+                                Image(systemName: "checkmark")
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                Text(isOnboarding ? "What do you train?" : "Split")
+            }
+
+            if selectedKind == .custom {
+                customDaysSection
+            }
+        }
+        .navigationTitle(isOnboarding ? "Choose your split" : "Training split")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(isOnboarding)
+        .safeAreaInset(edge: .bottom) {
+            Button(action: save) {
+                Text(isOnboarding ? "Get started" : "Save")
+                    .font(.title3.bold())
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canSave)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(.bar)
+        }
+        .task {
+            exercises = (try? store.exercises()) ?? []
+        }
+        .sheet(item: $editingDay) { day in
+            CustomDayEditorSheet(
+                exercises: exercises,
+                initialName: day.name,
+                initialSelection: Set(day.slots.flatMap(\.candidateExerciseIDs)),
+                existingNames: Set(customDays.filter { $0.id != day.id }.map(\.name)),
+                onSave: { name, selectedIDs in
+                    replaceDay(withID: day.id, name: name, selectedIDs: selectedIDs)
+                }
+            )
+        }
+        .sheet(isPresented: $addingDay) {
+            CustomDayEditorSheet(
+                exercises: exercises,
+                initialName: DayTemplateLibrary.uniqueDayName(
+                    "Day \(customDays.count + 1)", among: customDays.map(\.name)
+                ),
+                initialSelection: [],
+                existingNames: Set(customDays.map(\.name)),
+                onSave: { name, selectedIDs in
+                    let chosen = exercises.filter { selectedIDs.contains($0.id) }
+                    customDays.append(DayTemplateLibrary.customDay(name: name, exercises: chosen))
+                }
+            )
+        }
+    }
+
+    private var customDaysSection: some View {
+        Section {
+            ForEach(customDays) { day in
+                Button {
+                    editingDay = day
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(day.name).foregroundStyle(.primary)
+                            Text("\(day.slots.count) exercise\(day.slots.count == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .onDelete { offsets in customDays.remove(atOffsets: offsets) }
+
+            Button {
+                addingDay = true
+            } label: {
+                Label("Add day", systemImage: "plus")
+            }
+            .frame(minHeight: 44)
+        } header: {
+            Text("Your days")
+        } footer: {
+            Text("Name each day and pick what it trains. At least one day with one exercise is needed to save.")
+        }
+    }
+
+    private func replaceDay(withID id: UUID, name: String, selectedIDs: Set<UUID>) {
+        guard let index = customDays.firstIndex(where: { $0.id == id }) else { return }
+        let chosen = exercises.filter { selectedIDs.contains($0.id) }
+        customDays[index] = DayTemplateLibrary.customDay(name: name, exercises: chosen)
+    }
+
+    private var canSave: Bool {
+        selectedKind == .custom ? !customDays.isEmpty : true
+    }
+
+    private func save() {
+        let split = selectedKind == .custom
+            ? TrainingSplit(kind: .custom, days: customDays)
+            : DayTemplateLibrary.split(selectedKind)
+        onSave(split)
+        dismiss()
+    }
+
+    private func subtitle(for kind: TrainingSplitKind) -> String {
+        switch kind {
+        case .custom:
+            return "Name your own days"
+        default:
+            return DayTemplateLibrary.split(kind).days.map(\.name).joined(separator: ", ")
+        }
+    }
+}
+
+/// Names a day and picks what it trains, for one day of a custom split.
+private struct CustomDayEditorSheet: View {
+    let exercises: [Exercise]
+    let initialName: String
+    let initialSelection: Set<UUID>
+    /// Names already used by other days in this split, so this one can't be
+    /// saved onto the same `DayKind` as another (#136).
+    let existingNames: Set<String>
+    let onSave: (String, Set<UUID>) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var selectedIDs: Set<UUID>
+
+    init(
+        exercises: [Exercise],
+        initialName: String,
+        initialSelection: Set<UUID>,
+        existingNames: Set<String>,
+        onSave: @escaping (String, Set<UUID>) -> Void
+    ) {
+        self.exercises = exercises
+        self.initialName = initialName
+        self.initialSelection = initialSelection
+        self.existingNames = existingNames
+        self.onSave = onSave
+        _name = State(initialValue: initialName)
+        _selectedIDs = State(initialValue: initialSelection)
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSave: Bool {
+        !trimmedName.isEmpty && !selectedIDs.isEmpty && !existingNames.contains(trimmedName)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    TextField("Day name", text: $name)
+                } footer: {
+                    if !trimmedName.isEmpty && existingNames.contains(trimmedName) {
+                        Text("Another day is already named \(trimmedName).")
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section("Exercises") {
+                    ForEach(exercises) { exercise in
+                        Button {
+                            if selectedIDs.contains(exercise.id) {
+                                selectedIDs.remove(exercise.id)
+                            } else {
+                                selectedIDs.insert(exercise.id)
+                            }
+                        } label: {
+                            HStack {
+                                Text(exercise.name).foregroundStyle(.primary)
+                                Spacer()
+                                if selectedIDs.contains(exercise.id) {
+                                    Image(systemName: "checkmark")
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(.tint)
+                                }
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .navigationTitle("Day")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        onSave(trimmedName, selectedIDs)
+                        dismiss()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+        }
     }
 }
