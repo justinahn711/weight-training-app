@@ -42,6 +42,15 @@ struct SessionActivityAttributes: ActivityAttributes {
         var targetReps: Int
         var targetRPE: Double?
 
+        /// Stable identity for the currently offered Log action. The intent
+        /// also uses it as the persisted set id, making a repeated delivery
+        /// idempotent.
+        var logActionID: UUID? = nil
+
+        /// The lock-screen set which can still be taken back. Optional fields
+        /// keep activities created by an older build decodable after upgrade.
+        var lastLoggedSetID: UUID? = nil
+
         /// Whether there's a target to log at all. A first-ever lift has none,
         /// and the button hides rather than inventing one.
         var canLogTarget: Bool { targetPounds != nil }
@@ -201,6 +210,15 @@ final class SessionActivityController {
                 )
             )
         }
+    }
+
+    /// The system's copy is authoritative for actions performed while locked.
+    /// Query ActivityKit rather than the controller's cached reference because
+    /// an intent can run in a different process lifetime.
+    func currentState() -> SessionActivityAttributes.ContentState? {
+        Activity<SessionActivityAttributes>.activities.first {
+            $0.attributes.workoutID == workoutID
+        }?.content.state
     }
 
     /// Takes the activity down.

@@ -217,6 +217,25 @@ public final class TrainingStore {
         try commit()
     }
 
+    /// Persists a set once for a caller-supplied identity.
+    ///
+    /// Live Activity buttons can be delivered more than once when someone
+    /// taps through a slow lock-screen refresh. The action uses its stable id
+    /// as the set id, so replaying that action is a successful no-op instead
+    /// of silently adding volume twice.
+    @discardableResult
+    public func logIfAbsent(_ record: SetRecord) throws -> Bool {
+        let id = record.id
+        var descriptor = FetchDescriptor<StoredSetLog>(
+            predicate: #Predicate { $0.id == id }
+        )
+        descriptor.fetchLimit = 1
+        guard try context.fetch(descriptor).isEmpty else { return false }
+        context.insert(StoredSetLog(record))
+        try commit()
+        return true
+    }
+
     /// Corrects a previously logged set (#61).
     ///
     /// Until this existed, `undoLastSet` was the only way to take a set back
