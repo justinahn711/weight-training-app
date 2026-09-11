@@ -137,6 +137,75 @@ final class AccessibilityAuditTests: XCTestCase {
         undo.tap()
     }
 
+    /// Back and Next exercise used to sit side by side, adjacent, and moving
+    /// in opposite directions (#177). Both already carry 44pt hit areas from
+    /// #114, so this guards the thing #114 didn't: that a mis-tap between
+    /// them isn't one slide of a thumb away. Back is now a muted control on
+    /// its own row, entirely above the full-width Next exercise / Finish
+    /// workout row below it.
+    func testBackAndNextExerciseAreSeparated() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let next = app.buttons["session.exercise.next"]
+        XCTAssertTrue(next.waitForExistence(timeout: 20))
+        XCTAssertFalse(
+            app.buttons["session.exercise.previous"].exists,
+            "Back should not appear on the first exercise — there is nowhere to go back to"
+        )
+
+        next.tap()
+
+        let back = app.buttons["session.exercise.previous"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "Back should appear once there is a prior exercise")
+        XCTAssertTrue(next.exists)
+
+        for button in [back, next] {
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+
+        // Separated by row, not merely by width: Back sits entirely above
+        // Next exercise rather than beside it, where a thumb sliding to the
+        // common action could clip the correction instead.
+        XCTAssertLessThanOrEqual(
+            back.frame.maxY, next.frame.minY,
+            "Back and Next exercise should occupy separate rows, not sit side by side"
+        )
+    }
+
+    /// The last exercise swaps Next exercise for Finish workout (#177); the
+    /// separation from Back has to hold for that swap too, not just the
+    /// common case checked above.
+    func testFinishWorkoutReplacesNextOnLastExerciseAndStaysSeparatedFromBack() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let next = app.buttons["session.exercise.next"]
+        XCTAssertTrue(next.waitForExistence(timeout: 20))
+
+        // Push has six slots; five taps of Next reaches the last exercise,
+        // where the footer's Finish workout replaces it.
+        for _ in 0..<5 {
+            XCTAssertTrue(next.waitForExistence(timeout: 5) && next.isHittable)
+            next.tap()
+        }
+
+        let finish = app.buttons["session.finish.footer"]
+        XCTAssertTrue(finish.waitForExistence(timeout: 5),
+                      "Finish workout should replace Next exercise on the last exercise")
+        XCTAssertFalse(next.exists)
+
+        let back = app.buttons["session.exercise.previous"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(
+            back.frame.maxY, finish.frame.minY,
+            "Back and the footer's Finish workout should stay on separate rows"
+        )
+    }
+
     /// Selection on the rep and RPE chips has to survive being unseen.
     func testChipSelectionIsExposedAsATrait() throws {
         let app = launch()
