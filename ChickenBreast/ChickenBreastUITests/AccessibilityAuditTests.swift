@@ -221,6 +221,22 @@ final class AccessibilityAuditTests: XCTestCase {
         )
     }
 
+    func testHistoryMonthNavigationHasFullTouchTargets() throws {
+        let app = launch()
+        XCTAssertTrue(try reachTrainScreen(app))
+
+        let history = app.tabBars.buttons["History"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5) && history.isHittable)
+        history.tap()
+
+        for identifier in ["history.month.previous", "history.month.next"] {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+    }
+
     /// Answers first-launch setup when it covers Train, then waits for a day
     /// or resumable workout that can actually receive a tap.
     @discardableResult

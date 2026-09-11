@@ -170,6 +170,7 @@ private struct MonthHeader: View {
             // in a row flanked by 20pt of horizontal padding either side —
             // salvaged from #153, which main never had a hit-area fix for (#114).
             .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
             .accessibilityLabel("Previous month")
             .accessibilityIdentifier("history.month.previous")
             Spacer()
@@ -180,6 +181,7 @@ private struct MonthHeader: View {
                 Image(systemName: "chevron.right").font(.body.weight(.semibold))
             }
             .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
             .accessibilityLabel("Next month")
             .accessibilityIdentifier("history.month.next")
             .disabled(!canGoForward)
