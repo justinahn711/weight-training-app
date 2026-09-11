@@ -313,6 +313,7 @@ struct SessionView: View {
                 .accessibilityLabel("Choose exercise")
                 .accessibilityValue("\(model.progressLabel), \(exercise.exercise.name)")
                 .accessibilityHint("Shows every exercise in this workout")
+                .accessibilityIdentifier("session.exercise.choose")
                 if let slot = exercise.slot {
                     // The slot is the job. Naming it makes a swap legible as a
                     // substitution rather than as abandoning the day's shape.
@@ -333,6 +334,7 @@ struct SessionView: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
                 .accessibilityLabel("Finish workout")
+                .accessibilityIdentifier("session.finish.header")
             }
             Button {
                 swapping = exercise
@@ -350,6 +352,10 @@ struct SessionView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .accessibilityLabel("Swap \(exercise.exercise.name)")
+            .accessibilityHint("Chooses a different exercise for this slot")
+            .accessibilityIdentifier("session.exercise.swap")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
@@ -514,7 +520,10 @@ struct SessionView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Configure \(exercise.exercise.name)")
+            .accessibilityValue(configSummary(exercise))
             .accessibilityHint("Corrects what the app assumes about this lift")
+            .accessibilityIdentifier("session.exercise.configure")
 
             // Keeps the once-ever tap from reading as a third row of the pair
             // below, which are read every set and are not controls at all.
