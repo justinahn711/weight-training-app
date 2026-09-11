@@ -52,6 +52,24 @@ struct SessionView: View {
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
+        sessionContent
+            // `confirmationDialog` can adapt to an anchored popover. The
+            // partial-finish checkpoint must stay thumb-reachable on every
+            // iPhone, so use a real bottom sheet instead (#158).
+            .sheet(isPresented: $showingPartialFinishConfirmation) {
+                PartialFinishSheet(
+                    onFinish: {
+                        showingPartialFinishConfirmation = false
+                        onFinish()
+                    },
+                    onKeepTraining: {
+                        showingPartialFinishConfirmation = false
+                    }
+                )
+            }
+    }
+
+    private var sessionContent: some View {
         GeometryReader { geometry in
             if let exercise = model.current {
                 if verticalSizeClass == .compact {
@@ -157,16 +175,6 @@ struct SessionView: View {
             Button("OK") { model.dismissFailure() }
         } message: {
             Text(model.failure ?? "")
-        }
-        .confirmationDialog(
-            "Finish this workout?",
-            isPresented: $showingPartialFinishConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Finish workout") { onFinish() }
-            Button("Keep training", role: .cancel) {}
-        } message: {
-            Text("Your logged sets will stay saved. Exercises you have not started will be skipped.")
         }
     }
 
@@ -821,6 +829,51 @@ struct SessionView: View {
         } else {
             onFinish()
         }
+    }
+}
+
+private struct PartialFinishSheet: View {
+    let onFinish: () -> Void
+    let onKeepTraining: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                Image(systemName: "checkmark.circle")
+                    .font(.largeTitle)
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+
+                VStack(spacing: 8) {
+                    Text("Finish this workout?")
+                        .font(.title2.bold())
+                    Text("Your logged sets stay saved. Unstarted exercises will be skipped.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                Button(action: onFinish) {
+                    Text("Finish workout")
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("finish.confirmation.finish")
+
+                Button(action: onKeepTraining) {
+                    Text("Keep training")
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("finish.confirmation.cancel")
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("finish.confirmation.sheet")
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
