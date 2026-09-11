@@ -369,28 +369,36 @@ struct ExerciseConfigView: View {
                     }
                 }
 
-                Section {
-                    Toggle("Set my own rest time", isOn: $overridesRest.animation(.snappy))
+                // Only when there is somewhere for the answer to go. The
+                // save path needs `SessionViewModel`, which #174 did not own,
+                // so the closure is nil at the one call site that exists
+                // today — and a toggle that takes an answer and silently
+                // discards it is worse than no toggle. The section appears
+                // the moment the call site passes a handler (#174).
+                if onSaveRestOverride != nil {
+                    Section {
+                        Toggle("Set my own rest time", isOn: $overridesRest.animation(.snappy))
 
-                    if overridesRest {
-                        ChoiceRow(
-                            caption: "Rest between sets",
-                            values: Self.restChoices,
-                            isSelected: { $0 == restSeconds },
-                            label: restLabel,
-                            onSelect: { restSeconds = $0 }
-                        )
+                        if overridesRest {
+                            ChoiceRow(
+                                caption: "Rest between sets",
+                                values: Self.restChoices,
+                                isSelected: { $0 == restSeconds },
+                                label: restLabel,
+                                onSelect: { restSeconds = $0 }
+                            )
+                        }
+                    } header: {
+                        Text("Rest")
+                    } footer: {
+                        // The gym report behind #174 was "keep the defaults,
+                        // just let me change one" — so the footer always names
+                        // what this lift would otherwise get, whether or not
+                        // it's currently overridden.
+                        Text(overridesRest
+                             ? "Otherwise defaults to \(restLabel(defaultRestSeconds)) for a lift like this."
+                             : "Defaults to \(restLabel(defaultRestSeconds)) — 3 minutes for compound lifts, 90 seconds for isolation work.")
                     }
-                } header: {
-                    Text("Rest")
-                } footer: {
-                    // The gym report behind #174 was "keep the defaults, just
-                    // let me change one" — so the footer always names what
-                    // this lift would otherwise get, whether or not it's
-                    // currently overridden.
-                    Text(overridesRest
-                         ? "Otherwise defaults to \(restLabel(defaultRestSeconds)) for a lift like this."
-                         : "Defaults to \(restLabel(defaultRestSeconds)) — 3 minutes for compound lifts, 90 seconds for isolation work.")
                 }
             }
             .navigationTitle(exercise.name)
