@@ -801,6 +801,15 @@ struct SessionView: View {
                 // set; it exists for an extra rep beyond the ramp, or for a
                 // lift the ramp doesn't offer one on at all, so its name says
                 // "in addition to" rather than "instead of".
+                //
+                // Deliberately does *not* collapse the plate row the way the
+                // working `Log Set` button does (#170). Ramping is a sequence
+                // of different weights built one after another; a lifter
+                // mid-ramp who is using the plate buttons to move from rung to
+                // rung would have the row slammed shut after every single one.
+                // A working set is a destination — the weight is settled once
+                // logged. A warmup set is a waypoint, and the controls that
+                // got you there are exactly what gets you to the next one.
                 Button("Extra warmup") { model.logSet(isWarmup: true) }
                     .font(.subheadline)
                     .frame(minHeight: 44)
@@ -808,26 +817,56 @@ struct SessionView: View {
                     .accessibilityHint("Logs the current values as an extra warmup set")
                     .accessibilityIdentifier("session.log-warmup")
                 Spacer()
+                // `Back` stays paired with `Extra warmup` on this secondary
+                // row instead of beside `Next exercise` (#177). It is muted —
+                // plain text, secondary colour, no fill — because it is the
+                // correction, not the common action, and correcting a
+                // direction that shares a row, a style and a thumb's-width
+                // of space with the control that moves the opposite way is
+                // exactly how a rest-set mis-tap costs a navigation.
                 if model.session.currentIndex > 0 {
-                    Button("Back") { model.goBack() }
-                        .font(.subheadline)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("session.exercise.previous")
+                    Button {
+                        model.goBack()
+                    } label: {
+                        Label("Back", systemImage: "chevron.backward")
+                            .font(.subheadline)
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("session.exercise.previous")
                 }
-                if !model.session.isOnLastExercise {
-                    Button("Next exercise") { model.advance() }
+            }
+
+            // Its own row, full width, bordered rather than plain text: this
+            // is the common action (#177), the one advancing the whole
+            // session, so it earns a visual weight distinct from — and
+            // physically apart from — the correction above. `Finish workout`
+            // takes the identical treatment on the last exercise, so the
+            // swap changes only the label and destination, never the
+            // hierarchy the lifter has learned to trust.
+            if !model.session.isOnLastExercise {
+                Button {
+                    model.advance()
+                } label: {
+                    Label("Next exercise", systemImage: "chevron.forward")
                         .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
                         .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("session.exercise.next")
-                } else {
-                    Button("Finish workout", action: requestFinish)
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("session.finish.footer")
                 }
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .accessibilityIdentifier("session.exercise.next")
+            } else {
+                Button(action: requestFinish) {
+                    Text("Finish workout")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .accessibilityIdentifier("session.finish.footer")
             }
         }
         .padding(.horizontal, isCompact ? 12 : 20)
