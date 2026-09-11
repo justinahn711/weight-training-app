@@ -109,12 +109,35 @@ private struct SessionButtons: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            if !isActivelyResting,
-               state.canLogTarget,
-               let pounds = state.targetPounds,
-               let workoutID,
-               let actionID = state.logActionID {
+        if isActivelyResting, let workoutID {
+            VStack(spacing: 5) {
+                Text("Log returns when rest ends")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    if let setID = state.lastLoggedSetID {
+                        Button(intent: UndoLiveSetIntent(workoutID: workoutID, setID: setID)) {
+                            Label("Undo set", systemImage: "arrow.uturn.backward")
+                                .font(.caption.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    Button(intent: SkipRestIntent(workoutID: workoutID)) {
+                        Label("End rest", systemImage: "forward.fill")
+                            .font(.caption.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        } else if state.canLogTarget,
+                  let pounds = state.targetPounds,
+                  let workoutID,
+                  let actionID = state.logActionID {
+            HStack(spacing: 8) {
                 Button(intent: LogTargetSetIntent(
                     exerciseID: state.exerciseID,
                     pounds: pounds,
@@ -129,29 +152,14 @@ private struct SessionButtons: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-            } else if !isActivelyResting {
-                // A first-ever lift has no target, so there is nothing this
-                // button could honestly log.
-                Text("Open the app to log the first set")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
             }
-
-            if isActivelyResting, let workoutID {
-                if let setID = state.lastLoggedSetID {
-                    Button(intent: UndoLiveSetIntent(workoutID: workoutID, setID: setID)) {
-                        Label("Undo", systemImage: "arrow.uturn.backward")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
-                }
-                Button(intent: SkipRestIntent(workoutID: workoutID)) {
-                    Label("Skip", systemImage: "forward.fill")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-            }
+        } else {
+            // A first-ever lift has no target, so there is nothing this
+            // button could honestly log.
+            Text("Open the app to log the first set")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
         }
     }
 }
