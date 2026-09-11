@@ -18,6 +18,7 @@ struct SessionView: View {
     private var gym: GymSettings { .shared }
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
 
     @State var model: SessionViewModel
     let onFinish: () -> Void
@@ -93,12 +94,17 @@ struct SessionView: View {
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
             model.loadSuggestionContext()
-            // The lock screen is only useful while a session is open, which is
-            // exactly the span this view is on screen for (#23).
-            model.publishActivity()
+            // A relaunch can arrive with a lock-screen set and timer already
+            // in ActivityKit. Adopt those before publishing so this view never
+            // replaces them with the draft's deliberately transient state.
+            model.reconcileLiveActivityActions()
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            model.reconcileLiveActivityActions()
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {

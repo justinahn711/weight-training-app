@@ -124,6 +124,25 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(reloaded.last?.rpe, RPE(9.5), "half-step RPE preserved")
     }
 
+    func testLoggingTheSameActionTwicePersistsOneSet() throws {
+        let exercise = inclinePress()
+        let actionID = UUID()
+        let record = SetRecord(
+            id: actionID,
+            exerciseID: exercise.id,
+            load: Load(70),
+            reps: 10,
+            rpe: RPE(8),
+            performedAt: Date(timeIntervalSince1970: 1_760_000_000)
+        )
+        let store = try reopen()
+        try store.upsert(exercise)
+
+        XCTAssertTrue(try store.logIfAbsent(record))
+        XCTAssertFalse(try store.logIfAbsent(record))
+        XCTAssertEqual(try store.sets(forExercise: exercise.id), [record])
+    }
+
     /// A machine measured once must not go back to "unknown" on relaunch —
     /// that's the whole point of storing the loading config (#39).
     func testMeasuredLoadingConfigSurvivesRelaunch() throws {

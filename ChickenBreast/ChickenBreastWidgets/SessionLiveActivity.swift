@@ -27,7 +27,11 @@ struct SessionLiveActivity: Widget {
                     dayKind: context.attributes.dayKind,
                     isStale: context.isStale
                 )
-                SessionButtons(state: context.state)
+                SessionButtons(
+                    state: context.state,
+                    workoutID: context.attributes.workoutID,
+                    isStale: context.isStale
+                )
             }
                 .padding()
                 .activityBackgroundTint(.black.opacity(0.5))
@@ -58,7 +62,11 @@ struct SessionLiveActivity: Widget {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        SessionButtons(state: context.state)
+                        SessionButtons(
+                            state: context.state,
+                            workoutID: context.attributes.workoutID,
+                            isStale: context.isStale
+                        )
                     }
                 }
             } compactLeading: {
@@ -93,22 +101,35 @@ struct SessionLiveActivity: Widget {
 /// process without unlocking or foregrounding anything.
 private struct SessionButtons: View {
     let state: SessionActivityAttributes.ContentState
+    let workoutID: String?
+    let isStale: Bool
+
+    private var isActivelyResting: Bool {
+        state.isResting && !isStale
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            if state.canLogTarget, let pounds = state.targetPounds {
+            if !isActivelyResting,
+               state.canLogTarget,
+               let pounds = state.targetPounds,
+               let workoutID,
+               let actionID = state.logActionID {
                 Button(intent: LogTargetSetIntent(
                     exerciseID: state.exerciseID,
                     pounds: pounds,
                     reps: state.targetReps,
-                    rpe: state.targetRPE
+                    rpe: state.targetRPE,
+                    workoutID: workoutID,
+                    actionID: actionID
                 )) {
-                    Label("Log set", systemImage: "plus.circle.fill")
+                    Label("Log \(state.targetLine)", systemImage: "plus.circle.fill")
                         .font(.caption.weight(.semibold))
+                        .lineLimit(1)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-            } else {
+            } else if !isActivelyResting {
                 // A first-ever lift has no target, so there is nothing this
                 // button could honestly log.
                 Text("Open the app to log the first set")
@@ -117,8 +138,15 @@ private struct SessionButtons: View {
                     .frame(maxWidth: .infinity)
             }
 
-            if state.isResting {
-                Button(intent: SkipRestIntent()) {
+            if isActivelyResting, let workoutID {
+                if let setID = state.lastLoggedSetID {
+                    Button(intent: UndoLiveSetIntent(workoutID: workoutID, setID: setID)) {
+                        Label("Undo", systemImage: "arrow.uturn.backward")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Button(intent: SkipRestIntent(workoutID: workoutID)) {
                     Label("Skip", systemImage: "forward.fill")
                         .font(.caption.weight(.semibold))
                 }

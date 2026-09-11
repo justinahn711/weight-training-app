@@ -35,22 +35,40 @@ struct LogTargetSetIntent: LiveActivityIntent {
     @Parameter(title: "Weight") var pounds: Double
     @Parameter(title: "Reps") var reps: Int
     @Parameter(title: "RPE") var rpe: Double?
+    @Parameter(title: "Workout") var workoutID: String
+    @Parameter(title: "Action") var actionID: String
 
     init() {}
 
-    init(exerciseID: UUID, pounds: Double, reps: Int, rpe: Double?) {
+    init(
+        exerciseID: UUID,
+        pounds: Double,
+        reps: Int,
+        rpe: Double?,
+        workoutID: String,
+        actionID: UUID
+    ) {
         self.exerciseID = exerciseID.uuidString
         self.pounds = pounds
         self.reps = reps
         self.rpe = rpe
+        self.workoutID = workoutID
+        self.actionID = actionID.uuidString
     }
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        guard let id = UUID(uuidString: exerciseID) else { return .result() }
+        guard let id = UUID(uuidString: exerciseID),
+              let setID = UUID(uuidString: actionID),
+              let activity = SessionActivityRefresh.current(workoutID: workoutID),
+              activity.content.state.logActionID == setID,
+              activity.content.state.restEndsAt.map({ $0 <= Date() }) ?? true else {
+            return .result()
+        }
 
         let store = try AppStore.shared.store()
         let record = SetRecord(
+            id: setID,
             exerciseID: id,
             load: Load(pounds),
             reps: reps,
@@ -58,13 +76,15 @@ struct LogTargetSetIntent: LiveActivityIntent {
             isWarmup: false,
             performedAt: Date()
         )
-        try store.log(record)
+        let inserted = try store.logIfAbsent(record)
+        guard inserted else { return .result() }
 
         // The lock screen has to reflect the tap immediately: rest restarts and
         // the set count moves. Nothing else is watching — the session screen
         // isn't on screen, or the phone wouldn't be locked.
         await SessionActivityRefresh.afterLoggedSet(
-            exerciseID: id,
+            workoutID: workoutID,
+            setID: setID,
             restEndsAt: record.performedAt.addingTimeInterval(
                 (try? store.exercise(id: id))?.restTarget ?? 180
             )
@@ -79,11 +99,45 @@ struct SkipRestIntent: LiveActivityIntent {
     static var description = IntentDescription("Ends the current rest.")
     static var openAppWhenRun: Bool = false
 
+    @Parameter(title: "Workout") var workoutID: String
+
     init() {}
+
+    init(workoutID: String) {
+        self.workoutID = workoutID
+    }
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        await SessionActivityRefresh.clearRest()
+        await SessionActivityRefresh.clearRest(workoutID: workoutID)
+        return .result()
+    }
+}
+
+/// Takes back only the set most recently logged from this Live Activity.
+struct UndoLiveSetIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Undo the last set"
+    static var description = IntentDescription("Removes the set just logged from the lock screen.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Workout") var workoutID: String
+    @Parameter(title: "Set") var setID: String
+
+    init() {}
+
+    init(workoutID: String, setID: UUID) {
+        self.workoutID = workoutID
+        self.setID = setID.uuidString
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        guard let id = UUID(uuidString: setID),
+              let activity = SessionActivityRefresh.current(workoutID: workoutID),
+              activity.content.state.lastLoggedSetID == id else { return .result() }
+        let store = try AppStore.shared.store()
+        _ = try store.deleteSet(id: id)
+        await SessionActivityRefresh.afterUndo(workoutID: workoutID, setID: id)
         return .result()
     }
 }
@@ -97,22 +151,41 @@ struct SkipRestIntent: LiveActivityIntent {
 @MainActor
 enum SessionActivityRefresh {
 
-    private static var current: Activity<SessionActivityAttributes>? {
-        Activity<SessionActivityAttributes>.activities.first
+    static func current(workoutID: String) -> Activity<SessionActivityAttributes>? {
+        Activity<SessionActivityAttributes>.activities.first {
+            $0.attributes.workoutID == workoutID
+        }
     }
 
-    static func afterLoggedSet(exerciseID: UUID, restEndsAt: Date) async {
-        guard let activity = current else { return }
+    static func afterLoggedSet(
+        workoutID: String,
+        setID: UUID,
+        restEndsAt: Date
+    ) async {
+        guard let activity = current(workoutID: workoutID) else { return }
         var state = activity.content.state
         state.setsLogged += 1
         state.restEndsAt = restEndsAt
+        state.lastLoggedSetID = setID
+        state.logActionID = UUID()
         await activity.update(ActivityContent(state: state, staleDate: restEndsAt))
     }
 
-    static func clearRest() async {
-        guard let activity = current else { return }
+    static func clearRest(workoutID: String) async {
+        guard let activity = current(workoutID: workoutID) else { return }
         var state = activity.content.state
         state.restEndsAt = nil
+        await activity.update(ActivityContent(state: state, staleDate: nil))
+    }
+
+    static func afterUndo(workoutID: String, setID: UUID) async {
+        guard let activity = current(workoutID: workoutID),
+              activity.content.state.lastLoggedSetID == setID else { return }
+        var state = activity.content.state
+        state.setsLogged = max(0, state.setsLogged - 1)
+        state.restEndsAt = nil
+        state.lastLoggedSetID = nil
+        state.logActionID = UUID()
         await activity.update(ActivityContent(state: state, staleDate: nil))
     }
 }

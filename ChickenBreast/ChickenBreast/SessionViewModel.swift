@@ -24,6 +24,10 @@ final class SessionViewModel {
     /// progression and Live Activity teardown still belong to one explicit
     /// boundary, so repeated calls are harmless.
     @ObservationIgnored private var hasFinished = false
+    /// Stable until its lock-screen action is consumed. Reusing this id as the
+    /// set id makes duplicate App Intent delivery harmless.
+    @ObservationIgnored private var liveLogActionID = UUID()
+    @ObservationIgnored private var liveActivityExerciseID: UUID?
 
     private(set) var session: Session
     private(set) var failure: String?
@@ -113,6 +117,7 @@ final class SessionViewModel {
             try store.log(record)
             session.log(record)
             recentlyLoggedSet = record
+            liveLogActionID = UUID()
             // Log, start resting, and be ready for the next set — one tap does
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
@@ -164,6 +169,7 @@ final class SessionViewModel {
                 RestNotification.cancel()
             }
             recentlyLoggedSet = nil
+            liveLogActionID = UUID()
             publishActivity()
         } catch {
             // Put it back rather than leaving screen and disk disagreeing.
@@ -515,6 +521,44 @@ final class SessionViewModel {
 
     // MARK: - Live Activity (#23)
 
+    /// Pulls lock-screen actions into the same in-memory session before the app
+    /// publishes another ActivityKit update. Without this foreground boundary,
+    /// the stale view model overwrites the set count and starts a second rest
+    /// timeline when the phone unlocks.
+    func reconcileLiveActivityActions() {
+        guard let activityState = liveActivity.currentState() else {
+            publishActivity()
+            return
+        }
+        do {
+            session = try store.resumeSession(
+                WorkoutDraft(session: session, id: draftID)
+            )
+            if let actionID = activityState.logActionID {
+                liveLogActionID = actionID
+            }
+
+            let activitySet = activityState.lastLoggedSetID.flatMap { setID in
+                session.allLoggedSets.first { $0.id == setID }
+            }
+            recentlyLoggedSet = activitySet
+
+            if let record = activitySet, let endsAt = activityState.restEndsAt {
+                rest = RestTimer(
+                    startedAt: record.performedAt,
+                    duration: max(0, endsAt.timeIntervalSince(record.performedAt)),
+                    setID: record.id
+                )
+            } else {
+                rest = nil
+                RestNotification.cancel()
+            }
+            publishActivity()
+        } catch {
+            failure = "Couldn't refresh lock-screen changes: \(error.localizedDescription)"
+        }
+    }
+
     /// Pushes the current lift, target and rest to the lock screen.
     ///
     /// Called after anything that changes what someone glancing at their phone
@@ -526,6 +570,10 @@ final class SessionViewModel {
             liveActivity.end()
             return
         }
+        if liveActivityExerciseID != current.exercise.id {
+            liveActivityExerciseID = current.exercise.id
+            liveLogActionID = UUID()
+        }
         let state = SessionActivityAttributes.ContentState(
             exerciseName: current.exercise.name,
             targetLine: current.prescription.displayLine(in: GymSettings.shared.unit),
@@ -534,6 +582,8 @@ final class SessionViewModel {
             targetPounds: current.prescription.load?.pounds,
             targetReps: current.prescription.reps,
             targetRPE: current.prescription.rpe.value,
+            logActionID: liveLogActionID,
+            lastLoggedSetID: recentlyLoggedSet?.id,
             restEndsAt: rest?.endsAt
         )
         liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)
