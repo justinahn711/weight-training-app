@@ -845,17 +845,35 @@ final class SessionViewModel {
         isWarmupRampExpanded = false
     }
 
-    /// The rep numbers offered on the row, centred on the target.
+    /// The rep numbers offered on the row: a fixed 1...20, the same for every
+    /// exercise and every set.
     ///
-    /// The window is fixed to the target rather than following the selection,
-    /// which would slide the row out from under a finger already reaching for
-    /// it. It runs well past the top of the range so a genuinely good set never
-    /// has to be rounded down to fit the UI.
-    var repChoices: [Int] {
-        guard let target = current?.prescription.reps else { return Array(1...20) }
-        let lowest = max(1, target - 5)
-        return Array(lowest...(target + 8))
-    }
+    /// #171 is a deliberate reversal of the previous design, not a constant
+    /// tweak. The row used to be a window centred on the target
+    /// (`target-5...target+8`), and the reasoning for that was sound on its
+    /// own: it kept the likely answer under the thumb and ran past the target
+    /// so a good set was never rounded down. But the same window is what made
+    /// it unreadable. A 13-rep target produced 8...21 — no 1, and a ceiling
+    /// that corresponds to nothing a lifter would name — and a Row programmed
+    /// `RepRange(8, 12)` showed a *lowest* chip of 6, which reads as "go
+    /// lower," not as a neutral count. Widening the window doesn't fix this:
+    /// the same number still moves between exercises, and the lowest chip
+    /// still isn't 1 for most targets.
+    ///
+    /// A fixed row costs one thing: an exercise whose usual count sits above
+    /// 20 (myo-reps, drop sets) never sees its number on the row. That case
+    /// already had to reach for the #131 `Other` control before this change —
+    /// it's the intended escape hatch, not a bug to route around — and it's a
+    /// smaller cost than a strength lift missing 1, which is not an edge case
+    /// but a top single or a failed set's rep count, and was reachable only
+    /// through that same control before this fix.
+    ///
+    /// In exchange, the row is now genuinely fixed: the same numbers sit in
+    /// the same places every set, so a thumb that's learned where "8" lives
+    /// doesn't have to look, and nothing about the target or the current
+    /// selection ever moves it — which was already the reason it was pinned
+    /// to the target rather than the selection, just not carried far enough.
+    var repChoices: [Int] { Array(1...20) }
 
     /// The fixed quick row has no selected chip when the actual count is an
     /// exception. The secondary control uses this to show that exact value.
