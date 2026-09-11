@@ -102,12 +102,39 @@ jobs:
       # the app and taps through it, so a crash on launch fails a test and
       # names launching as the thing that broke, instead of a build step
       # quietly reporting green over a binary nobody ran.
+      # Picks whatever iPhone the runner image actually ships rather than
+      # naming one. `name=iPhone 17 Pro` was hardcoded when this job was
+      # written, and it failed in 92 seconds with "Unable to find a device
+      # matching the provided destination specifier" as soon as the image
+      # moved on — a red check that says nothing about the code, which is the
+      # kind that teaches people to stop reading checks.
+      #
+      # Takes the first available iPhone, not the "best" one — any of them
+      # proves the app launches, which is all this job claims to check. An
+      # earlier draft of this step said it picked the newest by taking the
+      # last match; that was wrong twice over, since simctl's order is not
+      # version order and every match carries a trailing space that would
+      # have gone straight into the destination string.
+      - name: Choose a simulator the runner actually has
+        id: sim
+        run: |
+          name=$(xcrun simctl list devices available \
+                 | sed -nE 's/^[[:space:]]*(iPhone [^(]*[^([:space:]])[[:space:]]*\(.*/\1/p' \
+                 | head -1)
+          if [ -z "$name" ]; then
+            echo "::error::no available iPhone simulator on this runner"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: $name"
+
       - name: Build and run UI tests (installs and launches the real app)
         run: |
           xcodebuild test \
             -project ChickenBreast/ChickenBreast.xcodeproj \
             -scheme ChickenBreast \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
             -resultBundlePath UITestResults.xcresult
 
       # Not a required check (see PR #155): a UI test suite that boots a
