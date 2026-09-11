@@ -272,6 +272,15 @@ struct SessionView: View {
 
     @ViewBuilder
     private var statusBanners: some View {
+        // `heard` and `rest` are independent optionals on the model — a rest
+        // can easily be running while a voice parse is awaiting confirmation.
+        // These used to be `if / else if`, so the rest banner (and the
+        // running clock it's the only visible face of) was hidden for as
+        // long as the heard banner was up, and did not return if the rest
+        // ended while it was hidden. That read as "the rest timer vanished"
+        // (#173, first half) even though the timer itself was never touched.
+        // Independent `if`s let both stack, the same way the logged-set
+        // banner already stacks below either of them.
         if let heard = model.heard {
             HeardBanner(
                 heard: heard,
@@ -285,7 +294,8 @@ struct SessionView: View {
                     voice.consume()
                 }
             )
-        } else if let rest = model.rest {
+        }
+        if let rest = model.rest {
             RestBanner(rest: rest, onSkip: { model.skipRest() })
         }
         if let record = model.recentlyLoggedSet {
