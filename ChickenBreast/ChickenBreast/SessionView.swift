@@ -764,7 +764,24 @@ struct SessionView: View {
             }
 
             Button {
+                // Once this set is written the weight is settled — the next
+                // set inherits it, and the plate buttons have nothing left to
+                // correct until something changes. Leaving the row open just
+                // pushes the set rows underneath it down for the rest of the
+                // exercise (#170).
+                //
+                // `logSet` returns nothing, and `model.failure` isn't cleared
+                // on success, so a stale failure from something unrelated
+                // could make "did this call fail" unreadable from `failure`
+                // alone. Comparing before/after sidesteps that: `commit` only
+                // ever *sets* `failure` on its own catch, so if the string is
+                // unchanged this call didn't fail, whatever the value was
+                // going in.
+                let failureBeforeLogging = model.failure
                 model.logSet()
+                if model.failure == failureBeforeLogging {
+                    withAnimation(.snappy) { isPlateRowExpanded = false }
+                }
             } label: {
                 Text("Log Set")
                     .font(.title3.bold())
