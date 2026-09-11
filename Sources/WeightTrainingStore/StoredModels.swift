@@ -90,6 +90,13 @@ public final class StoredExercise {
     /// weighed once should not go back to "unknown" on the next launch.
     public var loadingData: Data = Data()
 
+    /// The person's own rest target for this lift, in seconds (#174). Nil
+    /// means no override — every row written before this landed reads that
+    /// way automatically, since SwiftData hands back `nil` for a column it
+    /// has never seen, and `Exercise.restTarget` treats a nil override as
+    /// "keep using the heuristic", exactly what those rows have always meant.
+    public var restOverrideSeconds: Double?
+
     public init(_ exercise: Exercise) {
         self.id = exercise.id
         self.name = exercise.name
@@ -100,6 +107,7 @@ public final class StoredExercise {
         self.musclesData = encoded(exercise.muscles)
         self.progressionRuleData = encoded(exercise.progressionRule)
         self.loadingData = exercise.loading.map(encoded) ?? Data()
+        self.restOverrideSeconds = exercise.restOverride
     }
 
     /// Overwrites this row in place, preserving identity so relationships and
@@ -113,6 +121,7 @@ public final class StoredExercise {
         musclesData = encoded(exercise.muscles)
         progressionRuleData = encoded(exercise.progressionRule)
         loadingData = exercise.loading.map(encoded) ?? Data()
+        restOverrideSeconds = exercise.restOverride
     }
 
     public func toDomain() throws -> Exercise {
@@ -133,7 +142,8 @@ public final class StoredExercise {
                 // equipment default via Exercise's initialiser.
                 loading: loadingData.isEmpty
                     ? nil
-                    : try decoded(LoadingStyle.self, from: loadingData)
+                    : try decoded(LoadingStyle.self, from: loadingData),
+                restOverride: restOverrideSeconds
             )
         } catch {
             throw StoreError.corruptRecord(entity: "Exercise", id: id, underlying: error)

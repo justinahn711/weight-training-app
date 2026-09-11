@@ -101,6 +101,32 @@ final class RestTargetTests: XCTestCase {
         XCTAssertEqual(rdl.restTarget, 180)
     }
 
+    /// The whole point of #174: a gym report that the two-value heuristic
+    /// has no escape hatch, so an override has to actually win.
+    func testOverrideWinsOverTheHeuristic() {
+        var press = exercise(
+            muscles: [.primary(.chest), .secondary(.frontDelts), .secondary(.triceps)],
+            equipment: .dumbbell
+        )
+        XCTAssertEqual(press.restTarget, 180, "unset, this is still the compound default")
+        press.restOverride = 240
+        XCTAssertEqual(press.restTarget, 240)
+    }
+
+    /// #174 was explicit that the defaults must not move — this is the
+    /// "done when" from the issue, checked directly against `nil`.
+    func testNoOverrideIsExactlyTheOldDefault() {
+        let press = exercise(
+            muscles: [.primary(.chest), .secondary(.frontDelts), .secondary(.triceps)],
+            equipment: .dumbbell
+        )
+        let raise = exercise(muscles: [.primary(.sideDelts)], equipment: .dumbbell)
+        XCTAssertNil(press.restOverride)
+        XCTAssertNil(raise.restOverride)
+        XCTAssertEqual(press.restTarget, 180)
+        XCTAssertEqual(raise.restTarget, 90)
+    }
+
     /// Sanity-check the heuristic against the real library rather than only
     /// against invented fixtures.
     func testLibraryRestTargetsLandSensibly() {

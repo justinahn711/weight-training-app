@@ -19,6 +19,25 @@ import WeightTrainingCore
 /// few taps it never gets corrected.
 struct ExerciseConfigView: View {
     let exercise: Exercise
+
+    /// Fires when a rest override is saved — `nil` means "gone back to the
+    /// default", a value means "rest this many seconds" (#174).
+    ///
+    /// Kept as its own closure rather than a third parameter on `onSave`,
+    /// and placed *before* it below, so this stays purely additive: `onSave`
+    /// keeps the exact two-argument shape SessionView's trailing closure
+    /// already destructures, and every existing call site compiles unchanged
+    /// with this defaulting to `nil`.
+    ///
+    /// Wiring it up needs one small addition SessionView.swift and
+    /// SessionViewModel.swift own, outside this issue's file list: pass a
+    /// closure here that copies `restOverride` onto the exercise and
+    /// `store.upsert`s it, the same way `updateConfiguration(of:increment:
+    /// loading:)` already does for `increment`/`loading`. Until that lands,
+    /// this screen's Rest section reads and displays correctly but a Save
+    /// from the in-session sheet does not persist a changed rest time —
+    /// noted rather than routed around, per #174's file ownership.
+    let onSaveRestOverride: ((TimeInterval?) -> Void)?
     let onSave: (LoadIncrement, LoadingStyle?) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -49,6 +68,16 @@ struct ExerciseConfigView: View {
     @State private var baseValue: Double = 0
     @State private var sleeves = 2
     @State private var plates: Set<Double> = []
+
+    /// Whether this lift rests on its own schedule rather than the
+    /// compound/isolation heuristic (#174).
+    @State private var overridesRest = false
+
+    /// The rest time being edited, in seconds. Only meaningful while
+    /// `overridesRest` is true; seeded from the override when there is one,
+    /// or from today's default when there isn't, so turning the toggle on
+    /// starts from a sane value rather than zero.
+    @State private var restSeconds: Double = 90
 
     /// The empty weight as it is being typed, in `unit` (#99).
     ///
@@ -92,8 +121,13 @@ struct ExerciseConfigView: View {
             : [25, 20, 15, 10, 5, 2.5, 1.25]
     }
 
-    init(exercise: Exercise, onSave: @escaping (LoadIncrement, LoadingStyle?) -> Void) {
+    init(
+        exercise: Exercise,
+        onSaveRestOverride: ((TimeInterval?) -> Void)? = nil,
+        onSave: @escaping (LoadIncrement, LoadingStyle?) -> Void
+    ) {
         self.exercise = exercise
+        self.onSaveRestOverride = onSaveRestOverride
         self.onSave = onSave
     }
 
@@ -127,7 +161,28 @@ struct ExerciseConfigView: View {
         baseText = format(baseValue)
         sleeves = exercise.loading?.sleeves ?? 2
         plates = Set(exercise.loading?.availablePlates ?? unit.standardPlates)
+        overridesRest = exercise.restOverride != nil
+        restSeconds = exercise.restOverride ?? defaultRestSeconds
         hasSeeded = true
+    }
+
+    /// What this lift would rest for absent any override — the compound/
+    /// isolation heuristic itself, not `exercise.restTarget`, since that
+    /// already folds in whatever override is currently seeded. Kept
+    /// separate so the footer can name the default even while a person is
+    /// actively looking at a different, overridden number above it.
+    private var defaultRestSeconds: TimeInterval {
+        exercise.isCompound ? 180 : 90
+    }
+
+    /// Rest times worth offering: half-minute steps across the range the
+    /// library's own heuristic produces (90s and 180s), with a little room
+    /// on either side for a lift that genuinely needs more or less.
+    private static let restChoices: [Double] = [60, 90, 120, 150, 180, 210, 240, 300]
+
+    private func restLabel(_ seconds: Double) -> String {
+        let whole = Int(seconds.rounded())
+        return whole % 60 == 0 ? "\(whole / 60)m" : "\(whole / 60)m \(whole % 60)s"
     }
 
     /// Whether this lift still takes its plates from the gym.
@@ -313,6 +368,30 @@ struct ExerciseConfigView: View {
                         }
                     }
                 }
+
+                Section {
+                    Toggle("Set my own rest time", isOn: $overridesRest.animation(.snappy))
+
+                    if overridesRest {
+                        ChoiceRow(
+                            caption: "Rest between sets",
+                            values: Self.restChoices,
+                            isSelected: { $0 == restSeconds },
+                            label: restLabel,
+                            onSelect: { restSeconds = $0 }
+                        )
+                    }
+                } header: {
+                    Text("Rest")
+                } footer: {
+                    // The gym report behind #174 was "keep the defaults, just
+                    // let me change one" — so the footer always names what
+                    // this lift would otherwise get, whether or not it's
+                    // currently overridden.
+                    Text(overridesRest
+                         ? "Otherwise defaults to \(restLabel(defaultRestSeconds)) for a lift like this."
+                         : "Defaults to \(restLabel(defaultRestSeconds)) — 3 minutes for compound lifts, 90 seconds for isolation work.")
+                }
             }
             .navigationTitle(exercise.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -378,6 +457,7 @@ struct ExerciseConfigView: View {
               )
             : nil
         onSave(increment, loading)
+        onSaveRestOverride?(overridesRest ? restSeconds : nil)
         dismiss()
     }
 
