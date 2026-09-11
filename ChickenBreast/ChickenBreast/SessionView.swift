@@ -101,6 +101,7 @@ struct SessionView: View {
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+            model.leaveSession()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }

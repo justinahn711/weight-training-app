@@ -24,6 +24,7 @@ final class SessionViewModel {
     /// progression and Live Activity teardown still belong to one explicit
     /// boundary, so repeated calls are harmless.
     @ObservationIgnored private var hasFinished = false
+    @ObservationIgnored private var isActivityEnded = false
     /// Stable until its lock-screen action is consumed. Reusing this id as the
     /// set id makes duplicate App Intent delivery harmless.
     @ObservationIgnored private var liveLogActionID = UUID()
@@ -586,11 +587,21 @@ final class SessionViewModel {
             lastLoggedSetID: recentlyLoggedSet?.id,
             restEndsAt: rest?.endsAt
         )
+        isActivityEnded = false
         liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)
+    }
+
+    /// Leaving the workout route pauses its glanceable surface without
+    /// discarding the resumable draft. Returning to Resume publishes a fresh
+    /// activity from the same session.
+    func leaveSession() {
+        endActivity()
     }
 
     /// Takes the lock screen down when the session ends.
     private func endActivity() {
+        guard !isActivityEnded else { return }
+        isActivityEnded = true
         liveActivity.end()
         // Rest belongs to a session in progress. Leaving ends the session
         // route, so a pending alert would arrive for training that's already
