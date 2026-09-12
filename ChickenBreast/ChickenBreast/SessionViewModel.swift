@@ -560,6 +560,48 @@ final class SessionViewModel {
         }
     }
 
+    /// Rebuilds the running session after History changes durable set rows.
+    ///
+    /// History is allowed to correct today's workout while its route remains
+    /// alive in the Train tab. Disk is authoritative, then the Live Activity
+    /// is republished from that rebuilt session so no deleted row survives on
+    /// either surface. Progression is deliberately not rewound: a past target
+    /// was an applied coaching decision, while history and every statistic are
+    /// derived immediately from the surviving sets.
+    func reconcilePersistedSetsAfterHistoryEdit() {
+        do {
+            session = try store.resumeSession(
+                WorkoutDraft(session: session, id: draftID)
+            )
+
+            if let recent = recentlyLoggedSet,
+               !session.allLoggedSets.contains(where: { $0.id == recent.id }) {
+                recentlyLoggedSet = nil
+                if rest?.setID == recent.id {
+                    rest = nil
+                    RestNotification.cancel()
+                }
+            }
+
+            // History is a different tab, so leaving the workout may already
+            // have deliberately ended its glanceable surface. Never resurrect
+            // a Live Activity merely because a history correction arrived.
+            if !isActivityEnded {
+                // A lock-screen Undo offer may name the row History just
+                // removed. Reusing the normal boundary clears that stale
+                // action and keeps the absolute rest deadline only when its
+                // set still exists.
+                if liveActivity.currentState() != nil {
+                    reconcileLiveActivityActions()
+                } else {
+                    publishActivity()
+                }
+            }
+        } catch {
+            failure = "Couldn't refresh the workout after that correction: \(error.localizedDescription)"
+        }
+    }
+
     /// Pushes the current lift, target and rest to the lock screen.
     ///
     /// Called after anything that changes what someone glancing at their phone

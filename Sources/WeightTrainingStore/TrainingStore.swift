@@ -305,6 +305,26 @@ public final class TrainingStore {
         return true
     }
 
+    /// Removes a correction batch with one durable commit.
+    ///
+    /// History's selection mode can span exercises, but it must not leave half
+    /// a bad workout behind if saving fails. Missing identities are ignored so
+    /// retrying after CloudKit has already removed a row is harmless.
+    ///
+    /// - Returns: the number of rows that existed and were deleted.
+    @discardableResult
+    public func deleteSets(ids: Set<UUID>) throws -> Int {
+        guard !ids.isEmpty else { return 0 }
+        let stored = try context.fetch(FetchDescriptor<StoredSetLog>())
+            .filter { ids.contains($0.id) }
+        guard !stored.isEmpty else { return 0 }
+        for record in stored {
+            context.delete(record)
+        }
+        try commit()
+        return stored.count
+    }
+
     /// Every set for one exercise, oldest first.
     public func sets(forExercise exerciseID: UUID) throws -> [SetRecord] {
         let descriptor = FetchDescriptor<StoredSetLog>(

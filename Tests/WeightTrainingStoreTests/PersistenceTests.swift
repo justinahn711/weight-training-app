@@ -267,6 +267,78 @@ final class PersistenceTests: XCTestCase {
         XCTAssertFalse(try store.deleteSet(id: UUID()))
     }
 
+    func testDeletingHistoryDoesNotSilentlyRewindAppliedProgression() throws {
+        let exerciseID = UUID()
+        let logged = SetRecord(exerciseID: exerciseID, load: Load(70), reps: 12,
+                               rpe: .eight, performedAt: Date(timeIntervalSince1970: 1_000))
+        let applied = ProgressState(
+            exerciseID: exerciseID,
+            targetLoad: Load(75),
+            stallCount: 0
+        )
+        let store = try reopen()
+        try store.log(logged)
+        try store.save(applied)
+
+        try store.deleteSets(ids: [logged.id])
+
+        XCTAssertEqual(try store.progressState(forExercise: exerciseID), applied,
+                       "history correction must not silently rewrite an applied coaching decision")
+    }
+
+    func testDeletingSelectedSetsCommitsOneIdempotentBatch() throws {
+        let firstExercise = UUID()
+        let secondExercise = UUID()
+        let first = SetRecord(exerciseID: firstExercise, load: Load(70), reps: 10,
+                              performedAt: Date(timeIntervalSince1970: 1_000))
+        let keep = SetRecord(exerciseID: firstExercise, load: Load(75), reps: 9,
+                             performedAt: Date(timeIntervalSince1970: 2_000))
+        let second = SetRecord(exerciseID: secondExercise, load: Load(100), reps: 8,
+                               performedAt: Date(timeIntervalSince1970: 3_000))
+
+        let store = try reopen()
+        try store.log(first)
+        try store.log(keep)
+        try store.log(second)
+
+        let selection: Set<UUID> = [first.id, second.id, UUID()]
+        XCTAssertEqual(try store.deleteSets(ids: selection), 2)
+        XCTAssertEqual(try reopen().allSets(), [keep])
+        XCTAssertEqual(try store.deleteSets(ids: selection), 0,
+                       "repeating a selection after sync must be harmless")
+    }
+
+    func testDeletingMultipleSetsCommitsOneIdempotentBatch() throws {
+        let exerciseID = UUID()
+        let first = SetRecord(exerciseID: exerciseID, load: Load(70), reps: 10,
+                              performedAt: Date(timeIntervalSince1970: 1_000))
+        let second = SetRecord(exerciseID: exerciseID, load: Load(75), reps: 9,
+                               performedAt: Date(timeIntervalSince1970: 2_000))
+        let keep = SetRecord(exerciseID: exerciseID, load: Load(80), reps: 8,
+                             performedAt: Date(timeIntervalSince1970: 3_000))
+
+        let store = try reopen()
+        try store.log(first)
+        try store.log(second)
+        try store.log(keep)
+
+        let selection: Set<UUID> = [first.id, second.id, UUID()]
+        XCTAssertEqual(try store.deleteSets(ids: selection), 2)
+        XCTAssertEqual(try reopen().sets(forExercise: exerciseID), [keep])
+        XCTAssertEqual(try store.deleteSets(ids: selection), 0,
+                       "replaying the same selection must be harmless")
+    }
+
+    func testDeletingAnEmptySelectionDoesNotChangeHistory() throws {
+        let record = SetRecord(exerciseID: UUID(), load: Load(70), reps: 10,
+                               performedAt: Date(timeIntervalSince1970: 1_000))
+        let store = try reopen()
+        try store.log(record)
+
+        XCTAssertEqual(try store.deleteSets(ids: []), 0)
+        XCTAssertEqual(try reopen().allSets(), [record])
+    }
+
     // MARK: - Queries
 
     func testSetsSinceFiltersByDate() throws {
