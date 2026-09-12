@@ -138,7 +138,7 @@ public struct Session: Hashable, Sendable {
     /// once a session is under way there are two things "add an exercise"
     /// plainly means — do it now, or do it after what's in front of me — so
     /// this is a choice rather than a single fixed slot.
-    public enum ExercisePlacement: Sendable {
+    public enum ExercisePlacement: Hashable, Sendable {
         /// Right after the exercise on screen — for "the rack is free, I'll
         /// do one more" right now, without shuffling past whatever else is
         /// left in the day.

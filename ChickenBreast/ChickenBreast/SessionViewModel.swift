@@ -771,6 +771,44 @@ final class SessionViewModel {
         }
     }
 
+    // MARK: - Adding (#175)
+
+    /// Exercises not already in the day, for the add-exercise sheet's search.
+    ///
+    /// Filters out what's already in the session rather than leaving the
+    /// sheet to offer a duplicate and rely on `Session.addExercise`'s guard to
+    /// quietly no-op it — a row that can only be tapped into nothing is worse
+    /// than a row that isn't there.
+    func addableExercises(_ query: String) -> [Exercise] {
+        let existing = Set(session.exercises.map(\.id))
+        let candidates = allExercises.filter { !existing.contains($0.id) }
+        return ExerciseSearch.search(query, in: candidates)
+    }
+
+    /// Adds a lift to the running day — the rack freed up, or a lift felt bad
+    /// and wants an accessory after it.
+    ///
+    /// Rebuilt through the store exactly like a swap: the new row needs its
+    /// own target and its own history, not a blank one, and today's sets
+    /// logged against it earlier in the day (from a previous visit, or a
+    /// resumed draft) have to be picked up rather than started over.
+    ///
+    /// Not routed through `didChangeCurrentExercise()`. That call exists for
+    /// paths that change *which* exercise is on screen (#169, #172); adding
+    /// somewhere else in the list — even "next" — never moves `current`, so
+    /// there is nothing about what the lock screen shows that changed. The
+    /// draft still has to be told, so a relaunch or a background/resume finds
+    /// the addition (#132).
+    func addExercise(_ exercise: Exercise, placement: Session.ExercisePlacement) {
+        do {
+            let row = try store.sessionExercise(for: exercise, slot: nil, startedAt: session.startedAt)
+            session.addExercise(row, placement: placement)
+            saveDraft()
+        } catch {
+            failure = "Couldn't add that exercise: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Suggestions
 
     /// Chips dismissed during this session.

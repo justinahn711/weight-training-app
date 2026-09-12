@@ -42,6 +42,11 @@ struct SessionView: View {
     @State private var enteringReps: RepEntryTarget?
     @State private var enteringWeight: WeightEntryTarget?
     @State private var isChoosingExercise = false
+    /// The add-exercise sheet from #175 — "the rack is free, I'll do one
+    /// more." Reuses the shape of #137's pre-session add sheet (search the
+    /// library, no exercise creation here), rebuilt here rather than shared:
+    /// that sheet is a `private` type inside `ContentView.swift`.
+    @State private var isAddingExercise = false
     /// Plate building is the exception path, opened from the breakdown it
     /// edits (#138). It stays open while plates are added, then closes when
     /// the lifter moves to a different exercise.
@@ -124,6 +129,16 @@ struct SessionView: View {
                 .accessibilityValue(voice.isListening ? "Listening" : "Off")
                 .accessibilityIdentifier("session.microphone")
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isAddingExercise = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("Add exercise")
+                .accessibilityHint("Adds a lift to today's workout, next or at the end")
+                .accessibilityIdentifier("session.exercise.add")
+            }
         }
         // Heard values reach the form only through the snapper — the view has
         // no path that writes a spoken number directly.
@@ -177,6 +192,15 @@ struct SessionView: View {
         }
         .sheet(isPresented: $isChoosingExercise) {
             exercisePicker
+        }
+        .sheet(isPresented: $isAddingExercise) {
+            AddExerciseSheet(
+                search: { model.addableExercises($0) },
+                onAdd: { exercise, placement in
+                    model.addExercise(exercise, placement: placement)
+                    isAddingExercise = false
+                }
+            )
         }
         .sheet(item: $editingSet) { target in
             ActiveSetEditor(target: target) { model.correctSet($0) }
@@ -340,6 +364,15 @@ struct SessionView: View {
                     // The slot is the job. Naming it makes a swap legible as a
                     // substitution rather than as abandoning the day's shape.
                     Text(slot.name)
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                } else {
+                    // No slot means this lift was added rather than planned —
+                    // either from the pre-session roster (#137) or mid-session
+                    // (#175). Same caption #137's roster preview already uses,
+                    // so the word means the same thing in both places.
+                    Text("Added for today")
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
@@ -1148,6 +1181,77 @@ private struct SwapSheet: View {
             }
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Adding a lift to the running day (#175) — "the rack is free, I'll do one
+/// more."
+///
+/// Mirrors #137's pre-session add sheet in shape: search the whole library,
+/// no exercise creation here. A lift invented at the rack still has no
+/// history, no increment, and no muscle tags — that's the same reasoning
+/// `SwapSheet` gives for keeping its own search plain, and it applies just as
+/// much to an addition as to a swap. That pre-session sheet lives as a
+/// `private` type inside `ContentView.swift`, which this file doesn't own, so
+/// this is a second, smaller copy rather than a shared component.
+private struct AddExerciseSheet: View {
+    let search: (String) -> [Exercise]
+    let onAdd: (Exercise, Session.ExercisePlacement) -> Void
+
+    @State private var query = ""
+    @State private var placement: Session.ExercisePlacement = .next
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Picker("Where", selection: $placement) {
+                        Text("Next").tag(Session.ExercisePlacement.next)
+                        Text("End of workout").tag(Session.ExercisePlacement.end)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("session.addExercise.placement")
+                }
+                .listRowSeparator(.hidden)
+
+                Section("Exercise library") {
+                    let results = search(query)
+                    if results.isEmpty {
+                        Text(query.isEmpty ? "Nothing left to add" : "No matches")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(results) { exercise in
+                            row(exercise)
+                        }
+                    }
+                }
+            }
+            .searchable(text: $query, prompt: "Search exercises")
+            .navigationTitle("Add exercise")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func row(_ exercise: Exercise) -> some View {
+        Button {
+            onAdd(exercise, placement)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(exercise.name)
+                    .font(.body.weight(.medium))
+                Text(exercise.primaryMuscles.map(\.rawValue).joined(separator: ", "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("session.addExercise.candidate.\(exercise.name)")
     }
 }
 
