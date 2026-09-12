@@ -131,6 +131,64 @@ public struct Session: Hashable, Sendable {
         Session(kind: kind, exercises: exercises, startedAt: date)
     }
 
+    // MARK: - Mid-session addition (#175)
+
+    /// Where a mid-session addition lands. The roster's "add" from #137 only
+    /// ever appends, because nothing is running yet to be "next" relative to;
+    /// once a session is under way there are two things "add an exercise"
+    /// plainly means — do it now, or do it after what's in front of me — so
+    /// this is a choice rather than a single fixed slot.
+    public enum ExercisePlacement: Sendable {
+        /// Right after the exercise on screen — for "the rack is free, I'll
+        /// do one more" right now, without shuffling past whatever else is
+        /// left in the day.
+        case next
+        /// After everything already in the day.
+        case end
+    }
+
+    /// Adds an exercise to a session already in progress.
+    ///
+    /// `appendPlannedExercise` is the pre-session counterpart and refuses once
+    /// any set exists, because at that point editing the roster stops being a
+    /// planning action. This is the other side of that line: it exists
+    /// *because* sets are already logged, and it never touches `currentIndex`,
+    /// because inserting a row elsewhere in the list must not change which
+    /// exercise the screen is showing — that would silently do what
+    /// `select(exerciseID:)` is for.
+    ///
+    /// `slot` is forced to nil no matter what the caller passes in. A slot is
+    /// a job the day's template assigned; a lift added because a rack freed up
+    /// mid-session was never one of those jobs, so it can't carry one — the
+    /// same reasoning `appendPlannedExercise` already applies before the
+    /// session starts. Enforced here rather than left to callers to remember,
+    /// since a slot is what lets a swap treat a lift as filling a job in the
+    /// day's shape; an added extra has no job to be substituted out of.
+    ///
+    /// Today only: this changes `exercises`, which `WorkoutDraft` mirrors, but
+    /// never touches a `DayTemplate`. Nothing about the recurring plan
+    /// changes, so tomorrow's version of this day is exactly what it was
+    /// before this exercise was added. #137 left the same question open for
+    /// removal; this answers it the same way — "not today" rather than "not
+    /// ever" is the default either direction, and applying it to the plan is a
+    /// separate, explicit action this method doesn't take.
+    public mutating func addExercise(_ exercise: SessionExercise, placement: ExercisePlacement) {
+        guard !exercises.contains(where: { $0.id == exercise.id }) else { return }
+        let unslotted = SessionExercise(
+            exercise: exercise.exercise,
+            slot: nil,
+            prescription: exercise.prescription,
+            lastPerformance: exercise.lastPerformance,
+            loggedSets: exercise.loggedSets
+        )
+        switch placement {
+        case .next:
+            exercises.insert(unslotted, at: min(currentIndex + 1, exercises.count))
+        case .end:
+            exercises.append(unslotted)
+        }
+    }
+
     // MARK: - Logging
 
     /// Records a set against the current exercise.

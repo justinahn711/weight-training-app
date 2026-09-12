@@ -381,6 +381,77 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(started.currentIndex, 0)
     }
 
+    // MARK: - Mid-session addition (#175)
+
+    func testAddExerciseNextInsertsRightAfterCurrent() {
+        var day = session(["A", "B", "C"])
+        day.advance()
+        XCTAssertEqual(day.current?.exercise.name, "B")
+
+        let added = SessionExercise(
+            exercise: exercise("D"),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+        day.addExercise(added, placement: .next)
+
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["A", "B", "D", "C"])
+        XCTAssertEqual(day.current?.exercise.name, "B",
+                       "adding elsewhere in the list must not move what's on screen")
+    }
+
+    func testAddExerciseEndAppendsAfterEverything() {
+        var day = session(["A", "B", "C"])
+        day.select(exerciseID: day.exercises[0].id)
+
+        let added = SessionExercise(
+            exercise: exercise("D"),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+        day.addExercise(added, placement: .end)
+
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["A", "B", "C", "D"])
+        XCTAssertEqual(day.current?.exercise.name, "A")
+    }
+
+    /// This is the whole point of the method: it has to work once training has
+    /// actually started, unlike its pre-session counterpart.
+    func testAddExerciseWorksAfterSetsAreLogged() {
+        var day = session(["A", "B"])
+        day.log(SetRecord(exerciseID: day.exercises[0].id, load: Load(70), reps: 10, performedAt: Date()))
+
+        let added = SessionExercise(
+            exercise: exercise("C"),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+        day.addExercise(added, placement: .end)
+
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["A", "B", "C"])
+        XCTAssertEqual(day.exercises[0].loggedSets.count, 1, "the logged set is untouched")
+    }
+
+    func testAddExerciseNeverAssignsASlot() {
+        var day = session(["A"])
+        let added = SessionExercise(
+            exercise: exercise("B"),
+            slot: Slot(name: "Accessory", candidateExerciseIDs: [exercise("B").id]),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+        day.addExercise(added, placement: .end)
+        XCTAssertNil(day.exercises.last?.slot,
+                     "a lift added mid-session was never one of the day's planned jobs")
+    }
+
+    func testAddingAnExerciseAlreadyInTheDayIsANoOp() {
+        var day = session(["A", "B"])
+        let existing = day.exercises[0].exercise
+        let duplicate = SessionExercise(
+            exercise: existing,
+            prescription: Prescription(exercise: existing, state: nil)
+        )
+        day.addExercise(duplicate, placement: .end)
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["A", "B"])
+    }
+
     // MARK: - Reconfiguring the lift on screen (#98)
 
     private func machine() -> Exercise {
