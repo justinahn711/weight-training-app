@@ -56,6 +56,10 @@ final class SessionViewModel {
     /// The one set the session UI may offer to undo. This is deliberately not
     /// derived from all history: old sets remain editable in Today, while Undo
     /// is a short-lived acknowledgement of the action that just happened.
+    ///
+    /// Moving to another exercise ends "just happened" even though nothing
+    /// about the set itself changed, so leaving one is also cleared here —
+    /// see `didChangeCurrentExercise()` (#169).
     private(set) var recentlyLoggedSet: SetRecord?
 
     init(store: TrainingStore, session: Session, draftID: UUID) {
@@ -330,20 +334,40 @@ final class SessionViewModel {
 
     func advance() {
         session.advance()
-        seedPendingFromCurrent()
+        didChangeCurrentExercise()
         saveDraft()
     }
 
     func goBack() {
         session.goBack()
-        seedPendingFromCurrent()
+        didChangeCurrentExercise()
         saveDraft()
     }
 
     func select(exerciseID: UUID) {
         session.select(exerciseID: exerciseID)
-        seedPendingFromCurrent()
+        didChangeCurrentExercise()
         saveDraft()
+    }
+
+    /// The one place every path that changes which exercise is on screen
+    /// routes through, so the two things that must never survive that change
+    /// can't be forgotten by whichever navigation method gets added next.
+    ///
+    /// `advance()`, `goBack()` and `select(exerciseID:)` used to each re-seed
+    /// the pending values and stop there. `recentlyLoggedSet` stayed set to a
+    /// set that belonged to the exercise just left, so its banner survived
+    /// into the next exercise, and tapping it could delete a set from a lift
+    /// already finished (#169). The same three methods also never told the
+    /// lock screen anything had changed, so it kept showing the previous
+    /// exercise, target and set count (#172) — the same missed spot with a
+    /// different symptom. Routing both through the one call every navigation
+    /// method already makes is what keeps a third one from reintroducing
+    /// either bug.
+    private func didChangeCurrentExercise() {
+        recentlyLoggedSet = nil
+        seedPendingFromCurrent()
+        publishActivity()
     }
 
     /// Re-centres the input on the new exercise's target, using the last set
@@ -409,6 +433,9 @@ final class SessionViewModel {
             advance()
         case .startTimer(let seconds):
             rest = RestTimer(startedAt: now, duration: seconds, setID: UUID())
+            // Started outside `commit`, so nothing else on this path tells the
+            // lock screen the rest changed unless this does (#172).
+            publishActivity()
         case .adjustLoad(let delta):
             pendingLoad = max(current.exercise.minimumLoad,
                               Load(pendingLoad.pounds + delta.pounds))
@@ -656,6 +683,13 @@ final class SessionViewModel {
             // replacement is the same lift, which a reconfiguration always is.
             session.reconfigureCurrent(with: rebuilt)
             seedPendingFromCurrent()
+            // Not a navigation change — this is still the exercise the banner
+            // belongs to, so `recentlyLoggedSet` is left alone rather than
+            // routed through `didChangeCurrentExercise()`. The lock screen is
+            // still told, though: it's cheap, and it keeps every mutation of
+            // what's on screen in the same habit rather than trusting each one
+            // to remember on its own (#172).
+            publishActivity()
             loadSuggestionContext()
         } catch {
             failure = "Couldn't save that setting: \(error.localizedDescription)"
@@ -711,14 +745,22 @@ final class SessionViewModel {
             // to reset. Swapping one the day has already moved past changes the
             // day, not what is in front of you.
             guard wasVisible else { return }
-            seedPendingFromCurrent()
-            // The old lift's advice has nothing to say about this one. The
-            // ramp disclosure is not reset here (#157) — `seedPendingFromCurrent`
+            // Cleared before `didChangeCurrentExercise` publishes, not after:
+            // the old lift's rest doesn't belong to the one replacing it, and
+            // the lock screen should never show a countdown ticking against an
+            // exercise that isn't running it anymore.
+            rest = nil
+            // A swap onto the visible slot is a different exercise arriving
+            // where the old one was — the same shape as advancing to one, so
+            // it gets the same treatment: the old lift's undo banner and
+            // lock-screen state don't belong to the new lift either (#169,
+            // #172). The ramp disclosure is not reset here (#157) —
+            // `seedPendingFromCurrent`, called from `didChangeCurrentExercise`,
             // already recomputed it for whichever exercise now occupies this
             // slot, and overriding that unconditionally to collapsed would
             // undefault an expanded ramp every time the *first* slot's lift
             // was swapped.
-            rest = nil
+            didChangeCurrentExercise()
         } catch {
             failure = "Couldn't swap that exercise: \(error.localizedDescription)"
         }
@@ -845,17 +887,35 @@ final class SessionViewModel {
         isWarmupRampExpanded = false
     }
 
-    /// The rep numbers offered on the row, centred on the target.
+    /// The rep numbers offered on the row: a fixed 1...20, the same for every
+    /// exercise and every set.
     ///
-    /// The window is fixed to the target rather than following the selection,
-    /// which would slide the row out from under a finger already reaching for
-    /// it. It runs well past the top of the range so a genuinely good set never
-    /// has to be rounded down to fit the UI.
-    var repChoices: [Int] {
-        guard let target = current?.prescription.reps else { return Array(1...20) }
-        let lowest = max(1, target - 5)
-        return Array(lowest...(target + 8))
-    }
+    /// #171 is a deliberate reversal of the previous design, not a constant
+    /// tweak. The row used to be a window centred on the target
+    /// (`target-5...target+8`), and the reasoning for that was sound on its
+    /// own: it kept the likely answer under the thumb and ran past the target
+    /// so a good set was never rounded down. But the same window is what made
+    /// it unreadable. A 13-rep target produced 8...21 — no 1, and a ceiling
+    /// that corresponds to nothing a lifter would name — and a Row programmed
+    /// `RepRange(8, 12)` showed a *lowest* chip of 6, which reads as "go
+    /// lower," not as a neutral count. Widening the window doesn't fix this:
+    /// the same number still moves between exercises, and the lowest chip
+    /// still isn't 1 for most targets.
+    ///
+    /// A fixed row costs one thing: an exercise whose usual count sits above
+    /// 20 (myo-reps, drop sets) never sees its number on the row. That case
+    /// already had to reach for the #131 `Other` control before this change —
+    /// it's the intended escape hatch, not a bug to route around — and it's a
+    /// smaller cost than a strength lift missing 1, which is not an edge case
+    /// but a top single or a failed set's rep count, and was reachable only
+    /// through that same control before this fix.
+    ///
+    /// In exchange, the row is now genuinely fixed: the same numbers sit in
+    /// the same places every set, so a thumb that's learned where "8" lives
+    /// doesn't have to look, and nothing about the target or the current
+    /// selection ever moves it — which was already the reason it was pinned
+    /// to the target rather than the selection, just not carried far enough.
+    var repChoices: [Int] { Array(1...20) }
 
     /// The fixed quick row has no selected chip when the actual count is an
     /// exception. The secondary control uses this to show that exact value.
