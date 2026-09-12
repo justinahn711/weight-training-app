@@ -11,6 +11,15 @@
                ReferencedContainer = "container:ChickenBreast.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry buildForTesting = "YES" buildForRunning = "NO" buildForProfiling = "NO" buildForArchiving = "NO" buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "DD00000000000000000000A0"
+               BuildableName = "ChickenBreastTests.xctest"
+               BlueprintName = "ChickenBreastTests"
+               ReferencedContainer = "container:ChickenBreast.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -19,6 +28,15 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
       <Testables>
+         <TestableReference skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "DD00000000000000000000A0"
+               BuildableName = "ChickenBreastTests.xctest"
+               BlueprintName = "ChickenBreastTests"
+               ReferencedContainer = "container:ChickenBreast.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
          <TestableReference skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
