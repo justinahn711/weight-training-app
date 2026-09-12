@@ -158,7 +158,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(reloaded.loading?.baseWeight, Load(100))
         XCTAssertEqual(reloaded.loading?.sleeves, 2)
         XCTAssertEqual(reloaded.loading?.availablePlates, [45, 25, 10, 5])
-        XCTAssertEqual(reloaded.plateBreakdown(for: Load(280))?.displayLine, "45 · 45")
+        XCTAssertEqual(reloaded.plateBreakdown(for: Load(280))?.displayLine, "45 · 45 per side")
     }
 
     /// An exercise with no plates keeps having none.

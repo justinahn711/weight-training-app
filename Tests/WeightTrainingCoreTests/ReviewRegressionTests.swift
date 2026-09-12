@@ -60,7 +60,7 @@ final class ReviewRegressionTests: XCTestCase {
 
         let bench = library("Flat Bench")
         XCTAssertTrue(bench.equipment.usesOlympicBar)
-        XCTAssertEqual(bench.plateBreakdown(for: Load(135))?.displayLine, "45")
+        XCTAssertEqual(bench.plateBreakdown(for: Load(135))?.displayLine, "45 per side")
     }
 
     /// The ramp inherited the same fiction: a hack squat opened with a
