@@ -13,7 +13,7 @@ final class LoadingStyleTests: XCTestCase {
     func testBarbellPlatesCountTwice() throws {
         let style = LoadingStyle.olympicBarbell
         let breakdown = try XCTUnwrap(style.breakdown(for: Load(225)))
-        XCTAssertEqual(breakdown.displayLine, "45 · 45")
+        XCTAssertEqual(breakdown.displayLine, "45 · 45 per side")
         XCTAssertEqual(breakdown.total, Load(225))
         XCTAssertEqual(breakdown.sleeves, 2)
     }
@@ -45,7 +45,7 @@ final class LoadingStyleTests: XCTestCase {
 
         XCTAssertEqual(style.removingPlate(10, from: Load(155)), Load(135))
         XCTAssertEqual(style.breakdown(for: try XCTUnwrap(style.removingPlate(10, from: Load(155))))?.displayLine,
-                       "45")
+                       "45 per side")
     }
 
     func testRemovingDisplayedPlateUsesRackUnitAndSleeveCount() throws {
@@ -94,7 +94,7 @@ final class LoadingStyleTests: XCTestCase {
 
         let bench = lift("Flat Bench")
         XCTAssertTrue(try XCTUnwrap(bench.loading).isMeasured)
-        XCTAssertEqual(bench.plateBreakdown(for: Load(135))?.displayLine, "45")
+        XCTAssertEqual(bench.plateBreakdown(for: Load(135))?.displayLine, "45 per side")
     }
 
     func testStacksAndDumbbellsHaveNoLoadingStyle() {
@@ -116,7 +116,7 @@ final class LoadingStyleTests: XCTestCase {
         hack.loading = LoadingStyle(baseWeight: Load(100), sleeves: 2)
 
         let breakdown = try XCTUnwrap(hack.plateBreakdown(for: Load(280)))
-        XCTAssertEqual(breakdown.displayLine, "45 · 45", "90 a side on a 100 lb sled")
+        XCTAssertEqual(breakdown.displayLine, "45 · 45 per side", "90 a side on a 100 lb sled")
         XCTAssertEqual(breakdown.total, Load(280))
         XCTAssertEqual(hack.minimumLoad, Load(100))
         XCTAssertFalse(hack.canBuild(Load(50)), "lighter than the empty sled")

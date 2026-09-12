@@ -40,14 +40,27 @@ public struct PlateBreakdown: Hashable, Sendable {
 
     public var isBarOnly: Bool { perSide.isEmpty }
 
-    /// `45 · 25 · 10` — plates per sleeve, heaviest first, read while loading.
+    /// `45 · 25 · 10 per side` — plates per sleeve, heaviest first, read
+    /// while loading.
     ///
     /// Repeats are listed rather than multiplied because that's the order they
     /// go on the sleeve, and counting three 45s written out is faster than
     /// parsing "45×3" with a bar in your hands.
+    ///
+    /// "per side" is appended for a two-(or-more)-sleeve apparatus and
+    /// withheld for a one-sleeve one (#176). A gym report — "should we label
+    /// that the plates are 2x" — is what this exists to fix: on a barbell,
+    /// reading the per-sleeve list as the total is a 90 lb error on a 225 lb
+    /// squat. The reverse mistake matters just as much, so a T-bar or any
+    /// other one-sleeve machine must not say "per side" — there's no second
+    /// side, and saying so would be false rather than merely ambiguous.
+    /// `sleeves` already carries the fact, so the label is derived rather
+    /// than guessed at each call site. Two words, appended once, rather than
+    /// a longer rewrite — #122 was filed because this exact line had grown
+    /// too long once already.
     public var displayLine: String {
         guard !isBarOnly else { return sleeves == 1 ? "Empty" : "Bar only" }
-        return perSide
+        let plates = perSide
             .flatMap { entry in Array(repeating: entry.plate, count: entry.count) }
             // Native plate sizes, so the rack's own unit renders them: this
             // had its own inlined one-decimal rule and turned the 1.25 kg pair
@@ -55,6 +68,7 @@ public struct PlateBreakdown: Hashable, Sendable {
             // bar in your hands.
             .map { unit.format($0, withSymbol: false) }
             .joined(separator: " · ")
+        return sleeves == 1 ? plates : "\(plates) per side"
     }
 }
 

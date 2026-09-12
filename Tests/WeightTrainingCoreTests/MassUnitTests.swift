@@ -63,7 +63,7 @@ final class MassUnitTests: XCTestCase {
         let rack = LoadingStyle.standardBarbell(in: .kilograms)
         let breakdown = try XCTUnwrap(rack.breakdown(for: Load(100, .kilograms)))
 
-        XCTAssertEqual(breakdown.displayLine, "25 · 15")
+        XCTAssertEqual(breakdown.displayLine, "25 · 15 per side")
         XCTAssertEqual(breakdown.unit, .kilograms)
         XCTAssertEqual(breakdown.total.value(in: .kilograms), 100, accuracy: 1e-9)
     }
@@ -79,7 +79,7 @@ final class MassUnitTests: XCTestCase {
     func testConvertedPlatesNameWeightsTheGymDoesNotHave() throws {
         let native = LoadingStyle.standardBarbell(in: .kilograms)
         let right = try XCTUnwrap(native.breakdown(for: Load(100, .kilograms)))
-        XCTAssertEqual(right.displayLine, "25 · 15")
+        XCTAssertEqual(right.displayLine, "25 · 15 per side")
         XCTAssertEqual(right.perSide.reduce(0) { $0 + $1.count }, 2)
 
         let converted = LoadingStyle(
@@ -220,7 +220,7 @@ final class MassUnitTests: XCTestCase {
             unit: .kilograms
         )
         let breakdown = style.breakdown(for: Load(22.5, .kilograms))
-        XCTAssertEqual(breakdown?.displayLine, "1.25", "a 1.25 kg pair, named properly")
+        XCTAssertEqual(breakdown?.displayLine, "1.25 per side", "a 1.25 kg pair, named properly")
     }
 
     /// Trailing zeros claim precision the number does not have.
