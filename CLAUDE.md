@@ -149,6 +149,45 @@ linked worktrees share `.git/config` and the relative path resolves against
 each worktree's own top level. A branch that predates `hooks/` runs no hook at
 all and says nothing about it, so an older branch is ungated until it rebases.
 
+## Long commands: run them in the foreground
+
+**Never start a build or test run in the background and then wait to be told it
+finished.** Run it in the foreground and let it block, even for twenty minutes.
+
+Three separate agents lost a step to this in one night. A subagent does not
+receive background-task notifications the way the coordinating session does, so
+waiting on one is not slow — it is a deadlock, and the agent sits until
+something external notices. Each time, the work itself was fine.
+
+`xcodebuild test` on this project takes 10-20 minutes and longer when several
+agents share the machine. That is normal and not a reason to background it.
+
+Two consequences of a shared machine worth knowing before you read a result:
+
+- **Run one `xcodebuild` at a time.** Concurrent runs starve each other.
+- **An accessibility audit that reports `Audit failed to complete in time` or
+  is killed around 900s is contention, not a defect.** It has happened locally
+  and on CI. Say so in the PR rather than chasing it; do not "fix" a timeout by
+  changing the code under test.
+
+## Removing a worktree
+
+`cd` into it and run `git status --short` first. If it is dirty, leave it and
+ask.
+
+Prefer plain `git worktree remove`, which refuses when there are uncommitted
+changes. `--force` exists to override exactly that refusal, and using it here
+destroyed a complete implementation plus thirty passing tests that had never
+been committed. Nothing was recoverable: uncommitted work never enters the
+object store, so `git fsck` finds nothing.
+
+A branch tip sitting at `main` proves nothing. Uncommitted work leaves the tip
+untouched, so `git branch -D` reports no unmerged commits and warns about
+nothing.
+
+Only clean up a worktree whose PR has merged. And **commit as you go** — a
+commit is worth more than anyone's backup.
+
 ## Reporting: the evidence manifest
 
 Every PR carries the manifest in `.github/pull_request_template.md`, and every
