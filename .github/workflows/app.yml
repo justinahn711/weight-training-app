@@ -59,6 +59,64 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+  unit-test:
+    name: App unit tests
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    # Same image as `build` and `ui-test` (see the top-of-file comment).
+    runs-on: macos-26
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      # Not a required check by design (#181): a brand-new job name is never
+      # one of the two exact names branch protection looks for
+      # (`swift test`, `Build for simulator`), and it must not become a third
+      # — a required check that gains a `paths:` filter, or that quietly stops
+      # reporting, is exactly how #159 wedged every PR in the repo. This job
+      # is purely additive: it reports on every PR and can fail loudly without
+      # being able to block a merge on its own.
+      #
+      # ChickenBreastTests is hosted by the ChickenBreast app target (its
+      # TEST_HOST), so it still needs a real simulator rather than running as
+      # a plain `swift test` — but unlike `ui-test` below, nothing in it
+      # drives the UI, so it stays fast. Deliberately no
+      # CODE_SIGNING_ALLOWED=NO, for the same reason as `ui-test`: that flag
+      # strips the Simulated-entitlements section and the hosting app aborts
+      # at launch with the #155/#160 CKException before a single test runs.
+      - name: Choose a simulator the runner actually has
+        id: sim
+        run: |
+          name=$(xcrun simctl list devices available \
+                 | sed -nE 's/^[[:space:]]*(iPhone [^(]*[^([:space:]])[[:space:]]*\(.*/\1/p' \
+                 | head -1)
+          if [ -z "$name" ]; then
+            echo "::error::no available iPhone simulator on this runner"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: $name"
+
+      - name: Run ChickenBreastTests
+        run: |
+          xcodebuild test \
+            -project ChickenBreast/ChickenBreast.xcodeproj \
+            -scheme ChickenBreast \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -only-testing:ChickenBreastTests \
+            -resultBundlePath UnitTestResults.xcresult
+
+      - name: Upload unit test result bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: UnitTestResults.xcresult
+
   ui-test:
     name: UI launch test
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
@@ -129,12 +187,17 @@ jobs:
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "Using simulator: $name"
 
+      # -only-testing scopes this to the UI suite specifically (#181): the
+      # scheme's TestAction now also lists ChickenBreastTests, run separately
+      # and faster by the `unit-test` job above. Without this flag the two
+      # jobs would silently duplicate each other's work on every PR.
       - name: Build and run UI tests (installs and launches the real app)
         run: |
           xcodebuild test \
             -project ChickenBreast/ChickenBreast.xcodeproj \
             -scheme ChickenBreast \
             -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -only-testing:ChickenBreastUITests \
             -resultBundlePath UITestResults.xcresult
 
       # Not a required check (see PR #155): a UI test suite that boots a
