@@ -20,25 +20,13 @@ import WeightTrainingCore
 struct ExerciseConfigView: View {
     let exercise: Exercise
 
-    /// Fires when a rest override is saved — `nil` means "gone back to the
-    /// default", a value means "rest this many seconds" (#174).
+    /// Everything this sheet can change, saved in one call.
     ///
-    /// Kept as its own closure rather than a third parameter on `onSave`,
-    /// and placed *before* it below, so this stays purely additive: `onSave`
-    /// keeps the exact two-argument shape SessionView's trailing closure
-    /// already destructures, and every existing call site compiles unchanged
-    /// with this defaulting to `nil`.
-    ///
-    /// Wiring it up needs one small addition SessionView.swift and
-    /// SessionViewModel.swift own, outside this issue's file list: pass a
-    /// closure here that copies `restOverride` onto the exercise and
-    /// `store.upsert`s it, the same way `updateConfiguration(of:increment:
-    /// loading:)` already does for `increment`/`loading`. Until that lands,
-    /// this screen's Rest section reads and displays correctly but a Save
-    /// from the in-session sheet does not persist a changed rest time —
-    /// noted rather than routed around, per #174's file ownership.
-    let onSaveRestOverride: ((TimeInterval?) -> Void)?
-    let onSave: (LoadIncrement, LoadingStyle?) -> Void
+    /// Rest rides along with increment and loading rather than getting its own
+    /// closure. Two handlers would mean two `store.upsert` calls for one Save,
+    /// and the second would start from the exercise as it was when the sheet
+    /// opened — silently undoing what the first just wrote (#174).
+    let onSave: (LoadIncrement, LoadingStyle?, TimeInterval?) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -123,11 +111,9 @@ struct ExerciseConfigView: View {
 
     init(
         exercise: Exercise,
-        onSaveRestOverride: ((TimeInterval?) -> Void)? = nil,
-        onSave: @escaping (LoadIncrement, LoadingStyle?) -> Void
+        onSave: @escaping (LoadIncrement, LoadingStyle?, TimeInterval?) -> Void
     ) {
         self.exercise = exercise
-        self.onSaveRestOverride = onSaveRestOverride
         self.onSave = onSave
     }
 
@@ -369,36 +355,28 @@ struct ExerciseConfigView: View {
                     }
                 }
 
-                // Only when there is somewhere for the answer to go. The
-                // save path needs `SessionViewModel`, which #174 did not own,
-                // so the closure is nil at the one call site that exists
-                // today — and a toggle that takes an answer and silently
-                // discards it is worse than no toggle. The section appears
-                // the moment the call site passes a handler (#174).
-                if onSaveRestOverride != nil {
-                    Section {
-                        Toggle("Set my own rest time", isOn: $overridesRest.animation(.snappy))
+                Section {
+                    Toggle("Set my own rest time", isOn: $overridesRest.animation(.snappy))
 
-                        if overridesRest {
-                            ChoiceRow(
-                                caption: "Rest between sets",
-                                values: Self.restChoices,
-                                isSelected: { $0 == restSeconds },
-                                label: restLabel,
-                                onSelect: { restSeconds = $0 }
-                            )
-                        }
-                    } header: {
-                        Text("Rest")
-                    } footer: {
-                        // The gym report behind #174 was "keep the defaults,
-                        // just let me change one" — so the footer always names
-                        // what this lift would otherwise get, whether or not
-                        // it's currently overridden.
-                        Text(overridesRest
-                             ? "Otherwise defaults to \(restLabel(defaultRestSeconds)) for a lift like this."
-                             : "Defaults to \(restLabel(defaultRestSeconds)) — 3 minutes for compound lifts, 90 seconds for isolation work.")
+                    if overridesRest {
+                        ChoiceRow(
+                            caption: "Rest between sets",
+                            values: Self.restChoices,
+                            isSelected: { $0 == restSeconds },
+                            label: restLabel,
+                            onSelect: { restSeconds = $0 }
+                        )
                     }
+                } header: {
+                    Text("Rest")
+                } footer: {
+                    // The gym report behind #174 was "keep the defaults,
+                    // just let me change one" — so the footer always names
+                    // what this lift would otherwise get, whether or not
+                    // it's currently overridden.
+                    Text(overridesRest
+                         ? "Otherwise defaults to \(restLabel(defaultRestSeconds)) for a lift like this."
+                         : "Defaults to \(restLabel(defaultRestSeconds)) — 3 minutes for compound lifts, 90 seconds for isolation work.")
                 }
             }
             .navigationTitle(exercise.name)
@@ -464,8 +442,7 @@ struct ExerciseConfigView: View {
                 usesGymRack: followsGymRack
               )
             : nil
-        onSave(increment, loading)
-        onSaveRestOverride?(overridesRest ? restSeconds : nil)
+        onSave(increment, loading, overridesRest ? restSeconds : nil)
         dismiss()
     }
 
