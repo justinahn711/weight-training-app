@@ -33,6 +33,11 @@ final class SessionViewModel {
     private(set) var session: Session
     private(set) var failure: String?
 
+    /// The exact decisions saved by the successful Finish. Kept separately
+    /// from the live session so navigation can end without throwing away the
+    /// explanation the progression engine just produced (#184).
+    private(set) var completionSummary: [ProgressionSummaryEntry] = []
+
     /// The weight for the next set, seeded from the target and adjusted with
     /// the stepper. Held here rather than in the view so it survives the view
     /// being rebuilt as the day advances.
@@ -464,6 +469,21 @@ final class SessionViewModel {
             for entry in applied {
                 loadedStates[entry.exercise.id] = entry.result.state
             }
+            let summary = applied.compactMap { entry in
+                guard let performed = session.exercises
+                    .first(where: { $0.id == entry.exercise.id })?.loggedSets else {
+                    return nil
+                }
+                return ProgressionSummaryEntry(
+                    exercise: entry.exercise,
+                    performed: performed,
+                    result: entry.result
+                )
+            }
+            // If progression saved but clearing the draft failed, the retry is
+            // intentionally idempotent and `applied` is empty. Keep the exact
+            // first result rather than losing its explanation on that retry.
+            if !summary.isEmpty { completionSummary = summary }
             // Clear after progression. If this save fails, retrying is safe:
             // progression is idempotent for the session day, while retaining
             // the draft keeps a failed Finish recoverable.
