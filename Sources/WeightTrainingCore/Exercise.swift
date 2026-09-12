@@ -82,6 +82,22 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
     /// stacks, cables, and dumbbells, which have no plates to reason about.
     public var loading: LoadingStyle?
 
+    /// A person's own rest target for this lift, in seconds — nil until they
+    /// set one (#174).
+    ///
+    /// Unlike `increment` and `loading`, this is never materialized to a
+    /// concrete value at init time. Those two replace a *guess about the
+    /// apparatus* with a *fact about the apparatus* the moment one is known,
+    /// and there is nothing to go back to once that happens. Rest is
+    /// different: `restTarget`'s heuristic (`isCompound ? 180 : 90`) is the
+    /// right default for every lift nobody has touched, forever, so freezing
+    /// it into every `Exercise` the day this shipped would mean a future
+    /// change to that heuristic silently stops applying to lifts that were
+    /// only ever using the default by omission. Absence has to keep meaning
+    /// "use today's rule", not "use whatever the rule happened to say once."
+    /// See `restTarget` in `RestTimer.swift` for the fallback itself.
+    public var restOverride: TimeInterval?
+
     public init(
         id: UUID = UUID(),
         name: String,
@@ -90,7 +106,8 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
         increment: LoadIncrement? = nil,
         progressionRule: ProgressionRule,
         needsWarmupRamp: Bool = false,
-        loading: LoadingStyle? = nil
+        loading: LoadingStyle? = nil,
+        restOverride: TimeInterval? = nil
     ) {
         self.id = id
         self.name = name
@@ -100,6 +117,7 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
         self.progressionRule = progressionRule
         self.needsWarmupRamp = needsWarmupRamp
         self.loading = loading ?? equipment.defaultLoadingStyle
+        self.restOverride = restOverride
     }
 
     public var primaryMuscles: [Muscle] {

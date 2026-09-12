@@ -660,12 +660,17 @@ final class SessionViewModel {
     func updateConfiguration(
         of exercise: Exercise,
         increment: LoadIncrement,
-        loading: LoadingStyle?
+        loading: LoadingStyle?,
+        restOverride: TimeInterval?
     ) {
         do {
             var corrected = exercise
             corrected.increment = increment
             corrected.loading = loading
+            // Nil means "use the compound/isolation default", which is why it
+            // is assigned rather than only set when present: switching the
+            // override off has to be able to clear it (#174).
+            corrected.restOverride = restOverride
             try store.upsert(corrected)
 
             // The session's copy only needs rebuilding if this is still the

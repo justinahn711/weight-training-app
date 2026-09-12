@@ -156,8 +156,13 @@ struct SessionView: View {
             )
         }
         .sheet(item: $configuring) { exercise in
-            ExerciseConfigView(exercise: exercise) { increment, loading in
-                model.updateConfiguration(of: exercise, increment: increment, loading: loading)
+            ExerciseConfigView(exercise: exercise) { increment, loading, restOverride in
+                model.updateConfiguration(
+                    of: exercise,
+                    increment: increment,
+                    loading: loading,
+                    restOverride: restOverride
+                )
             }
         }
         .sheet(item: $enteringReps) { target in

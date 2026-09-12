@@ -171,6 +171,34 @@ final class PersistenceTests: XCTestCase {
         XCTAssertNil(try reopen().exercise(id: pulldown.id)?.loading)
     }
 
+    /// A rest override set once must still be there next launch — the same
+    /// "done when" #39 established for a measured loading style, now for
+    /// #174's rest override.
+    func testRestOverrideSurvivesRelaunch() throws {
+        var raise = ExerciseLibrary.all.first { $0.name == "Lateral Raise" }!
+        raise.restOverride = 150
+        do {
+            let store = try reopen()
+            try store.upsert(raise)
+        }
+        XCTAssertEqual(try reopen().exercise(id: raise.id)?.restOverride, 150)
+        XCTAssertEqual(try reopen().exercise(id: raise.id)?.restTarget, 150)
+    }
+
+    /// A lift nobody has touched keeps falling back to the heuristic after a
+    /// relaunch, not to some materialized 90 or 180 written the day #174
+    /// landed.
+    func testAbsentRestOverrideSurvivesRelaunch() throws {
+        let pulldown = ExerciseLibrary.all.first { $0.name == "Lat Pulldown" }!
+        do {
+            let store = try reopen()
+            try store.upsert(pulldown)
+        }
+        let reloaded = try XCTUnwrap(try reopen().exercise(id: pulldown.id))
+        XCTAssertNil(reloaded.restOverride)
+        XCTAssertEqual(reloaded.restTarget, pulldown.restTarget)
+    }
+
     func testProgressStateSurvivesRelaunch() throws {
         let exercise = inclinePress()
         let state = ProgressState(

@@ -72,9 +72,13 @@ extension Exercise {
         muscles.count >= 3 || equipment.isPlateBuilt
     }
 
-    /// Default rest between working sets: 3 minutes on compounds, 90 seconds
-    /// on isolation.
+    /// Rest between working sets: the lift's own override if the person set
+    /// one, otherwise 3 minutes on compounds / 90 seconds on isolation.
+    ///
+    /// The gym report behind #174 was "keep defaults the same but let me
+    /// adjust" — not a request to change the heuristic, so it stays exactly
+    /// as it was, consulted only when `restOverride` is nil.
     public var restTarget: TimeInterval {
-        isCompound ? 180 : 90
+        restOverride ?? (isCompound ? 180 : 90)
     }
 }

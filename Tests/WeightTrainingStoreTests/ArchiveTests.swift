@@ -429,6 +429,68 @@ final class ArchiveTests: XCTestCase {
         XCTAssertEqual(try fresh.dayTemplate(kind: .push)?.name, "Push")
     }
 
+    /// A file exported before #174 has no `"restOverride"` key on an exercise
+    /// at all — this is the actual shape produced by every build up to this
+    /// one, captured directly off `TrainingArchive.encoder` for a dumbbell
+    /// lift with no loading style (both fields are nil, and a nil-valued
+    /// stored property is omitted by synthesized `Encodable` rather than
+    /// written as `null`).
+    ///
+    /// #174's hard-won lesson (from #136's near miss) is that a shape change
+    /// on a domain type that flows straight into `TrainingArchive` — no
+    /// `Stored*` blob in between — has to be proven against the literal old
+    /// file, not just against `Exercise`'s own initialiser defaults, because
+    /// only the real archive-reading path exercises whatever custom decoding
+    /// the type carries. `Exercise` has none — it leans on synthesized
+    /// `Codable`, which is exactly what makes an added `Optional` stored
+    /// property safe: a missing key decodes as `nil` automatically, with no
+    /// custom `init(from:)` required to make it so.
+    func testAPreRestOverrideArchiveStillOpensAndRestores() throws {
+        let json = """
+        {
+          "version": 1,
+          "exportedAt": "2025-01-01T00:00:00Z",
+          "exercises": [
+            {
+              "id": "CB000001-0000-4000-8000-000000000001",
+              "name": "Incline DB Press",
+              "equipment": "dumbbell",
+              "increment": {"pounds": 5, "unit": "pounds"},
+              "muscles": [
+                {"muscle": "chest", "role": "primary"},
+                {"muscle": "frontDelts", "role": "secondary"},
+                {"muscle": "triceps", "role": "secondary"}
+              ],
+              "needsWarmupRamp": false,
+              "progressionRule": {
+                "doubleProgression": {
+                  "range": {"bottom": 8, "top": 12},
+                  "consecutiveTopHitsRequired": 2
+                }
+              }
+            }
+          ],
+          "sets": [],
+          "progressStates": [],
+          "dayTemplates": [],
+          "bodyweights": []
+        }
+        """
+        let archive = try TrainingArchive(json: Data(json.utf8))
+        let lift = try XCTUnwrap(archive.exercises.first)
+
+        XCTAssertNil(lift.restOverride,
+                    "no stored key reads as 'never set', not as zero seconds")
+        XCTAssertTrue(lift.isCompound, "three muscles tagged, so this is a compound")
+        XCTAssertEqual(lift.restTarget, 180,
+                       "an old file's lift keeps resting exactly as it did before #174")
+
+        let fresh = try TrainingStore.inMemory()
+        let report = try fresh.restore(from: archive)
+        XCTAssertEqual(report.exercises, 1)
+        XCTAssertEqual(try fresh.exercise(id: lift.id)?.restTarget, 180)
+    }
+
 }
 
 private extension TrainingStore {
