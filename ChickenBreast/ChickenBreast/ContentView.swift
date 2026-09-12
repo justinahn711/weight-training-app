@@ -46,6 +46,10 @@ struct ContentView: View {
     @State private var healthNeedsPermission = false
     @State private var days: [TrainingDay] = []
     @State private var showingSettings = false
+    /// Presented only after Finish has persisted progression and cleared the
+    /// draft. The sheet acknowledges the result; it never gates or repeats it.
+    @State private var completionSummary: [ProgressionSummaryEntry] = []
+    @State private var showingCompletionSummary = false
 
     /// The rotation currently in play, used for day names and ordering
     /// (#136). Read alongside `cycle` because both come from the same
@@ -89,6 +93,11 @@ struct ContentView: View {
                     )
                 }
                 .interactiveDismissDisabled()
+            }
+        }
+        .sheet(isPresented: $showingCompletionSummary) {
+            ProgressionCompletionView(entries: completionSummary) {
+                showingCompletionSummary = false
             }
         }
         // Keyed on the store arriving, so this runs after SwiftUI has updated
@@ -305,6 +314,27 @@ struct ContentView: View {
             Spacer()
 
             SyncBadge(status: sync)
+
+            if !completionSummary.isEmpty {
+                Button { showingCompletionSummary = true } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle")
+                            .foregroundStyle(.tint)
+                        Text("Review what’s next")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.tint)
+                    }
+                    .foregroundStyle(.primary)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("home.completion-summary")
+                .accessibilityHint("Shows the targets saved after your last workout.")
+            }
 
             if let cycle {
                 Text(cycle.summary())
@@ -635,8 +665,10 @@ struct ContentView: View {
 
     private func finishActiveSession() {
         guard let activeSession, activeSession.finish() else { return }
+        completionSummary = activeSession.completionSummary
         workoutDraft = nil
         route = nil
+        showingCompletionSummary = !completionSummary.isEmpty
     }
 
     /// Loads recovery when Health has already been answered, and otherwise
