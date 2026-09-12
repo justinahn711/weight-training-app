@@ -137,6 +137,46 @@ final class AccessibilityAuditTests: XCTestCase {
         undo.tap()
     }
 
+    /// Finish persists once, then the same saved decisions can be dismissed
+    /// and reviewed again without running progression a second time (#184).
+    func testFinishShowsProgressionSummaryAndItCanBeReopened() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20))
+        logSet.tap()
+
+        let finish = app.buttons["session.finish.header"]
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        finish.tap()
+
+        let confirm = app.buttons["finish.confirmation.finish"]
+        if confirm.waitForExistence(timeout: 2) {
+            confirm.tap()
+        }
+
+        let sheet = app.descendants(matching: .any)["completion.progression.sheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+
+        let rows = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'completion.progression.' AND identifier != 'completion.progression.sheet'")
+        )
+        XCTAssertGreaterThan(rows.count, 0)
+        let firstLabel = rows.firstMatch.label
+        XCTAssertTrue(firstLabel.contains("Next target"))
+
+        app.buttons["completion.done"].tap()
+        XCTAssertFalse(sheet.waitForExistence(timeout: 2))
+
+        let reopen = app.buttons["home.completion-summary"]
+        XCTAssertTrue(reopen.waitForExistence(timeout: 5))
+        reopen.tap()
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.firstMatch.label, firstLabel)
+    }
+
     /// Selection on the rep and RPE chips has to survive being unseen.
     func testChipSelectionIsExposedAsATrait() throws {
         let app = launch()
