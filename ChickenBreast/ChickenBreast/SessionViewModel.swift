@@ -150,6 +150,14 @@ final class SessionViewModel {
         publishActivity()
     }
 
+    /// Starts a rest without claiming a set happened. If a rest is already on
+    /// screen this intentionally restarts its same duration; otherwise the
+    /// current exercise's normal target is the useful one-tap default.
+    func startRest(now: Date = Date()) {
+        guard let current else { return }
+        startRest(now: now, duration: rest?.duration ?? current.exercise.restTarget)
+    }
+
     /// Removes the specifically named, just-logged set from session and disk.
     /// If a newer set has appeared, the stale offer disappears without
     /// touching history. Persistent corrections belong to the Today rows.
@@ -408,7 +416,7 @@ final class SessionViewModel {
         case .nextExercise:
             advance()
         case .startTimer(let seconds):
-            rest = RestTimer(startedAt: now, duration: seconds, setID: UUID())
+            startRest(now: now, duration: seconds)
         case .adjustLoad(let delta):
             pendingLoad = max(current.exercise.minimumLoad,
                               Load(pendingLoad.pounds + delta.pounds))
@@ -429,6 +437,20 @@ final class SessionViewModel {
                 ? now.addingTimeInterval(Self.autoCommitDelay)
                 : nil
         }
+    }
+
+    /// Voice may name a duration; the visible recovery action uses the
+    /// exercise default (or the duration already running).
+    private func startRest(now: Date, duration: TimeInterval) {
+        guard let current else { return }
+        let timer = RestTimer(startedAt: now, duration: duration)
+        rest = timer
+        let name = current.exercise.name
+        let next = current.prescription.isColdStart
+            ? nil
+            : current.prescription.displayLine(in: GymSettings.shared.unit)
+        Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
+        publishActivity()
     }
 
     /// Writes the pending values into the form and logs the set.
@@ -544,11 +566,14 @@ final class SessionViewModel {
             }
             recentlyLoggedSet = activitySet
 
-            if let record = activitySet, let endsAt = activityState.restEndsAt {
+            if let endsAt = activityState.restEndsAt {
+                let startedAt = activityState.restStartedAt
+                    ?? activitySet?.performedAt
+                    ?? endsAt.addingTimeInterval(-(current?.exercise.restTarget ?? 180))
                 rest = RestTimer(
-                    startedAt: record.performedAt,
-                    duration: max(0, endsAt.timeIntervalSince(record.performedAt)),
-                    setID: record.id
+                    startedAt: startedAt,
+                    duration: max(0, endsAt.timeIntervalSince(startedAt)),
+                    setID: activityState.restSetID ?? activitySet?.id
                 )
             } else {
                 rest = nil
@@ -585,7 +610,9 @@ final class SessionViewModel {
             targetRPE: current.prescription.rpe.value,
             logActionID: liveLogActionID,
             lastLoggedSetID: recentlyLoggedSet?.id,
-            restEndsAt: rest?.endsAt
+            restEndsAt: rest?.endsAt,
+            restStartedAt: rest?.startedAt,
+            restSetID: rest?.setID
         )
         isActivityEnded = false
         liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)

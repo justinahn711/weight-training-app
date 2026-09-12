@@ -296,7 +296,22 @@ struct SessionView: View {
             )
         }
         if let rest = model.rest {
-            RestBanner(rest: rest, onSkip: { model.skipRest() })
+            RestBanner(
+                rest: rest,
+                onRestart: { model.startRest() },
+                onSkip: { model.skipRest() }
+            )
+        } else {
+            Button {
+                model.startRest()
+            } label: {
+                Label("Start rest", systemImage: "timer")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityHint("Starts the recommended rest for this exercise")
+            .accessibilityIdentifier("session.rest.start")
         }
         if let record = model.recentlyLoggedSet {
             LoggedSetBanner(
@@ -1313,6 +1328,7 @@ private struct WarmupBlock: View {
 /// lock screen or from another app redraws the correct value immediately.
 private struct RestBanner: View {
     let rest: RestTimer
+    let onRestart: () -> Void
     let onSkip: () -> Void
 
     @AppStorage(RestAlertSettings.timingKey) private var showsTiming = RestAlertSettings.timingDefault
@@ -1354,9 +1370,17 @@ private struct RestBanner: View {
 
                 Spacer()
 
-                Button("Skip", action: onSkip)
-                    .font(.body.weight(.semibold))
-                    .buttonStyle(.bordered)
+                VStack(spacing: 4) {
+                    Button("Restart", action: onRestart)
+                        .font(.body.weight(.semibold))
+                        .buttonStyle(.bordered)
+                        .accessibilityHint("Restarts this timer from its full duration")
+                        .accessibilityIdentifier("session.rest.restart")
+                    Button("Skip", action: onSkip)
+                        .font(.subheadline)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("session.rest.skip")
+                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
@@ -1373,7 +1397,7 @@ private struct RestBanner: View {
         //
         // Keyed by the set, so it re-arms for the next rest and cancels when a
         // set is undone or the rest is skipped — the view goes away with it.
-        .task(id: rest.setID) {
+        .task(id: rest.startedAt) {
             let deadline = rest.endsAt
             guard deadline.timeIntervalSinceNow > 0 else { return }
 

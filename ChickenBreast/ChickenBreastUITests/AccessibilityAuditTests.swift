@@ -137,6 +137,34 @@ final class AccessibilityAuditTests: XCTestCase {
         undo.tap()
     }
 
+    /// A dismissed or missing timer must be recoverable without fabricating a
+    /// set. The exact countdown and ActivityKit mirroring need a phone, but
+    /// this guards the one-tap app path and its reversible states.
+    func testRestCanStartRestartAndStopWithoutLoggingASet() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let start = app.buttons["session.rest.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 20))
+        start.tap()
+
+        let restart = app.buttons["session.rest.restart"]
+        let skip = app.buttons["session.rest.skip"]
+        XCTAssertTrue(restart.waitForExistence(timeout: 5))
+        XCTAssertTrue(skip.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Undo"].exists,
+                       "starting rest must not create a set with an Undo offer")
+
+        restart.tap()
+        XCTAssertTrue(restart.waitForExistence(timeout: 5),
+                      "restarting should keep the timer in its running state")
+
+        skip.tap()
+        XCTAssertTrue(start.waitForExistence(timeout: 5),
+                      "ending rest should restore the deliberate start path")
+    }
+
     /// Back and Next exercise used to sit side by side, adjacent, and moving
     /// in opposite directions (#177). Both already carry 44pt hit areas from
     /// #114, so this guards the thing #114 didn't: that a mis-tap between

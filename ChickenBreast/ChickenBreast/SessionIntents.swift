@@ -85,6 +85,7 @@ struct LogTargetSetIntent: LiveActivityIntent {
         await SessionActivityRefresh.afterLoggedSet(
             workoutID: workoutID,
             setID: setID,
+            restStartedAt: record.performedAt,
             restEndsAt: record.performedAt.addingTimeInterval(
                 (try? store.exercise(id: id))?.restTarget ?? 180
             )
@@ -160,12 +161,15 @@ enum SessionActivityRefresh {
     static func afterLoggedSet(
         workoutID: String,
         setID: UUID,
+        restStartedAt: Date,
         restEndsAt: Date
     ) async {
         guard let activity = current(workoutID: workoutID) else { return }
         var state = activity.content.state
         state.setsLogged += 1
+        state.restStartedAt = restStartedAt
         state.restEndsAt = restEndsAt
+        state.restSetID = setID
         state.lastLoggedSetID = setID
         state.logActionID = UUID()
         await activity.update(ActivityContent(state: state, staleDate: restEndsAt))
@@ -174,7 +178,9 @@ enum SessionActivityRefresh {
     static func clearRest(workoutID: String) async {
         guard let activity = current(workoutID: workoutID) else { return }
         var state = activity.content.state
+        state.restStartedAt = nil
         state.restEndsAt = nil
+        state.restSetID = nil
         await activity.update(ActivityContent(state: state, staleDate: nil))
     }
 
@@ -183,7 +189,9 @@ enum SessionActivityRefresh {
               activity.content.state.lastLoggedSetID == setID else { return }
         var state = activity.content.state
         state.setsLogged = max(0, state.setsLogged - 1)
+        state.restStartedAt = nil
         state.restEndsAt = nil
+        state.restSetID = nil
         state.lastLoggedSetID = nil
         state.logActionID = UUID()
         await activity.update(ActivityContent(state: state, staleDate: nil))

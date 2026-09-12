@@ -12,10 +12,12 @@ public struct RestTimer: Hashable, Sendable {
     public let duration: TimeInterval
 
     /// The set that started this rest, so undoing that set can take the timer
-    /// away with it (#8).
-    public let setID: UUID
+    /// away with it (#8). Nil for a rest the lifter started deliberately —
+    /// that timer is not evidence that a set happened and undoing a prior set
+    /// must not erase it (#173).
+    public let setID: UUID?
 
-    public init(startedAt: Date, duration: TimeInterval, setID: UUID) {
+    public init(startedAt: Date, duration: TimeInterval, setID: UUID? = nil) {
         self.startedAt = startedAt
         self.duration = duration
         self.setID = setID
