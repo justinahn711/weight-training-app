@@ -64,6 +64,14 @@ struct SessionActivityAttributes: ActivityAttributes {
         /// throttle long before the rest was over.
         var restEndsAt: Date?
 
+        /// Enough identity to rebuild either kind of rest after unlocking.
+        /// `restSetID` is nil for a timer started deliberately; unlike
+        /// `lastLoggedSetID`, it describes the timer rather than the Undo
+        /// offer. Optional fields keep an activity from an older build
+        /// decodable during an upgrade.
+        var restStartedAt: Date? = nil
+        var restSetID: UUID? = nil
+
         var isResting: Bool { restEndsAt != nil }
     }
 

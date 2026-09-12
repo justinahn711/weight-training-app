@@ -64,6 +64,20 @@ final class RestTimerTests: XCTestCase {
         XCTAssertTrue(rest.isComplete(at: start))
         XCTAssertEqual(rest.progress(at: start), 1)
     }
+
+    func testDeliberatelyStartedRestHasNoSetAssociation() {
+        let rest = RestTimer(startedAt: start, duration: 90)
+
+        XCTAssertNil(rest.setID)
+        XCTAssertEqual(rest.endsAt, start.addingTimeInterval(90))
+    }
+
+    func testSetStartedRestRetainsItsAssociation() {
+        let setID = UUID()
+        let rest = RestTimer(startedAt: start, duration: 180, setID: setID)
+
+        XCTAssertEqual(rest.setID, setID)
+    }
 }
 
 final class RestTargetTests: XCTestCase {
