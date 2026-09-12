@@ -272,6 +272,15 @@ struct SessionView: View {
 
     @ViewBuilder
     private var statusBanners: some View {
+        // `heard` and `rest` are independent optionals on the model — a rest
+        // can easily be running while a voice parse is awaiting confirmation.
+        // These used to be `if / else if`, so the rest banner (and the
+        // running clock it's the only visible face of) was hidden for as
+        // long as the heard banner was up, and did not return if the rest
+        // ended while it was hidden. That read as "the rest timer vanished"
+        // (#173, first half) even though the timer itself was never touched.
+        // Independent `if`s let both stack, the same way the logged-set
+        // banner already stacks below either of them.
         if let heard = model.heard {
             HeardBanner(
                 heard: heard,
@@ -285,7 +294,8 @@ struct SessionView: View {
                     voice.consume()
                 }
             )
-        } else if let rest = model.rest {
+        }
+        if let rest = model.rest {
             RestBanner(rest: rest, onSkip: { model.skipRest() })
         }
         if let record = model.recentlyLoggedSet {
@@ -754,7 +764,24 @@ struct SessionView: View {
             }
 
             Button {
+                // Once this set is written the weight is settled — the next
+                // set inherits it, and the plate buttons have nothing left to
+                // correct until something changes. Leaving the row open just
+                // pushes the set rows underneath it down for the rest of the
+                // exercise (#170).
+                //
+                // `logSet` returns nothing, and `model.failure` isn't cleared
+                // on success, so a stale failure from something unrelated
+                // could make "did this call fail" unreadable from `failure`
+                // alone. Comparing before/after sidesteps that: `commit` only
+                // ever *sets* `failure` on its own catch, so if the string is
+                // unchanged this call didn't fail, whatever the value was
+                // going in.
+                let failureBeforeLogging = model.failure
                 model.logSet()
+                if model.failure == failureBeforeLogging {
+                    withAnimation(.snappy) { isPlateRowExpanded = false }
+                }
             } label: {
                 Text("Log Set")
                     .font(.title3.bold())
@@ -774,6 +801,15 @@ struct SessionView: View {
                 // set; it exists for an extra rep beyond the ramp, or for a
                 // lift the ramp doesn't offer one on at all, so its name says
                 // "in addition to" rather than "instead of".
+                //
+                // Deliberately does *not* collapse the plate row the way the
+                // working `Log Set` button does (#170). Ramping is a sequence
+                // of different weights built one after another; a lifter
+                // mid-ramp who is using the plate buttons to move from rung to
+                // rung would have the row slammed shut after every single one.
+                // A working set is a destination — the weight is settled once
+                // logged. A warmup set is a waypoint, and the controls that
+                // got you there are exactly what gets you to the next one.
                 Button("Extra warmup") { model.logSet(isWarmup: true) }
                     .font(.subheadline)
                     .frame(minHeight: 44)
@@ -781,26 +817,56 @@ struct SessionView: View {
                     .accessibilityHint("Logs the current values as an extra warmup set")
                     .accessibilityIdentifier("session.log-warmup")
                 Spacer()
+                // `Back` stays paired with `Extra warmup` on this secondary
+                // row instead of beside `Next exercise` (#177). It is muted —
+                // plain text, secondary colour, no fill — because it is the
+                // correction, not the common action, and correcting a
+                // direction that shares a row, a style and a thumb's-width
+                // of space with the control that moves the opposite way is
+                // exactly how a rest-set mis-tap costs a navigation.
                 if model.session.currentIndex > 0 {
-                    Button("Back") { model.goBack() }
-                        .font(.subheadline)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("session.exercise.previous")
+                    Button {
+                        model.goBack()
+                    } label: {
+                        Label("Back", systemImage: "chevron.backward")
+                            .font(.subheadline)
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("session.exercise.previous")
                 }
-                if !model.session.isOnLastExercise {
-                    Button("Next exercise") { model.advance() }
+            }
+
+            // Its own row, full width, bordered rather than plain text: this
+            // is the common action (#177), the one advancing the whole
+            // session, so it earns a visual weight distinct from — and
+            // physically apart from — the correction above. `Finish workout`
+            // takes the identical treatment on the last exercise, so the
+            // swap changes only the label and destination, never the
+            // hierarchy the lifter has learned to trust.
+            if !model.session.isOnLastExercise {
+                Button {
+                    model.advance()
+                } label: {
+                    Label("Next exercise", systemImage: "chevron.forward")
                         .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
                         .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("session.exercise.next")
-                } else {
-                    Button("Finish workout", action: requestFinish)
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("session.finish.footer")
                 }
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .accessibilityIdentifier("session.exercise.next")
+            } else {
+                Button(action: requestFinish) {
+                    Text("Finish workout")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .accessibilityIdentifier("session.finish.footer")
             }
         }
         .padding(.horizontal, isCompact ? 12 : 20)

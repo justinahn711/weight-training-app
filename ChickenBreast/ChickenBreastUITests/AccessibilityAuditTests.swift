@@ -137,6 +137,92 @@ final class AccessibilityAuditTests: XCTestCase {
         undo.tap()
     }
 
+    /// Back and Next exercise used to sit side by side, adjacent, and moving
+    /// in opposite directions (#177). Both already carry 44pt hit areas from
+    /// #114, so this guards the thing #114 didn't: that a mis-tap between
+    /// them isn't one slide of a thumb away. Back is now a muted control on
+    /// its own row, entirely above the full-width Next exercise / Finish
+    /// workout row below it.
+    func testBackAndNextExerciseAreSeparated() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let next = app.buttons["session.exercise.next"]
+        let back = app.buttons["session.exercise.previous"]
+        let finish = app.buttons["session.finish.footer"]
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        // A workout left mid-session by an earlier test in this run can
+        // resume anywhere — first exercise, last, or in between — so this
+        // doesn't assume a fresh start. It moves at most one step to reach a
+        // middle exercise where Back and Next both exist, which is all the
+        // separation check below actually needs.
+        if !back.exists {
+            XCTAssertTrue(next.waitForExistence(timeout: 20), "Next exercise should be reachable")
+            next.tap()
+        } else if !next.exists {
+            XCTAssertTrue(finish.waitForExistence(timeout: 5))
+            back.tap()
+        }
+
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "Back should appear once there is a prior exercise")
+        XCTAssertTrue(next.waitForExistence(timeout: 5), "Next exercise should appear once off the last exercise")
+
+        for button in [back, next] {
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+
+        // Separated by row, not merely by width: Back sits entirely above
+        // Next exercise rather than beside it, where a thumb sliding to the
+        // common action could clip the correction instead.
+        XCTAssertLessThanOrEqual(
+            back.frame.maxY, next.frame.minY,
+            "Back and Next exercise should occupy separate rows, not sit side by side"
+        )
+    }
+
+    /// The last exercise swaps Next exercise for Finish workout (#177); the
+    /// separation from Back has to hold for that swap too, not just the
+    /// common case checked above.
+    func testFinishWorkoutReplacesNextOnLastExerciseAndStaysSeparatedFromBack() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let next = app.buttons["session.exercise.next"]
+        let finish = app.buttons["session.finish.footer"]
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        // A workout left in progress by an earlier test in this run can
+        // resume already parked on the last exercise (openPushDay's own
+        // comment above documents the same order-dependency for Resume), so
+        // this doesn't assume starting on the first exercise — it advances
+        // for as long as Next exercise is still there. Bounded well past
+        // Push's six slots so a real regression here fails instead of
+        // looping forever.
+        var taps = 0
+        while next.waitForExistence(timeout: 2), next.isHittable {
+            next.tap()
+            taps += 1
+            XCTAssertLessThan(taps, 10, "Next exercise should reach the last exercise well within 10 taps")
+        }
+
+        XCTAssertTrue(finish.waitForExistence(timeout: 5),
+                      "Finish workout should replace Next exercise on the last exercise")
+        XCTAssertFalse(next.exists)
+
+        let back = app.buttons["session.exercise.previous"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(
+            back.frame.maxY, finish.frame.minY,
+            "Back and the footer's Finish workout should stay on separate rows"
+        )
+    }
+
     /// Selection on the rep and RPE chips has to survive being unseen.
     func testChipSelectionIsExposedAsATrait() throws {
         let app = launch()
