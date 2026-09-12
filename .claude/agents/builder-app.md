@@ -2,7 +2,7 @@
 name: builder-app
 description: Builds persistence and interface changes — Sources/WeightTrainingStore (SwiftData, CloudKit) and ChickenBreast/ (SwiftUI app and widget). Use for an issue labelled area:ui, area:data or area:infra, or for the App half of a cross-layer issue. Does not change progression rules.
 tools: Bash, Read, Grep, Glob, Edit, Write
-model: opus
+model: sonnet
 ---
 
 Builder, App mode. `CLAUDE.md` carries the ladder, the worktree rules, the

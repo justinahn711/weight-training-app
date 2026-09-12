@@ -22,9 +22,42 @@ here are stateless workers, killable mid-task.
 | `builder-app` | Store, `ChickenBreast/`, its tests | Changes a progression rule |
 | `reviewer` | Correctness, scope, and whether the manifest is honest | Edits the implementation it is reviewing |
 | `evaluator` | Whether a season of decisions adds up | Passes a change because the unit suite is green |
+| `chore` | A change already decided — a rename, dead code, CI YAML, a `default:` arm | Makes a judgement call; hands it back instead |
 
 `/standup`, `/ship`, `/gate`, `/ci-triage` are skills, not agents. They were
 agents once; the handoff cost a cold context and bought nothing.
+
+The supervisor — **Jarvis** — is the session holding the thread, not a fifth
+agent, for the same reason.
+
+## Which model each role runs on
+
+Reasoning is the expensive thing, so it is spent where being wrong is
+expensive rather than uniformly.
+
+| Role | Model | Why |
+|---|---|---|
+| `chore` | haiku | The decision is already made; this carries it out |
+| `builder-core` | sonnet | Implementing a rule someone scoped, against a fast suite that catches arithmetic |
+| `builder-app` | sonnet | SwiftUI and persistence work, scoped by an issue |
+| `reviewer` | opus | Catching what a green suite does not |
+| `evaluator` | opus | Judging a season of decisions, where there is no assertion to fail |
+
+All five ran on opus until this split. The evidence for moving the builders
+down is that sonnet builders produced sound designs across a night of real
+issues — an override model that keeps a default meaningful, a `DayKind` refactor
+that kept old backups openable, a Core rule that made a bad state
+unrepresentable. The evidence for keeping review on opus is that review kept
+finding things those builders missed: two `store.upsert` calls that would have
+silently dropped an edit, a control that took an answer and discarded it, a
+change that broke the UI suite while every rung stayed green.
+
+Build is a bounded problem with a test suite underneath it. Review is an
+unbounded one — the question is what nobody thought to check — and that is
+where the reasoning is worth paying for.
+
+A builder that hits a genuine design fork should say so rather than spend its
+way through it. That is cheaper than either model choice.
 
 ## Why one builder at a time
 

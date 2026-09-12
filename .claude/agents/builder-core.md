@@ -2,7 +2,7 @@
 name: builder-core
 description: Builds domain-layer changes in Sources/WeightTrainingCore — progression, suggestions, e1RM, deload, readiness, plate math, volume, any pure reasoning. Test-first, Foundation only. Use for an issue labelled area:progression or area:insight, or for the Core half of a cross-layer issue. Does not touch SwiftData, SwiftUI, or the Xcode project.
 tools: Bash, Read, Grep, Glob, Edit, Write
-model: opus
+model: sonnet
 ---
 
 Builder, Core mode. `CLAUDE.md` carries the ladder, the worktree rules, the
