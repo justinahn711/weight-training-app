@@ -18,6 +18,8 @@ import WeightTrainingStore
 /// scrolling gets worse every week you train.
 struct HistoryView: View {
     let store: TrainingStore
+    let activeSetIDs: Set<UUID>
+    let onSetsDeleted: () -> Void
 
     /// Reloaded here rather than handed down, because correcting a set (#61)
     /// changes what this screen shows and the change has to be visible without
@@ -27,8 +29,15 @@ struct HistoryView: View {
     @State private var selected: TrainingDay?
     @State private var weeklyTarget = 3
 
-    init(days: [TrainingDay], store: TrainingStore) {
+    init(
+        days: [TrainingDay],
+        store: TrainingStore,
+        activeSetIDs: Set<UUID> = [],
+        onSetsDeleted: @escaping () -> Void = {}
+    ) {
         self.store = store
+        self.activeSetIDs = activeSetIDs
+        self.onSetsDeleted = onSetsDeleted
         _days = State(initialValue: days)
     }
 
@@ -87,7 +96,13 @@ struct HistoryView: View {
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $selected) { day in
-            DayDetailView(day: day, store: store, onChange: reload)
+            DayDetailView(
+                day: day,
+                store: store,
+                activeSetIDs: activeSetIDs,
+                onChange: reload,
+                onSetsDeleted: onSetsDeleted
+            )
         }
     }
 
@@ -369,10 +384,15 @@ private struct Legend: View {
 struct DayDetailView: View {
     let day: TrainingDay
     let store: TrainingStore
+    let activeSetIDs: Set<UUID>
     let onChange: () -> Void
+    let onSetsDeleted: () -> Void
 
     @State private var editing: EditTarget?
     @State private var failure: String?
+    @State private var isSelecting = false
+    @State private var selectedSetIDs: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
 
     /// A set, plus the lift it belongs to — the editor needs the increment to
     /// step the weight by, and the lift isn't on the record.
@@ -390,11 +410,37 @@ struct DayDetailView: View {
                 Section {
                     ForEach(performed.sets, id: \.id) { set in
                         Button {
-                            editing = EditTarget(record: set, exercise: performed.exercise)
+                            if isSelecting {
+                                toggleSelection(of: set.id)
+                            } else {
+                                editing = EditTarget(record: set, exercise: performed.exercise)
+                            }
                         } label: {
-                            SetRow(set: set)
+                            HStack(spacing: 12) {
+                                if isSelecting {
+                                    Image(systemName: selectedSetIDs.contains(set.id)
+                                          ? "checkmark.circle.fill" : "circle")
+                                        .font(.title3)
+                                        .foregroundStyle(selectedSetIDs.contains(set.id)
+                                                         ? AnyShapeStyle(.tint)
+                                                         : AnyShapeStyle(.secondary))
+                                        .accessibilityHidden(true)
+                                }
+                                SetRow(set: set)
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(rowAccessibilityLabel(for: set))
+                        .accessibilityHint(isSelecting
+                            ? (selectedSetIDs.contains(set.id)
+                               ? "Double tap to remove from selection."
+                               : "Double tap to select for deletion.")
+                            : "Double tap to edit this set.")
+                        .accessibilityAddTraits(
+                            isSelecting && selectedSetIDs.contains(set.id) ? .isSelected : []
+                        )
                     }
                 } header: {
                     HStack {
@@ -412,6 +458,23 @@ struct DayDetailView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(isSelecting ? "Cancel" : "Select") {
+                    if isSelecting {
+                        leaveSelectionMode()
+                    } else {
+                        isSelecting = true
+                    }
+                }
+                .accessibilityIdentifier("history.selection.toggle")
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                selectionBar
+            }
+        }
         .sheet(item: $editing) { target in
             EditSetView(
                 set: target.record,
@@ -424,13 +487,117 @@ struct DayDetailView: View {
                 }
             )
         }
-        .alert("Couldn't save that", isPresented: Binding(
+        .confirmationDialog(deleteConfirmationTitle,
+                            isPresented: $confirmingBulkDelete,
+                            titleVisibility: .visible) {
+            Button(deleteButtonTitle, role: .destructive) {
+                deleteSelection()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(deleteConfirmationMessage)
+        }
+        .alert("Couldn't update history", isPresented: Binding(
             get: { failure != nil }, set: { if !$0 { failure = nil } }
         )) {
             Button("OK") { failure = nil }
         } message: {
             Text(failure ?? "")
         }
+    }
+
+    private var allSetIDs: Set<UUID> {
+        Set(day.exercises.flatMap(\.sets).map(\.id))
+    }
+
+    private var selectedActiveSetCount: Int {
+        selectedSetIDs.intersection(activeSetIDs).count
+    }
+
+    private var selectionBar: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Button(selectedSetIDs == allSetIDs ? "Deselect all" : "Select all") {
+                    selectedSetIDs = selectedSetIDs == allSetIDs ? [] : allSetIDs
+                }
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("history.selection.all")
+                Spacer()
+                Text("\(selectedSetIDs.count) selected")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("\(selectedSetIDs.count) sets selected")
+            }
+
+            Button(role: .destructive) {
+                confirmingBulkDelete = true
+            } label: {
+                Text(deleteButtonTitle)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .disabled(selectedSetIDs.isEmpty)
+            .accessibilityIdentifier("history.selection.delete")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    private func toggleSelection(of id: UUID) {
+        if selectedSetIDs.contains(id) {
+            selectedSetIDs.remove(id)
+        } else {
+            selectedSetIDs.insert(id)
+        }
+    }
+
+    private func leaveSelectionMode() {
+        selectedSetIDs = []
+        isSelecting = false
+        confirmingBulkDelete = false
+    }
+
+    private func deleteSelection() {
+        do {
+            _ = try store.deleteSets(ids: selectedSetIDs)
+            leaveSelectionMode()
+            onSetsDeleted()
+            onChange()
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
+    private var deleteButtonTitle: String {
+        "Delete \(selectedSetIDs.count) \(selectedSetIDs.count == 1 ? "set" : "sets")"
+    }
+
+    private var deleteConfirmationTitle: String {
+        "Delete \(selectedSetIDs.count) \(selectedSetIDs.count == 1 ? "set" : "sets") from \(confirmationDate)?"
+    }
+
+    private var deleteConfirmationMessage: String {
+        var message = "This removes them from History, volume, records, and trends. Existing next targets won't change automatically."
+        if selectedActiveSetCount > 0 {
+            message += " \(selectedActiveSetCount == 1 ? "One set is" : "\(selectedActiveSetCount) sets are") also in your active workout and will be removed there."
+        }
+        return message
+    }
+
+    private var confirmationDate: String {
+        day.date.formatted(.dateTime.month(.wide).day().year())
+    }
+
+    private func rowAccessibilityLabel(for set: SetRecord) -> String {
+        var parts = ["\(set.load.formatted(in: GymSettings.shared.unit)), \(set.reps) reps"]
+        if set.isWarmup { parts.append("warmup") }
+        if let rpe = set.rpe { parts.append("RPE \(rpe)") }
+        if isSelecting {
+            parts.append(selectedSetIDs.contains(set.id) ? "selected" : "not selected")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func apply(_ work: () throws -> Void) {
@@ -550,7 +717,7 @@ private struct EditSetView: View {
                     dismiss()
                 }
             } message: {
-                Text("It stops counting towards volume, e1RM and your next target.")
+                Text("It stops counting towards future volume, e1RM and history. A target already applied when you finished the workout does not rewind.")
             }
         }
     }

@@ -133,6 +133,34 @@ final class WorkoutDraftTests: XCTestCase {
         XCTAssertEqual(resumed.current?.loggedSets, [afterMidnight])
     }
 
+    func testResumeDropsActiveSetsDeletedFromHistory() throws {
+        let store = try openStore()
+        let session = try store.startSession(kind: .push, startedAt: todayAtNoon)
+        let current = try XCTUnwrap(session.current)
+        let first = SetRecord(
+            exerciseID: current.id,
+            load: Load(100),
+            reps: 8,
+            rpe: .eight,
+            performedAt: todayAtNoon
+        )
+        let second = SetRecord(
+            exerciseID: current.id,
+            load: Load(100),
+            reps: 7,
+            rpe: .eight,
+            performedAt: todayAtNoon.addingTimeInterval(60)
+        )
+        try store.log(first)
+        try store.log(second)
+        let draft = WorkoutDraft(session: session)
+        try store.saveWorkoutDraft(draft)
+
+        try store.deleteSets(ids: [second.id])
+
+        XCTAssertEqual(try store.resumeSession(draft).current?.loggedSets, [first])
+    }
+
     func testLatestSyncedDraftWinsDeduplication() throws {
         let store = try openStore()
         let older = WorkoutDraft(

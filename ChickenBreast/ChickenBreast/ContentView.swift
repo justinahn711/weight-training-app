@@ -217,7 +217,15 @@ struct ContentView: View {
             if let store {
                 // No `insightsLoaded` gate: HistoryView loads its own days on
                 // appearance now, so it is correct as soon as the store is.
-                HistoryView(days: days, store: store)
+                HistoryView(
+                    days: days,
+                    store: store,
+                    activeSetIDs: Set(activeSession?.session.allLoggedSets.map(\.id) ?? []),
+                    onSetsDeleted: {
+                        activeSession?.reconcilePersistedSetsAfterHistoryEdit()
+                        refresh()
+                    }
+                )
             } else {
                 unavailable("History")
             }
