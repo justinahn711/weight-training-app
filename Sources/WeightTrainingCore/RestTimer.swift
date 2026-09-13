@@ -13,9 +13,17 @@ public struct RestTimer: Hashable, Sendable {
 
     /// The set that started this rest, so undoing that set can take the timer
     /// away with it (#8).
-    public let setID: UUID
+    ///
+    /// Optional because not every rest is anchored to a set. A rest started by
+    /// hand — the voice `.startTimer` command, or a deliberate restart when
+    /// none is running (#173) — has no `SetRecord` to point at. Before this it
+    /// was non-optional, which forced the voice path to fabricate a `UUID()`
+    /// that named a set that never existed; `nil` says plainly that this rest
+    /// isn't tied to one, and undo (keyed on `setID == record.id`) simply never
+    /// matches it, which is the correct behaviour — there's nothing to undo.
+    public let setID: UUID?
 
-    public init(startedAt: Date, duration: TimeInterval, setID: UUID) {
+    public init(startedAt: Date, duration: TimeInterval, setID: UUID?) {
         self.startedAt = startedAt
         self.duration = duration
         self.setID = setID

@@ -326,6 +326,17 @@ struct SessionView: View {
         }
         if let rest = model.rest {
             RestBanner(rest: rest, onSkip: { model.skipRest() })
+        } else {
+            // The other half of #173: a rest that was skipped, lost, or never
+            // started could only be replaced by logging a set that wasn't
+            // performed, or by speaking to the app — and voice needs a quiet
+            // room and a listening phone, which is exactly what's missing in
+            // the gym report that opened this issue. `RestBanner`'s own slot
+            // is the natural home for a rest control, but there's no banner to
+            // put a button on when nothing is running — so this sits in the
+            // same spot, styled low enough not to read as a status when there
+            // is nothing to report.
+            StartRestControl(onStart: { model.startRest() })
         }
         if let record = model.recentlyLoggedSet {
             LoggedSetBanner(
@@ -1415,6 +1426,36 @@ private struct WarmupBlock: View {
     }
 }
 
+/// The manual half of #173: a button that starts a rest when nothing logged
+/// one, sitting exactly where `RestBanner` would once one is running.
+///
+/// Deliberately plain rather than another filled banner — this is on screen
+/// almost the entire time nobody is resting, and a control that looks like a
+/// status would read as one more thing to check on a screen that already has
+/// nothing to report.
+private struct StartRestControl: View {
+    let onStart: () -> Void
+
+    var body: some View {
+        Button(action: onStart) {
+            HStack(spacing: 8) {
+                Image(systemName: "timer")
+                Text("Start Rest")
+                    .font(.subheadline.weight(.medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 20)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start rest")
+        .accessibilityHint("Starts a rest timer for this exercise without logging a set")
+        .accessibilityIdentifier("session.rest.start")
+    }
+}
+
 /// The rest clock — the primary thing on screen while resting (#6).
 ///
 /// Driven by `TimelineView` off the system clock rather than by a `Timer`
@@ -1480,9 +1521,14 @@ private struct RestBanner: View {
         // is why the buzz was missing on a phone with notifications on and the
         // session on screen (#69).
         //
-        // Keyed by the set, so it re-arms for the next rest and cancels when a
-        // set is undone or the rest is skipped — the view goes away with it.
-        .task(id: rest.setID) {
+        // Keyed by the whole timer rather than just `rest.setID`: a rest
+        // started by hand or by voice has no set to key on (`setID` is nil,
+        // #173), and two of those in a row would otherwise share the same
+        // `nil` key and never re-arm this task for the second one. `startedAt`
+        // always differs, so keying on the full `Hashable` value re-arms for
+        // every rest, set-anchored or not, and still cancels when a set is
+        // undone or the rest is skipped — the view goes away with it either way.
+        .task(id: rest) {
             let deadline = rest.endsAt
             guard deadline.timeIntervalSinceNow > 0 else { return }
 

@@ -127,24 +127,71 @@ final class SessionViewModel {
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
             if startsRest {
-                let timer = RestTimer(
-                    startedAt: record.performedAt,
+                // `beginRest` already publishes the activity; calling it again
+                // below would just be a second, identical push.
+                beginRest(
                     duration: current.exercise.restTarget,
-                    setID: record.id
+                    setID: record.id,
+                    at: record.performedAt,
+                    for: current
                 )
-                rest = timer
-                // The alert is what makes resting with the phone away possible
-                // (#69); the Live Activity only helps if you're looking.
-                let name = current.exercise.name
-                let next = current.prescription.isColdStart
-                    ? nil
-                    : current.prescription.displayLine(in: GymSettings.shared.unit)
-                Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
+            } else {
+                publishActivity()
             }
-            publishActivity()
         } catch {
             failure = "Couldn't save that set: \(error.localizedDescription)"
         }
+    }
+
+    /// The one place every rest begins, whatever triggered it: logging a set,
+    /// the voice `.startTimer` command, or a deliberate tap when none is
+    /// running (#173's missing control). Both side effects a running rest
+    /// needs — the alert that fires with the phone away (#69), and the
+    /// lock-screen push so a glance shows the same clock the screen does
+    /// (#172) — happen here exactly once. #169 and #172 were both a third
+    /// caller forgetting what the other two remembered; routing every path
+    /// through this one method is what keeps a future caller from doing it
+    /// again.
+    ///
+    /// `setID` is nil unless this rest was started *by* a specific set —
+    /// undoing that set is the only thing allowed to take the rest away with
+    /// it (#8). Voice's `.startTimer` and a manual restart have no set to
+    /// point at; before this, voice fabricated a `UUID()` that named a
+    /// `SetRecord` which never existed. `RestTimer.setID` is optional now so a
+    /// caller with nothing to point at can say so instead of lying.
+    private func beginRest(
+        duration: TimeInterval,
+        setID: UUID?,
+        at now: Date,
+        for exercise: SessionExercise
+    ) {
+        let timer = RestTimer(startedAt: now, duration: duration, setID: setID)
+        rest = timer
+        // The alert is what makes resting with the phone away possible (#69);
+        // the Live Activity only helps if you're looking.
+        let name = exercise.exercise.name
+        let next = exercise.prescription.isColdStart
+            ? nil
+            : exercise.prescription.displayLine(in: GymSettings.shared.unit)
+        Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
+        publishActivity()
+    }
+
+    /// Starts a rest by hand — the missing half of #173. A rest that vanished
+    /// mid-set, was skipped, or never started could previously only be
+    /// replaced by logging a set that wasn't performed, or by speaking to the
+    /// app (voice's `.startTimer`, the only other door into a rest). That's no
+    /// good in the room this issue was reported from: chalk on the hands,
+    /// noise that defeats voice.
+    ///
+    /// Goes through `beginRest` like every other rest, so the duration comes
+    /// from `Exercise.restTarget` (#174) rather than a hardcoded number, and
+    /// this rest gets the same completion alert any other one does — silently
+    /// dropping that would be the same class of omission as #172, just for a
+    /// rest nobody logged a set to start.
+    func startRest() {
+        guard let current else { return }
+        beginRest(duration: current.exercise.restTarget, setID: nil, at: Date(), for: current)
     }
 
     /// Dismisses the rest clock without touching the logged set.
@@ -432,10 +479,13 @@ final class SessionViewModel {
         case .nextExercise:
             advance()
         case .startTimer(let seconds):
-            rest = RestTimer(startedAt: now, duration: seconds, setID: UUID())
-            // Started outside `commit`, so nothing else on this path tells the
-            // lock screen the rest changed unless this does (#172).
-            publishActivity()
+            // Used to build its own `RestTimer` inline — setting `rest` and
+            // calling `publishActivity()` but never `RestNotification`, which
+            // meant a rest started by voice alone never got the completion
+            // alert (the same class of omission as #172, just missed here
+            // instead). Routing through `beginRest` fixes that and closes off
+            // this becoming a third independent way to start a rest (#173).
+            beginRest(duration: seconds, setID: nil, at: now, for: current)
         case .adjustLoad(let delta):
             pendingLoad = max(current.exercise.minimumLoad,
                               Load(pendingLoad.pounds + delta.pounds))
