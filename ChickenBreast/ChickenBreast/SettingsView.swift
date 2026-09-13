@@ -323,6 +323,7 @@ struct SettingsView: View {
                 Text("Lift library")
             }
             .frame(minHeight: 44)
+            .accessibilityIdentifier("settings.liftLibrary")
         } footer: {
             Text("Every lift's increment, apparatus, and rest time — including the ones nobody's ever touched.")
         }
