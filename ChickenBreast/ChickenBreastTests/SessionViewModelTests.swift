@@ -21,10 +21,10 @@ import WeightTrainingStore
 /// device to behave correctly. `TrainingStore.inMemory()` is used only because
 /// `SessionViewModel.init` requires *a* store to exist — no test below calls a
 /// method that reads or writes through it. Nothing here calls `logSet`,
-/// `advance`, `goBack`, `select`, `skipRest` or anything else that reaches
-/// `TrainingStore`, `GymSettings.shared` or `ActivityKit`; see the bottom of
-/// this file for why those are explicitly left for a UI or integration test
-/// instead, not silently skipped.
+/// `advance`, `goBack`, `select`, `skipRest`, `startRest` or anything else
+/// that reaches `TrainingStore`, `GymSettings.shared` or `ActivityKit`; see
+/// the bottom of this file for why those are explicitly left for a UI or
+/// integration test instead, not silently skipped.
 @MainActor
 final class SessionViewModelTests: XCTestCase {
 
@@ -205,6 +205,17 @@ private extension Exercise {
 // `SessionViewModel` (explicitly out of scope for this PR — see the issue)
 // or accepting a slower, store-backed integration test, which is a different
 // suite than the one this issue asked for.
+//
+// `startRest()`, added for #173, lands in the same excluded set for the same
+// reason: it calls `beginRest`, which touches `RestNotification` (a real
+// `UNUserNotificationCenter` round trip) and `publishActivity()` (a real
+// `ActivityKit` call) exactly like `commit` does. What's genuinely new and
+// testable about #173 — that a rest not anchored to a set behaves like any
+// other rest, and that `RestTimer.setID` can be `nil` instead of a fabricated
+// `UUID()` — is covered at the `WeightTrainingCore` level in
+// `RestTimerTests`, which is where that logic actually lives. Only the wiring
+// (does tapping the button call `startRest`, does `startRest` reach for
+// `Exercise.restTarget`) is left to the simulator, same as `logSet` above.
 //
 // `swapCandidates` and `searchResults` are pure given `allExercises`, but
 // `allExercises` is a private property only populated by

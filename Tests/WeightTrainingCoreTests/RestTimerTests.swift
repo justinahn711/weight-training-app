@@ -64,6 +64,39 @@ final class RestTimerTests: XCTestCase {
         XCTAssertTrue(rest.isComplete(at: start))
         XCTAssertEqual(rest.progress(at: start), 1)
     }
+
+    // MARK: - Optional setID (#173)
+
+    /// A rest started by hand — no set logged, nothing to undo it against —
+    /// has no `SetRecord` to point at. Before #173 the voice path papered
+    /// over this by fabricating a `UUID()` that named a set which never
+    /// existed; `setID` is optional now so a caller with nothing to point at
+    /// can say so plainly, and every reading still works exactly the same as
+    /// a set-anchored rest, since none of the clock math ever looked at it.
+    func testUnanchoredRestBehavesIdenticallyToAnAnchoredOne() {
+        let anchored = RestTimer(startedAt: start, duration: 180, setID: UUID())
+        let unanchored = RestTimer(startedAt: start, duration: 180, setID: nil)
+        XCTAssertNil(unanchored.setID)
+        for offset in [TimeInterval(0), 60, 179.9, 180, 300] {
+            let at = start.addingTimeInterval(offset)
+            XCTAssertEqual(anchored.remaining(at: at), unanchored.remaining(at: at))
+            XCTAssertEqual(anchored.isComplete(at: at), unanchored.isComplete(at: at))
+            XCTAssertEqual(anchored.displayTime(at: at), unanchored.displayTime(at: at))
+            XCTAssertEqual(anchored.progress(at: at), unanchored.progress(at: at))
+        }
+    }
+
+    /// Two rests with the same start and duration but different `setID`s —
+    /// including one that's `nil` — are different values. This is what lets
+    /// a view keyed on the whole timer (rather than on `setID` alone) tell two
+    /// separately started rests apart even when neither has a set to name.
+    func testSetIDParticipatesInEquality() {
+        let withSet = RestTimer(startedAt: start, duration: 180, setID: UUID())
+        let withoutSet = RestTimer(startedAt: start, duration: 180, setID: nil)
+        let alsoWithoutSet = RestTimer(startedAt: start, duration: 180, setID: nil)
+        XCTAssertNotEqual(withSet, withoutSet)
+        XCTAssertEqual(withoutSet, alsoWithoutSet)
+    }
 }
 
 final class RestTargetTests: XCTestCase {
