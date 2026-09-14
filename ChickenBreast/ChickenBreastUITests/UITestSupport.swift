@@ -15,17 +15,22 @@ import XCTest
 ///
 /// This does not close that gap; a UI test is slow, boots a simulator, and can
 /// only reach what it can tap. It closes the specific part of it that a person
-/// re-checking by hand is worst at: `AccessibilityAuditTests` runs the
-/// system's own accessibility audit, which is mechanical, exhaustive within a
-/// screen, and never gets bored.
+/// re-checking by hand is worst at: `SystemAuditUITests` runs the system's
+/// own accessibility audit, which is mechanical, exhaustive within a screen,
+/// and never gets bored.
 ///
-/// Split out of `AccessibilityAuditTests.swift` for #193: that file used to
-/// hold the audit tests and the tap-through flow tests (`testLogSetAndUndo`
-/// and friends) in one `XCTestCase`, so a red run never said, at a glance,
-/// whether the audit had stalled or a flow had actually broken. Both kinds of
-/// test still reach a screen the same way — through `reachTrainScreen` and
-/// `openPushDay` below — so that logic lives once, here, rather than getting
-/// forked into two answers that drift.
+/// Split out of what was originally `AccessibilityAuditTests.swift` for #193:
+/// that file used to hold the audit tests and the tap-through flow tests
+/// (`testLogSetAndUndo` and friends) in one `XCTestCase`, so a red run never
+/// said, at a glance, whether the audit had stalled or a flow had actually
+/// broken. Both kinds of test still reach a screen the same way — through
+/// `reachTrainScreen` and `openPushDay` below — so that logic lives once,
+/// here, rather than getting forked into two answers that drift.
+///
+/// See `SystemAuditUITests.swift` for why its class name, not just its file,
+/// had to change in a follow-up to this split: the two classes' relative
+/// order is load-bearing, because both leave/expect session state on disk
+/// that the other reads.
 class ChickenBreastUITestCase: XCTestCase {
 
     override func setUp() {

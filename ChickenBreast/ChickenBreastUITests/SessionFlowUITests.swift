@@ -6,14 +6,22 @@
 import XCTest
 
 /// Tap-through flows and layout invariants that don't need a system audit to
-/// check them — split out of `AccessibilityAuditTests.swift` for #193 so a
-/// stalled or killed audit run and a broken flow are never the same red
-/// XCTestCase. `reachTrainScreen`/`openPushDay` (via `ChickenBreastUITestCase`
-/// in `UITestSupport.swift`) still call the system audit once, on the
-/// onboarding cover if it's up — that path got its own #193 fix so it can't
-/// re-run on every poll — but none of the tests below invoke it directly, so
-/// a real regression in one of these keeps failing exactly as loudly and
-/// specifically as it always did.
+/// check them — split out of what was originally `AccessibilityAuditTests.swift`
+/// for #193 so a stalled or killed audit run and a broken flow are never the
+/// same red XCTestCase. `reachTrainScreen`/`openPushDay` (via
+/// `ChickenBreastUITestCase` in `UITestSupport.swift`) still call the system
+/// audit once, on the onboarding cover if it's up — that path got its own
+/// #193 fix so it can't re-run on every poll — but none of the tests below
+/// invoke it directly, so a real regression in one of these keeps failing
+/// exactly as loudly and specifically as it always did.
+///
+/// This class's name matters as much as its contents: it has to keep sorting
+/// alphabetically *before* `SystemAuditUITests` (see that file's header for
+/// why cross-class order is load-bearing here). Renaming this class without
+/// renaming that one back into the same relative order reopens the exact CI
+/// failure a #193 follow-up fixed — a session draft the audit tests create
+/// getting inherited a run earlier than the tests below were written to
+/// expect it.
 final class SessionFlowUITests: ChickenBreastUITestCase {
 
     /// Start session -> log a set -> undo, the flow the issue names.
