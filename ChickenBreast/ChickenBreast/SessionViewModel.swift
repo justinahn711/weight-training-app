@@ -546,7 +546,10 @@ final class SessionViewModel {
             for entry in applied {
                 loadedStates[entry.exercise.id] = entry.result.state
             }
-            let summary = applied.compactMap { entry in
+            // The return type is spelled out because the closure returns `nil`
+            // on one path and a *failable* initialiser's result on the other,
+            // which leaves Swift unable to infer the element (#184).
+            let summary: [ProgressionSummaryEntry] = applied.compactMap { entry in
                 guard let performed = session.exercises
                     .first(where: { $0.id == entry.exercise.id })?.loggedSets else {
                     return nil
