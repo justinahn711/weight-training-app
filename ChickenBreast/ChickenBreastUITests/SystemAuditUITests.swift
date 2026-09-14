@@ -65,4 +65,52 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         let issues = try audit(app)
         if !issues.isEmpty { print("Session screen a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
+
+    /// The lift library is the second door into `ExerciseConfigView` (#178)
+    /// — the one that works without being mid-session on a specific lift.
+    /// This guards that the door is actually reachable from Settings, that
+    /// its rows carry real 44pt tap targets rather than the
+    /// frame-without-`contentShape` mistake #114 already shipped once on a
+    /// different screen, and that the screen passes the same system audit
+    /// every other screen here answers to.
+    func testLiftLibraryIsReachableFromSettingsAndPassesAudit() throws {
+        let app = launch()
+        XCTAssertTrue(try reachTrainScreen(app))
+
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable)
+        settings.tap()
+
+        // Settings is a long Form — the split, gym, and eight-plate-toggle
+        // sections all sit above this one, so the row is real but genuinely
+        // off-screen until scrolled to, not merely slow to appear.
+        let liftLibrary = app.buttons["settings.liftLibrary"]
+        var attempts = 0
+        while !liftLibrary.exists, attempts < 10 {
+            app.swipeUp()
+            attempts += 1
+        }
+        XCTAssertTrue(liftLibrary.waitForExistence(timeout: 5),
+                      "Lift library should be reachable from Settings")
+        liftLibrary.tap()
+
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'liftLibrary.row.'"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10),
+                      "the library should list at least one lift from the seeded library")
+
+        let first = rows.element(boundBy: 0)
+        XCTAssertGreaterThanOrEqual(first.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(first.frame.height, 44)
+
+        let issues = try audit(app)
+        if !issues.isEmpty { print("Lift library a11y backlog:\n" + issues.joined(separator: "\n")) }
+
+        // Opens the same sheet the session's config line does — one editor,
+        // two doors into it — and closes it without saving.
+        first.tap()
+        let cancel = app.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5),
+                      "the reused ExerciseConfigView should present its usual Cancel/Save toolbar")
+        cancel.tap()
+    }
 }

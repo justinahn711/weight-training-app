@@ -66,6 +66,7 @@ struct SettingsView: View {
                 trainingSplitSection
                 gymSection
                 plateSection
+                liftLibrarySection
             }
 
             Section {
@@ -297,6 +298,34 @@ struct SettingsView: View {
             Text("Plates on the rack")
         } footer: {
             Text(plateFooter)
+        }
+    }
+
+    // MARK: - Lift library (#178)
+
+    /// The other door into `ExerciseConfigView` (#178).
+    ///
+    /// The session screen's config line is the door for correcting a lift
+    /// while standing at it. This is the door for the question that isn't
+    /// "fix this machine" but "what can I even change" — asked away from any
+    /// specific lift, which is exactly the shape of all three reports that
+    /// led here: the warmup ramp, the rack, and this issue's own increment.
+    /// Placed after `plateSection` rather than before the gym sections,
+    /// since `plateFooter` already names lifts with a rack of their own —
+    /// this is where someone reading that footer goes to find out which.
+    private var liftLibrarySection: some View {
+        Section {
+            NavigationLink {
+                if let store {
+                    LiftConfigurationListView(store: store)
+                }
+            } label: {
+                Text("Lift library")
+            }
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("settings.liftLibrary")
+        } footer: {
+            Text("Every lift's increment, apparatus, and rest time — including the ones nobody's ever touched.")
         }
     }
 
