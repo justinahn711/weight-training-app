@@ -19,6 +19,15 @@ import WeightTrainingStore
 struct HistoryView: View {
     let store: TrainingStore
 
+    /// Told whenever a delete lands on disk, so a session still open in the
+    /// Train tab can catch up (#199). History writes through the store
+    /// directly rather than through the session — Today and History are
+    /// different tabs, and this is the seam between them. Defaulted to a
+    /// no-op so every existing call site (including tests and previews that
+    /// predate #199) keeps compiling without naming a session that usually
+    /// isn't there.
+    let onSetsDeleted: () -> Void
+
     /// Reloaded here rather than handed down, because correcting a set (#61)
     /// changes what this screen shows and the change has to be visible without
     /// leaving it.
@@ -27,8 +36,9 @@ struct HistoryView: View {
     @State private var selected: TrainingDay?
     @State private var weeklyTarget = 3
 
-    init(days: [TrainingDay], store: TrainingStore) {
+    init(days: [TrainingDay], store: TrainingStore, onSetsDeleted: @escaping () -> Void = {}) {
         self.store = store
+        self.onSetsDeleted = onSetsDeleted
         _days = State(initialValue: days)
     }
 
@@ -87,7 +97,7 @@ struct HistoryView: View {
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $selected) { day in
-            DayDetailView(day: day, store: store, onChange: reload)
+            DayDetailView(day: day, store: store, onChange: reload, onSetsDeleted: onSetsDeleted)
         }
     }
 
@@ -370,6 +380,10 @@ struct DayDetailView: View {
     let day: TrainingDay
     let store: TrainingStore
     let onChange: () -> Void
+    /// See `HistoryView.onSetsDeleted` (#199) — passed straight through so
+    /// both delete paths this screen owns, the single-set one and the
+    /// selection one, reach the same session-reconcile call.
+    var onSetsDeleted: () -> Void = {}
 
     @State private var editing: EditTarget?
     @State private var failure: String?
@@ -443,7 +457,20 @@ struct DayDetailView: View {
                     apply { try store.updateSet(corrected) }
                 },
                 onDelete: {
-                    apply { try store.deleteSet(id: target.record.id) }
+                    // Not routed through `apply`: that helper only calls
+                    // `onChange()`, and a failed delete must not tell the
+                    // session anything changed. Single-set delete goes
+                    // through the same reconcile call as the batch path below
+                    // (#199) — a set removed one at a time can strand a
+                    // running session's undo banner or rest exactly as easily
+                    // as a selection can.
+                    do {
+                        try store.deleteSet(id: target.record.id)
+                        onChange()
+                        onSetsDeleted()
+                    } catch {
+                        failure = error.localizedDescription
+                    }
                 }
             )
         }
@@ -587,6 +614,9 @@ struct DayDetailView: View {
         do {
             try store.deleteSets(ids: ids)
             onChange()
+            // See `onDelete` above (#199) — same reconcile call, same rule
+            // that it only fires once the delete has actually landed.
+            onSetsDeleted()
             selectedIDs = []
             isSelecting = false
         } catch {

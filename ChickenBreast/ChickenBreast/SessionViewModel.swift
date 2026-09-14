@@ -240,6 +240,79 @@ final class SessionViewModel {
         recentlyLoggedSet = nil
     }
 
+    /// The one place the session catches up after History changes durable set
+    /// rows out from under it (#199).
+    ///
+    /// `HistoryView` writes through `TrainingStore.deleteSet`/`deleteSets`
+    /// directly rather than through this view model — Today's screen and
+    /// History's are different tabs, and a session route can stay alive in
+    /// the background of the first while the second edits the same day. Disk
+    /// is authoritative, so this re-reads the draft the same way `finish()`
+    /// and `reconcileLiveActivityActions()` already do, then clears whatever
+    /// in-memory state named a row that no longer exists on either side of
+    /// that read.
+    ///
+    /// Deliberately the *only* place this happens, rather than three separate
+    /// call sites each remembering their own piece: #169, #172 and #173 were
+    /// all the same shape of bug — a caller that changed the session forgot
+    /// what `recentlyLoggedSet` or the rest clock needed to hear about it.
+    /// `didChangeCurrentExercise()` and `beginRest(...)` already exist so
+    /// navigation and resting can't make that mistake again; this is that
+    /// pattern's answer for an edit that arrives from outside the session
+    /// entirely instead of from one of its own actions.
+    ///
+    /// Progression is deliberately not rewound. A target already on screen
+    /// was a coaching decision applied against the sets that existed when the
+    /// set was logged — #194 already replays `ProgressState` from the
+    /// surviving rows inside the delete transaction, and every derived
+    /// statistic (history, volume, e1RM) reads from disk fresh every time it's
+    /// shown. Only the session's own leftover pointers into deleted rows are
+    /// this function's job.
+    func reconcilePersistedSetsAfterHistoryEdit() {
+        do {
+            session = try store.resumeSession(
+                WorkoutDraft(session: session, id: draftID)
+            )
+        } catch {
+            failure = "Couldn't refresh the workout after that correction: \(error.localizedDescription)"
+            return
+        }
+
+        let survivingIDs = Set(session.allLoggedSets.map(\.id))
+
+        if let recent = recentlyLoggedSet, !survivingIDs.contains(recent.id) {
+            recentlyLoggedSet = nil
+        }
+
+        // Checked independently of the banner above, not nested inside it:
+        // `dismissRecentSetUndo` clears `recentlyLoggedSet` without touching
+        // the rest that set started, so a rest can still be counting down for
+        // a set whose banner is already gone. Cancelling here goes through
+        // the same two calls `skipRest()` makes, so the alert and the
+        // lock-screen countdown never disagree about whether a rest is still
+        // running (#169, #172).
+        if let setID = rest?.setID, !survivingIDs.contains(setID) {
+            rest = nil
+            RestNotification.cancel()
+        }
+
+        // Leaving the workout already took the Live Activity down on
+        // purpose (`leaveSession()`); a correction arriving from a different
+        // tab is not a reason to bring it back.
+        guard !isActivityEnded else { return }
+
+        if liveActivity.currentState() != nil {
+            // Rebuilds `recentlyLoggedSet` and `rest` from whatever the lock
+            // screen last named, cross-referenced against the session just
+            // resumed above — the same check this function just ran, but
+            // also covering an action taken from the lock screen that this
+            // process never saw in memory.
+            reconcileLiveActivityActions()
+        } else {
+            publishActivity()
+        }
+    }
+
     /// Corrects an already logged row without disturbing the controls for the
     /// next set or the rest currently running (#130).
     ///

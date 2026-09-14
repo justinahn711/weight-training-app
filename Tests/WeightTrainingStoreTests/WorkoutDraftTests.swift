@@ -167,6 +167,75 @@ final class WorkoutDraftTests: XCTestCase {
         XCTAssertEqual(resumed.current?.loggedSets, [afterMidnight])
     }
 
+    /// The foundation `SessionViewModel.reconcilePersistedSetsAfterHistoryEdit`
+    /// (#199) leans on entirely: History writes through `TrainingStore`
+    /// directly rather than through the running session, so resuming the same
+    /// draft afterwards is the only way the session can find out a set it was
+    /// holding is gone. Disk has to already say so on its own, independent of
+    /// any view-model logic — this proves that half without touching the app
+    /// target `SessionViewModel` lives in, which this package cannot import.
+    func testResumeOmitsASetHistoryDeletedWhileTheDraftWasOpen() throws {
+        let store = try openStore()
+        var session = try store.startSession(kind: .push, startedAt: todayAtNoon)
+        let current = try XCTUnwrap(session.current)
+        let kept = SetRecord(
+            exerciseID: current.id, load: Load(95), reps: 8, rpe: .eight,
+            performedAt: todayAtNoon.addingTimeInterval(60)
+        )
+        let removed = SetRecord(
+            exerciseID: current.id, load: Load(100), reps: 6, rpe: .nine,
+            performedAt: todayAtNoon.addingTimeInterval(120)
+        )
+        try store.log(kept)
+        try store.log(removed)
+        session.log(kept)
+        session.log(removed)
+        let draft = WorkoutDraft(session: session)
+        try store.saveWorkoutDraft(draft)
+
+        // Stands in for History correcting today's workout in a different
+        // tab while this draft's session route stays open.
+        XCTAssertTrue(try store.deleteSet(id: removed.id))
+
+        let resumed = try store.resumeSession(draft)
+
+        XCTAssertEqual(resumed.current?.loggedSets, [kept],
+                       "the deleted set must not survive a resume even though the draft still names it")
+    }
+
+    /// Same guarantee for a selection deleted together (#168, #199) — the
+    /// batch path History's multi-select uses.
+    func testResumeOmitsSetsHistoryBatchDeletedWhileTheDraftWasOpen() throws {
+        let store = try openStore()
+        var session = try store.startSession(kind: .push, startedAt: todayAtNoon)
+        let current = try XCTUnwrap(session.current)
+        let kept = SetRecord(
+            exerciseID: current.id, load: Load(95), reps: 8, rpe: .eight,
+            performedAt: todayAtNoon.addingTimeInterval(60)
+        )
+        let removedFirst = SetRecord(
+            exerciseID: current.id, load: Load(100), reps: 6, rpe: .nine,
+            performedAt: todayAtNoon.addingTimeInterval(120)
+        )
+        let removedSecond = SetRecord(
+            exerciseID: current.id, load: Load(105), reps: 5, rpe: .nine,
+            performedAt: todayAtNoon.addingTimeInterval(180)
+        )
+        for record in [kept, removedFirst, removedSecond] {
+            try store.log(record)
+            session.log(record)
+        }
+        let draft = WorkoutDraft(session: session)
+        try store.saveWorkoutDraft(draft)
+
+        XCTAssertEqual(try store.deleteSets(ids: [removedFirst.id, removedSecond.id]),
+                       [removedFirst.id, removedSecond.id])
+
+        let resumed = try store.resumeSession(draft)
+
+        XCTAssertEqual(resumed.current?.loggedSets, [kept])
+    }
+
     func testLatestSyncedDraftWinsDeduplication() throws {
         let store = try openStore()
         let older = WorkoutDraft(
