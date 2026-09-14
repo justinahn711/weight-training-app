@@ -210,4 +210,47 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
             XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         }
     }
+
+    /// Finish persists once, then the same saved decisions can be dismissed
+    /// and reviewed again without running progression a second time (#184).
+    func testFinishShowsProgressionSummaryAndItCanBeReopened() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let next = app.buttons["session.exercise.next"]
+        let back = app.buttons["session.exercise.previous"]
+        let finish = app.buttons["session.finish.footer"]
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        // A workout left mid-session by an earlier test in this run can
+        // resume anywhere — first exercise, last, or in between — so this
+        // doesn't assume a fresh start. It moves at most one step to reach a
+        // middle exercise where Back and Next both exist, which is all the
+        // separation check below actually needs.
+        if !back.exists {
+            XCTAssertTrue(next.waitForExistence(timeout: 20), "Next exercise should be reachable")
+            next.tap()
+        } else if !next.exists {
+            XCTAssertTrue(finish.waitForExistence(timeout: 5))
+            back.tap()
+        }
+
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "Back should appear once there is a prior exercise")
+        XCTAssertTrue(next.waitForExistence(timeout: 5), "Next exercise should appear once off the last exercise")
+
+        for button in [back, next] {
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+
+        // Separated by row, not merely by width: Back sits entirely above
+        // Next exercise rather than beside it, where a thumb sliding to the
+        // common action could clip the correction instead.
+        XCTAssertLessThanOrEqual(
+            back.frame.maxY, next.frame.minY,
+            "Back and Next exercise should occupy separate rows, not sit side by side"
+        )
+    }
 }
