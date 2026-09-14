@@ -63,6 +63,46 @@ public struct RestTimer: Hashable, Sendable {
         guard duration > 0 else { return 1 }
         return min(1, max(0, now.timeIntervalSince(startedAt) / duration))
     }
+
+    /// Rebuilds a rest from a Live Activity's content state after a lock or a
+    /// relaunch (#200).
+    ///
+    /// `restStartedAt`/`restSetID` are the timer's own identity, kept
+    /// separate from `lastLoggedSetID` on purpose — the set named there is
+    /// the Undo offer, not necessarily what this rest is timing. Before #200
+    /// the only way to rebuild a rest was through that logged set, which is
+    /// exactly why a rest started by hand or by voice (`setID == nil`,
+    /// #173/#195) had nothing to survive a lock with.
+    ///
+    /// `restStartedAt` is nil only for an activity written by a build before
+    /// this fix — both new fields are always set together from here on, so
+    /// its absence is the signal, not something to check per field. For that
+    /// older activity every rest it could have produced was implied by the
+    /// logged set, exactly the way it used to be, so `loggedSet` is consulted
+    /// only in that branch: falling back to it once the new fields exist
+    /// would silently reattach a hand-started rest to an unrelated, older
+    /// Undo offer.
+    public static func reconciled(
+        restEndsAt: Date?,
+        restStartedAt: Date?,
+        restSetID: UUID?,
+        loggedSet: (id: UUID, performedAt: Date)?
+    ) -> RestTimer? {
+        guard let endsAt = restEndsAt else { return nil }
+        if let startedAt = restStartedAt {
+            return RestTimer(
+                startedAt: startedAt,
+                duration: max(0, endsAt.timeIntervalSince(startedAt)),
+                setID: restSetID
+            )
+        }
+        guard let loggedSet else { return nil }
+        return RestTimer(
+            startedAt: loggedSet.performedAt,
+            duration: max(0, endsAt.timeIntervalSince(loggedSet.performedAt)),
+            setID: loggedSet.id
+        )
+    }
 }
 
 extension Exercise {
