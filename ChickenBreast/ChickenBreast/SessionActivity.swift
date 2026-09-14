@@ -64,6 +64,19 @@ struct SessionActivityAttributes: ActivityAttributes {
         /// throttle long before the rest was over.
         var restEndsAt: Date?
 
+        /// The rest's own identity, so it can be rebuilt after a lock or a
+        /// relaunch (#200). Deliberately separate from `lastLoggedSetID`:
+        /// that field names the Undo offer, while `restSetID` names what
+        /// this timer belongs to, and a rest started by hand or by voice
+        /// (`setID == nil`, #173/#195) genuinely has no set to point at —
+        /// giving it one here would be the same kind of fabricated identity
+        /// #195 removed from `RestTimer` itself. Optional, and always set
+        /// together with `restStartedAt`, so an activity from a build before
+        /// this fix keeps decoding across an upgrade; `RestTimer.reconciled`
+        /// is what tells that older activity apart from this one.
+        var restStartedAt: Date? = nil
+        var restSetID: UUID? = nil
+
         var isResting: Bool { restEndsAt != nil }
     }
 

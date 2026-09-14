@@ -97,6 +97,112 @@ final class RestTimerTests: XCTestCase {
         XCTAssertNotEqual(withSet, withoutSet)
         XCTAssertEqual(withoutSet, alsoWithoutSet)
     }
+
+    // MARK: - reconciled(restEndsAt:restStartedAt:restSetID:loggedSet:) (#200)
+
+    /// No rest running at all: nothing to rebuild, whatever `loggedSet` says.
+    func testReconciledIsNilWhenNoRestIsRunning() {
+        XCTAssertNil(RestTimer.reconciled(
+            restEndsAt: nil,
+            restStartedAt: nil,
+            restSetID: nil,
+            loggedSet: (id: UUID(), performedAt: start)
+        ))
+    }
+
+    /// The case #200 exists for: a hand-started or voice-started rest has its
+    /// own identity now, and must rebuild from it rather than needing a set
+    /// to point at.
+    func testReconciledRebuildsAHandStartedRestWithNoLoggedSet() throws {
+        let endsAt = start.addingTimeInterval(180)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: start,
+            restSetID: nil,
+            loggedSet: nil
+        ))
+        XCTAssertEqual(rest.startedAt, start)
+        XCTAssertEqual(rest.duration, 180)
+        XCTAssertNil(rest.setID)
+    }
+
+    /// A rest that did come from logging a set carries its own `restSetID`,
+    /// which must survive the round trip even though a `lastLoggedSetID`
+    /// (here standing in as `loggedSet`) also names the same set — the two
+    /// are different fields and this checks the timer's own field wins.
+    func testReconciledUsesItsOwnSetIDWhenPresent() throws {
+        let setID = UUID()
+        let endsAt = start.addingTimeInterval(90)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: start,
+            restSetID: setID,
+            loggedSet: (id: setID, performedAt: start)
+        ))
+        XCTAssertEqual(rest.setID, setID)
+    }
+
+    /// The conflation #200 forbids: once `restStartedAt` is present, the
+    /// activity is from a build that always sends both new fields together,
+    /// so a `nil` `restSetID` is a hand-started rest's real answer, not a gap
+    /// to paper over with whatever `lastLoggedSetID` happens to name. An
+    /// older, unrelated logged set living in `loggedSet` must not leak in as
+    /// this rest's owner.
+    func testReconciledDoesNotBorrowLoggedSetWhenRestStartedAtIsPresentButRestSetIDIsNil() throws {
+        let unrelatedSetID = UUID()
+        let endsAt = start.addingTimeInterval(120)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: start,
+            restSetID: nil,
+            loggedSet: (id: unrelatedSetID, performedAt: start.addingTimeInterval(-600))
+        ))
+        XCTAssertNil(rest.setID, "a hand-started rest must not adopt an unrelated logged set's id")
+        XCTAssertEqual(rest.startedAt, start, "must use its own start time, not the unrelated set's")
+    }
+
+    /// The upgrade-compatibility case: an activity written before #200 has
+    /// neither new field, so `restStartedAt` is nil and the only source left
+    /// is the logged set — exactly how every rest before #200 was anchored.
+    func testReconciledFallsBackToLoggedSetForAPreExistingFieldActivity() throws {
+        let setID = UUID()
+        let performedAt = start
+        let endsAt = start.addingTimeInterval(180)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: nil,
+            restSetID: nil,
+            loggedSet: (id: setID, performedAt: performedAt)
+        ))
+        XCTAssertEqual(rest.startedAt, performedAt)
+        XCTAssertEqual(rest.duration, 180)
+        XCTAssertEqual(rest.setID, setID)
+    }
+
+    /// The pre-#200 activity case where there's also no logged set to fall
+    /// back to (nothing this build can rebuild from) — must not fabricate a
+    /// start time, matching how this exact shape already behaved before #200.
+    func testReconciledIsNilWhenNoFallbackSetExistsEither() {
+        XCTAssertNil(RestTimer.reconciled(
+            restEndsAt: start.addingTimeInterval(180),
+            restStartedAt: nil,
+            restSetID: nil,
+            loggedSet: nil
+        ))
+    }
+
+    /// Duration is clamped the same way the rest of `RestTimer` never lets
+    /// bad wall-clock arithmetic go negative.
+    func testReconciledClampsDurationAtZero() throws {
+        let endsAt = start.addingTimeInterval(-30)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: start,
+            restSetID: nil,
+            loggedSet: nil
+        ))
+        XCTAssertEqual(rest.duration, 0)
+    }
 }
 
 final class RestTargetTests: XCTestCase {

@@ -717,14 +717,26 @@ final class SessionViewModel {
             }
             recentlyLoggedSet = activitySet
 
-            if let record = activitySet, let endsAt = activityState.restEndsAt {
-                rest = RestTimer(
-                    startedAt: record.performedAt,
-                    duration: max(0, endsAt.timeIntervalSince(record.performedAt)),
-                    setID: record.id
+            // `restSetID` (#200) is validated against the session just
+            // resumed above the same way `activitySet` is: a History delete
+            // writes through the store directly and never touches
+            // ActivityKit (#199), so the activity's own copy can still name
+            // a set that's already gone. Without this, `RestTimer.reconciled`
+            // would resurrect a rest for a set `reconcilePersistedSetsAfter
+            // HistoryEdit` just cleared, purely because the Live Activity
+            // hadn't caught up. A hand-started rest has no `restSetID` to
+            // check and is unaffected.
+            let restSetStillExists = activityState.restSetID == nil
+                || session.allLoggedSets.contains { $0.id == activityState.restSetID }
+            rest = restSetStillExists
+                ? RestTimer.reconciled(
+                    restEndsAt: activityState.restEndsAt,
+                    restStartedAt: activityState.restStartedAt,
+                    restSetID: activityState.restSetID,
+                    loggedSet: activitySet.map { (id: $0.id, performedAt: $0.performedAt) }
                 )
-            } else {
-                rest = nil
+                : nil
+            if rest == nil {
                 RestNotification.cancel()
             }
             publishActivity()
@@ -758,7 +770,13 @@ final class SessionViewModel {
             targetRPE: current.prescription.rpe.value,
             logActionID: liveLogActionID,
             lastLoggedSetID: recentlyLoggedSet?.id,
-            restEndsAt: rest?.endsAt
+            restEndsAt: rest?.endsAt,
+            // Always sent together (#200): `reconcileLiveActivityActions`
+            // treats a nil `restStartedAt` as proof an activity predates
+            // this fix, so a build that has it must never publish one field
+            // without the other.
+            restStartedAt: rest?.startedAt,
+            restSetID: rest?.setID
         )
         isActivityEnded = false
         liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)
