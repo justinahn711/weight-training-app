@@ -526,6 +526,18 @@ final class SessionViewModel {
 
     // MARK: - Finishing
 
+    /// What each progressed exercise earned this session, and why — built
+    /// once by `finish()` and shown before the route drops back to Train
+    /// (#184). Empty when nothing had a working set to progress.
+    ///
+    /// Stored rather than recomputed on demand: `finish()` only calls
+    /// `store.applyProgression` on the *first* call (`hasFinished` guards
+    /// every call after), so a second call — the double-tap window that
+    /// guard exists for, or the summary sheet re-reading this after its own
+    /// dismissal — has to see the same rows the first call produced, not an
+    /// empty list because there was nothing left to apply the second time.
+    private(set) var progressionSummary: [ProgressionSummaryRow] = []
+
     /// Finishes this workout exactly once. Navigation and disappearance are
     /// deliberately not finishing signals; only the visible Finish action is.
     @discardableResult
@@ -541,6 +553,17 @@ final class SessionViewModel {
             for entry in applied {
                 loadedStates[entry.exercise.id] = entry.result.state
             }
+            // Built from the exact sets `applyProgression` just read and the
+            // exact `ProgressionResult` it just saved — nothing here
+            // recomputes a decision, only formats one already made.
+            let workingSetsByExercise = Dictionary(
+                uniqueKeysWithValues: session.exercises.map { ($0.id, $0.workingSets) }
+            )
+            progressionSummary = ProgressionSummaryRow.rows(
+                from: applied,
+                workingSets: workingSetsByExercise,
+                unit: GymSettings.shared.unit
+            )
             // Clear after progression. If this save fails, retrying is safe:
             // progression is idempotent for the session day, while retaining
             // the draft keeps a failed Finish recoverable.
@@ -1017,4 +1040,179 @@ final class SessionViewModel {
     }
 
     func dismissFailure() { failure = nil }
+}
+
+// MARK: - Progression summary (#184)
+
+/// One row of the post-Finish completion summary: what was performed against
+/// what `ProgressionEngine` decided for next time, in the engine's own words.
+///
+/// Deciding *which* results are worth a row, and how to phrase each one, is a
+/// rule — the same kind #184 says belongs somewhere a test can reach rather
+/// than in a view nobody runs outside a simulator. `ProgressionSummaryView`
+/// only lays these out; every fact in one is decided here, from data
+/// `SessionViewModel.finish()` already produced. Nothing here recomputes
+/// *why* a target changed — that's `ProgressionChange`, read verbatim — only
+/// how to say it next to the sets that earned it.
+struct ProgressionSummaryRow: Identifiable, Hashable {
+    let id: UUID
+    let exerciseName: String
+    /// "70 × 12" — the sets that produced this outcome, read directly off
+    /// what was logged, never off a target field. Several `ProgressionChange`
+    /// cases hold a *different* number in `ProgressState` than what was
+    /// actually performed (a miss holds at the range's bottom, not the reps
+    /// that fell short of it) — so the reps here always come from the
+    /// `SetRecord`s themselves.
+    let performedLine: String
+    /// The next prescription, or nil when it's identical to what was just
+    /// performed — see `bodyText`.
+    let nextLine: String?
+    /// The engine's own rationale, with the numbers already shown in
+    /// `performedLine`/`nextLine` left out so nothing is said twice. Nil for
+    /// the cases that don't need a sentence: a plain earned rep and an RPE
+    /// landing exactly on target both say everything worth saying in the
+    /// numbers alone.
+    let reason: String?
+
+    /// "70 × 12 → next 75 × 8", or "hold 185 × 5" when nothing changed.
+    var bodyText: String {
+        guard let nextLine else { return "hold \(performedLine)" }
+        return "\(performedLine) → next \(nextLine)"
+    }
+
+    /// One coherent sentence for VoiceOver, so a swipe lands on exercise,
+    /// target and reason together rather than three separate stops whose
+    /// order depends on layout (#184's "coherent row" acceptance criterion).
+    var accessibilityLabel: String {
+        guard let reason else { return "\(exerciseName). \(bodyText)." }
+        return "\(exerciseName). \(bodyText). \(reason)."
+    }
+
+    /// Builds the summary from what `applyProgression` already returned.
+    ///
+    /// `applyProgression` is what guarantees "only exercises with working
+    /// sets appear" and "repeated Finish can't apply progression twice" —
+    /// both are properties of *which entries reach this function*, not
+    /// something re-decided here. `workingSets` is keyed by exercise id so a
+    /// missing entry (defensively — this shouldn't happen; `applied` only
+    /// ever names exercises `applyProgression` just read sets for) drops that
+    /// row rather than guessing at numbers nobody logged.
+    static func rows(
+        from applied: [(exercise: Exercise, result: ProgressionResult)],
+        workingSets: [UUID: [SetRecord]],
+        unit: MassUnit
+    ) -> [ProgressionSummaryRow] {
+        applied.compactMap { entry in
+            row(exercise: entry.exercise, result: entry.result,
+                working: workingSets[entry.exercise.id] ?? [], unit: unit)
+        }
+    }
+
+    private static func row(
+        exercise: Exercise,
+        result: ProgressionResult,
+        working: [SetRecord],
+        unit: MassUnit
+    ) -> ProgressionSummaryRow? {
+        guard !working.isEmpty else { return nil }
+        let (performedLoad, performedReps) = performed(for: exercise, working: working)
+        let performedLine = "\(performedLoad.formatted(in: unit)) × \(performedReps)"
+
+        let nextLine: String?
+        if holds(result.change) {
+            nextLine = nil
+        } else {
+            // Every case that reaches here is one where `advance()` sets
+            // both fields before returning, so the fallback never actually
+            // fires — it exists so a future engine case that forgot to set
+            // one fails into "no row" instead of a crash.
+            guard let load = result.state.targetLoad, let reps = result.state.targetReps
+            else { return nil }
+            nextLine = "\(load.formatted(in: unit)) × \(reps)"
+        }
+
+        return ProgressionSummaryRow(
+            id: exercise.id,
+            exerciseName: exercise.name,
+            performedLine: performedLine,
+            nextLine: nextLine,
+            reason: reason(for: result.change, exercise: exercise)
+        )
+    }
+
+    /// Echoes what was actually lifted, using the same set the engine itself
+    /// weighed the decision on — the heaviest working load either rule reads,
+    /// and for double progression the *weakest* rep count, since that's the
+    /// set that decides whether the range was cleared (see
+    /// `ProgressionEngine.doubleProgression`). Showing any other set's reps
+    /// here could show a number the decision wasn't actually made on.
+    private static func performed(for exercise: Exercise, working: [SetRecord]) -> (Load, Int) {
+        switch exercise.progressionRule {
+        case .doubleProgression:
+            let load = working.map(\.load).max() ?? .zero
+            let reps = working.map(\.reps).min() ?? 0
+            return (load, reps)
+        case .rpeTargetedLoad:
+            // The same reference set `rpeTargetedLoad` steers by: the
+            // heaviest set that actually carries an RPE. With no RPE logged
+            // at all, there's nothing to steer by either way, so this falls
+            // back to the heaviest working set purely to have something
+            // honest to show.
+            let reference = working.filter { $0.rpe != nil }.max { $0.load < $1.load }
+                ?? working.max { $0.load < $1.load }
+            return (reference?.load ?? .zero, reference?.reps ?? 0)
+        }
+    }
+
+    /// Whether this change repeats what was just performed rather than
+    /// changing the next prescription. Driven by the decision itself, not by
+    /// comparing numbers — a hold whose performed reps overshot the range
+    /// top (a lifter who did 13 against a 12-rep ceiling) still holds, even
+    /// though the number performed and the number that would echo back from
+    /// `ProgressState` don't match.
+    private static func holds(_ change: ProgressionChange) -> Bool {
+        switch change {
+        case .addedReps, .addedLoad, .adjustedLoad:
+            return false
+        case .earnedTowardLoad, .heldForEffort, .heldAfterMiss, .onTarget, .noEffortReported,
+             .noWorkingSets:
+            return true
+        }
+    }
+
+    /// Neutral coaching language, never shaming a miss or a hold (#184's
+    /// guardrail). Reused numbers (the load, the rep count) are left out
+    /// here since `performedLine`/`nextLine` already show them; repeating
+    /// them in the reason would just be the same fact said twice.
+    private static func reason(for change: ProgressionChange, exercise: Exercise) -> String? {
+        switch change {
+        case .addedReps:
+            // An earned rep says everything it needs to in the numbers.
+            return nil
+        case .earnedTowardLoad(let hits, let required):
+            return "Hit the top \(hits) of \(required) — repeat it to bank the jump"
+        case .addedLoad:
+            // `required` names the rule's threshold, not a value carried on
+            // this case — that's a static property of how the lift is
+            // configured, not part of the decision being re-derived.
+            if case .doubleProgression(_, let required) = exercise.progressionRule {
+                return "Earned after \(required) top-range sessions"
+            }
+            return "Earned it"
+        case .heldForEffort(let rpe):
+            return "\(rpe) was above target"
+        case .heldAfterMiss:
+            return "Fell short of the range — hold and rebuild"
+        case .adjustedLoad(let from, let to, let rpeDelta):
+            let direction = to > from ? "easier" : "harder"
+            return "\(String(format: "%.1f", abs(rpeDelta))) RPE \(direction) than target"
+        case .onTarget:
+            // Effort matched the target exactly — nothing to explain.
+            return nil
+        case .noEffortReported:
+            return "No RPE logged — holding steady"
+        case .noWorkingSets:
+            return nil
+        }
+    }
 }

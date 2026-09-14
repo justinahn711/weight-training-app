@@ -55,6 +55,10 @@ struct SessionView: View {
     /// workout while its sheet is open.
     @State private var editingSet: ActiveSetEditTarget?
     @State private var showingPartialFinishConfirmation = false
+    /// Set the instant `finish()` succeeds with something to report; cleared
+    /// only by `onDismiss`, never read back into a decision — see
+    /// `performFinish()` (#184).
+    @State private var showingProgressionSummary = false
     @State private var voice = VoiceRecognizer()
 
     var body: some View {
@@ -66,13 +70,46 @@ struct SessionView: View {
                 PartialFinishSheet(
                     onFinish: {
                         showingPartialFinishConfirmation = false
-                        onFinish()
+                        performFinish()
                     },
                     onKeepTraining: {
                         showingPartialFinishConfirmation = false
                     }
                 )
             }
+            // `finish()` has already run and saved by the time this can even
+            // appear (`performFinish()` only sets the flag on success), so
+            // dismissing it — the Done button, a swipe, or the system back
+            // gesture — never re-enters `store`. It only calls `onFinish`,
+            // the same closure a report-nothing workout already used to
+            // leave the route; #126 and #98 were both a screen inserted
+            // between "saved" and "dismissed" that forgot this and ran a
+            // side effect on the way out. `onDismiss` fires for every
+            // dismissal path SwiftUI has, so there's no second one to miss.
+            .sheet(isPresented: $showingProgressionSummary, onDismiss: onFinish) {
+                ProgressionSummaryView(
+                    rows: model.progressionSummary,
+                    onContinue: { showingProgressionSummary = false }
+                )
+            }
+    }
+
+    /// Finishes the workout, then shows what progressed before handing off
+    /// to `onFinish` — the one route this screen has to leave through either
+    /// way (#184).
+    ///
+    /// `model.finish()` is what's idempotent per session day, not this
+    /// function: calling it again while the summary sheet is still up (the
+    /// same double-tap window `hasFinished` already guarded before this
+    /// issue) just returns `true` without touching `store` a second time,
+    /// and `model.progressionSummary` still holds what the first call built.
+    private func performFinish() {
+        guard model.finish() else { return }
+        if model.progressionSummary.isEmpty {
+            onFinish()
+        } else {
+            showingProgressionSummary = true
+        }
     }
 
     private var sessionContent: some View {
@@ -221,7 +258,7 @@ struct SessionView: View {
                 systemImage: "figure.strengthtraining.traditional",
                 description: Text("This day has no exercises in the library yet.")
             )
-            Button("Finish workout", action: onFinish)
+            Button("Finish workout", action: performFinish)
                 .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -958,7 +995,7 @@ struct SessionView: View {
         if model.session.startedCount < model.session.exercises.count {
             showingPartialFinishConfirmation = true
         } else {
-            onFinish()
+            performFinish()
         }
     }
 }
