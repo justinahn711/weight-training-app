@@ -374,6 +374,14 @@ struct DayDetailView: View {
     @State private var editing: EditTarget?
     @State private var failure: String?
 
+    /// Correcting a bad import or an accidental day one set at a time is the
+    /// only path #61 left; selection mode is the fast one (#168). Off by
+    /// default so the ordinary tap-to-correct flow it's layered over — which
+    /// the acceptance criteria require to keep working — is never in its way.
+    @State private var isSelecting = false
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var confirmingBatchDelete = false
+
     /// A set, plus the lift it belongs to — the editor needs the increment to
     /// step the weight by, and the lift isn't on the record.
     struct EditTarget: Identifiable {
@@ -384,17 +392,22 @@ struct DayDetailView: View {
         var id: UUID { record.id }
     }
 
+    /// Every set on the day, in the order the list shows them — what "Select
+    /// all" selects and what a full selection is measured against.
+    private var allSetIDs: [UUID] {
+        day.exercises.flatMap { $0.sets.map(\.id) }
+    }
+
+    private var allSelected: Bool {
+        !allSetIDs.isEmpty && selectedIDs.count == allSetIDs.count
+    }
+
     var body: some View {
         List {
             ForEach(day.exercises) { performed in
                 Section {
                     ForEach(performed.sets, id: \.id) { set in
-                        Button {
-                            editing = EditTarget(record: set, exercise: performed.exercise)
-                        } label: {
-                            SetRow(set: set)
-                        }
-                        .buttonStyle(.plain)
+                        row(for: set, exercise: performed.exercise)
                     }
                 } header: {
                     HStack {
@@ -412,6 +425,16 @@ struct DayDetailView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbarContent }
+        // A bottom bar rather than another toolbar item: the destructive
+        // action for a selection needs its own visual weight, and a lifter
+        // scrolled deep into a long day shouldn't have to scroll back up to
+        // find it.
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                deleteBar
+            }
+        }
         .sheet(item: $editing) { target in
             EditSetView(
                 set: target.record,
@@ -431,6 +454,144 @@ struct DayDetailView: View {
         } message: {
             Text(failure ?? "")
         }
+        .confirmationDialog(
+            "Delete \(selectedIDs.count) \(selectedIDs.count == 1 ? "set" : "sets") from \(dayLabel)?",
+            isPresented: $confirmingBatchDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete \(selectedIDs.count) \(selectedIDs.count == 1 ? "set" : "sets")",
+                   role: .destructive) {
+                deleteSelected()
+            }
+        } message: {
+            Text("They stop counting towards volume, e1RM and your next target. This can't be undone.")
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if isSelecting {
+            ToolbarItem(placement: .cancellationAction) {
+                // Cancel exits without changing data — selection is cleared,
+                // nothing store-side was ever touched to undo.
+                Button("Cancel") {
+                    isSelecting = false
+                    selectedIDs = []
+                }
+                .accessibilityIdentifier("dayDetail.cancelSelection")
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(allSelected ? "Deselect All" : "Select All") {
+                    selectedIDs = allSelected ? [] : Set(allSetIDs)
+                }
+                .accessibilityIdentifier("dayDetail.selectAll")
+            }
+        } else {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Select") {
+                    isSelecting = true
+                }
+                .accessibilityIdentifier("dayDetail.select")
+            }
+        }
+    }
+
+    /// One row, in whichever of the two modes is live. Selecting swaps the
+    /// tap target from "open the corrector" to "toggle this set" rather than
+    /// running both — a tap has to mean one thing.
+    @ViewBuilder
+    private func row(for set: SetRecord, exercise: Exercise) -> some View {
+        if isSelecting {
+            let selected = selectedIDs.contains(set.id)
+            Button {
+                toggle(set.id)
+            } label: {
+                HStack(spacing: 12) {
+                    checkbox(selected: selected)
+                    SetRow(set: set)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityLabel(for: set))
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityHint(selected ? "Double tap to deselect" : "Double tap to select")
+        } else {
+            Button {
+                editing = EditTarget(record: set, exercise: exercise)
+            } label: {
+                SetRow(set: set)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// A checkbox glyph alone isn't a hit target — `.frame` without
+    /// `.contentShape` leaves the tappable area at the glyph's own rendered
+    /// size, which is exactly the mistake that shipped four 18pt buttons
+    /// in #114. `.contentShape` is what actually makes the 44pt square real.
+    private func checkbox(selected: Bool) -> some View {
+        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+            .font(.title2)
+            .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+    }
+
+    private func toggle(_ id: UUID) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    private func accessibilityLabel(for set: SetRecord) -> String {
+        var text = "\(set.load.formatted(in: GymSettings.shared.unit)) times \(set.reps)"
+        if set.isWarmup { text += ", warmup" }
+        if let rpe = set.rpe { text += ", RPE \(rpe)" }
+        return text
+    }
+
+    private var deleteBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            Button(role: .destructive) {
+                confirmingBatchDelete = true
+            } label: {
+                Text(deleteLabel)
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .contentShape(Rectangle())
+            .disabled(selectedIDs.isEmpty)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .background(.bar)
+        .accessibilityIdentifier("dayDetail.deleteSelected")
+    }
+
+    private var deleteLabel: String {
+        selectedIDs.isEmpty
+            ? "Delete sets"
+            : "Delete \(selectedIDs.count) \(selectedIDs.count == 1 ? "set" : "sets")"
+    }
+
+    /// Deletes the selection as one store call (#168) and leaves selection
+    /// mode only once that succeeds — a failure keeps the picks intact so
+    /// there's something to retry rather than a screen that silently forgot
+    /// what was chosen.
+    private func deleteSelected() {
+        let ids = selectedIDs
+        do {
+            try store.deleteSets(ids: ids)
+            onChange()
+            selectedIDs = []
+            isSelecting = false
+        } catch {
+            failure = error.localizedDescription
+        }
     }
 
     private func apply(_ work: () throws -> Void) {
@@ -440,6 +601,10 @@ struct DayDetailView: View {
         } catch {
             failure = error.localizedDescription
         }
+    }
+
+    private var dayLabel: String {
+        day.date.formatted(.dateTime.weekday(.abbreviated).month().day())
     }
 
     private var title: String {

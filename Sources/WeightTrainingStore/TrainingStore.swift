@@ -305,6 +305,113 @@ public final class TrainingStore {
         return true
     }
 
+    /// Removes many sets — a bad import, a duplicate workout, a whole
+    /// accidental day — as one persistence operation (#168).
+    ///
+    /// Deleting one row at a time from `DayDetailView`'s selection would mean N
+    /// separate saves, and a crash or a killed app partway through leaves a day
+    /// with some sets gone and others not — a day the lifter opened precisely
+    /// to make legible, now less legible than before. Every stage here (the
+    /// deletes, and the progress-state correction below) is staged on the
+    /// context and lands in the single `commit()` at the end, so either the
+    /// whole selection disappears or none of it does.
+    ///
+    /// Ids that don't match anything on disk are skipped rather than failing
+    /// the batch — the same idempotence `logIfAbsent` gives the write side, and
+    /// what's needed for this to be safe to retry if a caller can't tell
+    /// whether an earlier attempt actually reached the server before a sync
+    /// merge deduplicated the row out from under it.
+    ///
+    /// - Returns: the ids actually found and removed.
+    @discardableResult
+    public func deleteSets(ids: Set<UUID>) throws -> Set<UUID> {
+        guard !ids.isEmpty else { return [] }
+
+        let historyBeforeDelete = try allSets()
+        let matched = historyBeforeDelete.filter { ids.contains($0.id) }
+        guard !matched.isEmpty else { return [] }
+
+        let removedIDs = Set(matched.map(\.id))
+        let affectedExerciseIDs = Set(matched.map(\.exerciseID))
+
+        for id in removedIDs {
+            var descriptor = FetchDescriptor<StoredSetLog>(
+                predicate: #Predicate { $0.id == id }
+            )
+            descriptor.fetchLimit = 1
+            if let stored = try context.fetch(descriptor).first {
+                context.delete(stored)
+            }
+        }
+
+        // What progression sees changes with the history it reads from — a
+        // stallCount or an earned load that came partly from sets that no
+        // longer exist can't just be left standing. Computed from the
+        // in-memory remainder rather than a fresh fetch: the deletes above are
+        // only staged, not yet saved, so re-fetching here isn't guaranteed to
+        // reflect them, and the remainder is already known without one.
+        let remainingHistory = historyBeforeDelete.filter { !removedIDs.contains($0.id) }
+        let exercisesByID = Dictionary(uniqueKeysWithValues: try exercises().map { ($0.id, $0) })
+        for exerciseID in affectedExerciseIDs {
+            guard let exercise = exercisesByID[exerciseID] else {
+                // The lift itself is gone too (`deleteExercise`); its progress
+                // row is already meaningless and reaches no screen.
+                continue
+            }
+            try stageRecomputedProgressState(
+                exerciseID: exerciseID, exercise: exercise, history: remainingHistory
+            )
+        }
+
+        try commit()
+        return removedIDs
+    }
+
+    /// Replays an exercise's remaining history from a cold start and stages
+    /// the resulting state, without saving — the caller commits once for the
+    /// whole batch (#168).
+    ///
+    /// `ProgressState` is a cumulative snapshot advanced once per session by
+    /// `applyProgression`, never a live read of history the way the digest and
+    /// e1RM trends are. Deleting the sets that earned a load jump or ran up a
+    /// stall count would otherwise leave that jump or that stall standing on
+    /// nothing. Replaying is the only honest fix: it reconstructs exactly the
+    /// state the exercise would be in had the deleted sets never been logged,
+    /// the same rule `ProgressionEngine` already applies going forward.
+    private func stageRecomputedProgressState(
+        exerciseID: UUID, exercise: Exercise, history: [SetRecord]
+    ) throws {
+        let ownHistory = history.filter { $0.exerciseID == exerciseID }
+        let sessions = ownHistory.groupedIntoSessions()
+
+        guard !sessions.isEmpty else {
+            // No working sets left at all: back to the cold start the session
+            // screen shows for a lift that's never been performed.
+            if let existing = try storedState(for: exerciseID) {
+                context.delete(existing)
+            }
+            return
+        }
+
+        var state = ProgressState(exerciseID: exerciseID)
+        for session in sessions {
+            // `groupedIntoSessions` already drops warmups, so every set here
+            // is working; `advance` never sees a session it should skip the
+            // way `applyProgression`'s same-day guard does, because a replay
+            // runs each real session exactly once, in order.
+            let performedAt = session.map(\.performedAt).max() ?? state.lastPerformedAt ?? Date()
+            state = ProgressionEngine.advance(
+                exercise: exercise, state: state, performed: session, now: performedAt
+            ).state
+        }
+
+        if let existing = try storedState(for: exerciseID) {
+            existing.update(from: state)
+        } else {
+            context.insert(StoredProgressState(state))
+        }
+    }
+
     /// Every set for one exercise, oldest first.
     public func sets(forExercise exerciseID: UUID) throws -> [SetRecord] {
         let descriptor = FetchDescriptor<StoredSetLog>(
