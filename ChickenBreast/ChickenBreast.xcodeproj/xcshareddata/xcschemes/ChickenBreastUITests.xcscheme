@@ -43,9 +43,9 @@
          <TestableReference skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "DD00000000000000000000A0"
-               BuildableName = "ChickenBreastTests.xctest"
-               BlueprintName = "ChickenBreastTests"
+               BlueprintIdentifier = "CC00000000000000000000A0"
+               BuildableName = "ChickenBreastUITests.xctest"
+               BlueprintName = "ChickenBreastUITests"
                ReferencedContainer = "container:ChickenBreast.xcodeproj">
             </BuildableReference>
          </TestableReference>

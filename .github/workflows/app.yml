@@ -195,9 +195,8 @@ jobs:
         run: |
           xcodebuild test \
             -project ChickenBreast/ChickenBreast.xcodeproj \
-            -scheme ChickenBreast \
+            -scheme ChickenBreastUITests \
             -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
-            -only-testing:ChickenBreastUITests \
             -resultBundlePath UITestResults.xcresult
 
       # Not a required check (see PR #155): a UI test suite that boots a
