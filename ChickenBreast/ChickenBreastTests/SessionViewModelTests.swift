@@ -167,6 +167,117 @@ final class SessionViewModelTests: XCTestCase {
         let vm = try makeViewModel(exercises: [benchPress(loading: loading)])
         XCTAssertEqual(vm.plateOptions, [45, 25, 10, 5])
     }
+
+    // MARK: - reconcilePersistedSetsAfterHistoryEdit (#199)
+
+    /// Unlike `logSet`/`skipRest`/`undoRecentlyLoggedSet` below, this method
+    /// is safe to bring under this suite even though it reaches `store`,
+    /// `RestNotification` and `SessionActivityController`: it never *writes*
+    /// through the store (only `resumeSession`'s read), `RestNotification.
+    /// cancel()` is a synchronous, unauthorized-safe no-op, and
+    /// `SessionActivityController.start()`/`currentState()` both guard on
+    /// `ActivityAuthorizationInfo().areActivitiesEnabled` — false in this test
+    /// host, so they return immediately. What makes #169/#172/#173 unsafe to
+    /// test here (an async schedule, a real ActivityKit request) never
+    /// triggers on this path.
+    ///
+    /// `TrainingStore.inMemory()` needs its library seeded so `resumeSession`
+    /// can resolve the exercise id back to an `Exercise` — without a seeded
+    /// row, its lookup drops the exercise and the resumed session comes back
+    /// empty regardless of what was logged.
+    private func makeReconcilableViewModel() throws -> (vm: SessionViewModel, store: TrainingStore) {
+        let store = try TrainingStore.inMemory()
+        let seeded = try store.seedLibraryIfNeeded()
+        let exercise = try XCTUnwrap(seeded.first)
+        let sessionExercise = SessionExercise(
+            exercise: exercise,
+            prescription: Prescription(load: Load(135), reps: 5, rpe: .eight)
+        )
+        // Fixed and in the past so every `SetRecord.performedAt` logged
+        // during the test (stamped with the real clock) safely lands after
+        // it — `resumeSession` drops anything performed before the draft's
+        // `startedAt`.
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let session = Session(kind: .push, exercises: [sessionExercise], startedAt: start)
+        let vm = SessionViewModel(store: store, session: session, draftID: UUID())
+        return (vm, store)
+    }
+
+    /// The shape #199 describes end to end: History deletes the one set the
+    /// session was resting on and offering to undo, from a different tab,
+    /// while the session's route stays alive. Both stale pointers must clear.
+    func test_reconcile_clearsUndoBannerAndRestForADeletedSet() throws {
+        let (vm, store) = try makeReconcilableViewModel()
+        vm.logSet()
+        let logged = try XCTUnwrap(vm.recentlyLoggedSet)
+        XCTAssertNotNil(vm.rest, "a working set starts a rest")
+
+        // Stands in for `HistoryView`'s delete, which writes through the
+        // store directly rather than through this view model.
+        _ = try store.deleteSet(id: logged.id)
+
+        vm.reconcilePersistedSetsAfterHistoryEdit()
+
+        XCTAssertNil(vm.recentlyLoggedSet)
+        XCTAssertNil(vm.rest)
+        XCTAssertFalse(vm.session.allLoggedSets.contains { $0.id == logged.id })
+    }
+
+    /// The gap the prior-art branch (`feat/168-bulk-delete`, PR #186) left:
+    /// its check only cancelled a rest nested inside "the banner still names
+    /// this set", so a rest surviving `dismissRecentSetUndo` — which clears
+    /// the banner without touching the rest it started — kept counting down
+    /// for a set already gone from disk. Checked independently here.
+    func test_reconcile_cancelsAnOrphanedRestEvenAfterItsBannerWasDismissed() throws {
+        let (vm, store) = try makeReconcilableViewModel()
+        vm.logSet()
+        let logged = try XCTUnwrap(vm.recentlyLoggedSet)
+        vm.dismissRecentSetUndo(id: logged.id)
+        XCTAssertNil(vm.recentlyLoggedSet, "dismissing only clears the banner")
+        XCTAssertEqual(vm.rest?.setID, logged.id, "not the rest it started")
+
+        _ = try store.deleteSet(id: logged.id)
+        vm.reconcilePersistedSetsAfterHistoryEdit()
+
+        XCTAssertNil(vm.rest, "the rest must not survive the set that started it")
+    }
+
+    /// Deleting a set that is neither the current undo offer nor the rest's
+    /// owner must leave both alone — reconciling is not a reason to discard
+    /// state a History edit elsewhere on the day never touched.
+    func test_reconcile_leavesUnrelatedStateAloneWhenAnOlderSetIsDeleted() throws {
+        let (vm, store) = try makeReconcilableViewModel()
+        vm.logSet()
+        let first = try XCTUnwrap(vm.recentlyLoggedSet)
+        vm.logSet()
+        let second = try XCTUnwrap(vm.recentlyLoggedSet)
+        XCTAssertNotEqual(first.id, second.id)
+
+        _ = try store.deleteSet(id: first.id)
+        vm.reconcilePersistedSetsAfterHistoryEdit()
+
+        XCTAssertEqual(vm.recentlyLoggedSet?.id, second.id)
+        XCTAssertEqual(vm.rest?.setID, second.id)
+        XCTAssertFalse(vm.session.allLoggedSets.contains { $0.id == first.id })
+        XCTAssertTrue(vm.session.allLoggedSets.contains { $0.id == second.id })
+    }
+
+    /// Progression is deliberately not rewound (#194's same judgement,
+    /// applied here per the issue): a batch delete that clears every set
+    /// still leaves the session itself resumable, just with nothing logged.
+    func test_reconcile_survivesABatchDeleteThatClearsEveryLoggedSet() throws {
+        let (vm, store) = try makeReconcilableViewModel()
+        vm.logSet()
+        let logged = try XCTUnwrap(vm.recentlyLoggedSet)
+
+        _ = try store.deleteSets(ids: [logged.id])
+        vm.reconcilePersistedSetsAfterHistoryEdit()
+
+        XCTAssertNil(vm.recentlyLoggedSet)
+        XCTAssertNil(vm.rest)
+        XCTAssertTrue(vm.session.allLoggedSets.isEmpty)
+        XCTAssertNil(vm.failure)
+    }
 }
 
 private extension Exercise {
@@ -222,3 +333,19 @@ private extension Exercise {
 // `loadSuggestionContext()`, which reads through `store.exercises()`. Testing
 // them meaningfully would mean seeding the in-memory store first, which is
 // the same store-dependency trade-off as above.
+//
+// `reconcilePersistedSetsAfterHistoryEdit` (#199) is the one deliberate
+// exception to all of the above, in both directions. As the method under
+// test, it's safe here for reasons `logSet`/`skipRest` aren't: it never
+// writes through `store` (`resumeSession` only reads), `RestNotification.
+// cancel()` is a synchronous fire-and-forget with no authorization
+// dependency, and `SessionActivityController.start()`/`currentState()` both
+// short-circuit on `ActivityAuthorizationInfo().areActivitiesEnabled`, which
+// is false in this test host. As setup, its tests call the real `logSet()`
+// (excluded above as a subject in its own right) rather than hand-assembling
+// a `SetRecord` and `RestTimer` — the resulting `recentlyLoggedSet` and
+// `rest` are exactly what History's edit needs to be reconciled against, and
+// a hand-built stand-in could quietly drift from what `commit()` actually
+// produces. `logSet()`'s own background `Task` for the rest-complete alert
+// is fire-and-forget and asserted on nowhere here, so it never enters the
+// test's timing.

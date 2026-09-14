@@ -226,7 +226,17 @@ struct ContentView: View {
             if let store {
                 // No `insightsLoaded` gate: HistoryView loads its own days on
                 // appearance now, so it is correct as soon as the store is.
-                HistoryView(days: days, store: store)
+                //
+                // `onSetsDeleted` is the seam History uses to tell a session
+                // still open in the Train tab that rows it was holding are
+                // gone (#199) — `activeSession` is nil unless that route is
+                // actually alive, in which case this is a no-op capture of
+                // nothing to reconcile.
+                HistoryView(
+                    days: days,
+                    store: store,
+                    onSetsDeleted: { activeSession?.reconcilePersistedSetsAfterHistoryEdit() }
+                )
             } else {
                 unavailable("History")
             }
