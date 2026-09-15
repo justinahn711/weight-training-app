@@ -72,6 +72,18 @@ struct SessionView: View {
 
     var body: some View {
         sessionContent
+            // A record is felt before it is read: the phone is often on the
+            // floor when the set ends. `.success` is the system's own "you
+            // did the thing" pattern, distinct from the rest-over buzz.
+            .sensoryFeedback(.success, trigger: model.recentRecord?.set.id) { _, new in new != nil }
+            // The spring behind every banner arriving or leaving (task 3).
+            // Keyed on the states that add or remove one, so a tick of the
+            // rest clock never re-runs it.
+            .animation(Theme.spring, value: model.rest?.startedAt)
+            .animation(Theme.spring, value: model.recentlyLoggedSet?.id)
+            .animation(Theme.spring, value: model.pendingAdvance?.id)
+            .animation(Theme.spring, value: model.autoAdvancedFrom?.id)
+            .animation(Theme.spring, value: model.session.currentIndex)
             // `confirmationDialog` can adapt to an anchored popover. The
             // partial-finish checkpoint must stay thumb-reachable on every
             // iPhone, so use a real bottom sheet instead (#158).
@@ -285,6 +297,13 @@ struct SessionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: isCompact ? 12 : 20) {
                 header(exercise, isCompact: isCompact)
+                    // A new lift arrives from the side, on the spring the
+                    // body keys on `currentIndex`; the old one fades under it.
+                    .id(exercise.id)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .opacity
+                    ))
 
                 if includesStatus {
                     statusBanners
@@ -345,15 +364,15 @@ struct SessionView: View {
             NextUpCard(
                 next: next,
                 isResting: model.rest != nil,
-                onStay: { withAnimation(.snappy) { model.stayOnCurrentExercise() } },
-                onGo: { withAnimation(.snappy) { model.skipRest() } }
+                onStay: { withAnimation(Theme.spring) { model.stayOnCurrentExercise() } },
+                onGo: { withAnimation(Theme.spring) { model.skipRest() } }
             )
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
         if let from = model.autoAdvancedFrom {
             AutoAdvancedBanner(
                 from: from,
-                onBack: { withAnimation(.snappy) { model.undoAutoAdvance() } },
+                onBack: { withAnimation(Theme.spring) { model.undoAutoAdvance() } },
                 onExpire: { model.dismissAutoAdvanceNotice() }
             )
             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -361,9 +380,10 @@ struct SessionView: View {
         if let rest = model.rest {
             RestBanner(
                 rest: rest,
-                onSkip: { model.skipRest() },
-                onComplete: { withAnimation(.snappy) { model.restDidComplete() } }
+                onSkip: { withAnimation(Theme.spring) { model.skipRest() } },
+                onComplete: { withAnimation(Theme.spring) { model.restDidComplete() } }
             )
+            .transition(.move(edge: .top).combined(with: .opacity))
         } else {
             // The other half of #173: a rest that was skipped, lost, or never
             // started could only be replaced by logging a set that wasn't
@@ -374,15 +394,18 @@ struct SessionView: View {
             // put a button on when nothing is running — so this sits in the
             // same spot, styled low enough not to read as a status when there
             // is nothing to report.
-            StartRestControl(onStart: { model.startRest() })
+            StartRestControl(onStart: { withAnimation(Theme.spring) { model.startRest() } })
+                .transition(.opacity)
         }
         if let record = model.recentlyLoggedSet {
             LoggedSetBanner(
                 record: record,
+                personalRecord: model.recentRecord?.set.id == record.id ? model.recentRecord : nil,
                 unit: gym.unit,
-                onUndo: { model.undoRecentlyLoggedSet(id: record.id) },
-                onExpire: { model.dismissRecentSetUndo(id: record.id) }
+                onUndo: { withAnimation(Theme.spring) { model.undoRecentlyLoggedSet(id: record.id) } },
+                onExpire: { withAnimation(Theme.spring) { model.dismissRecentSetUndo(id: record.id) } }
             )
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -469,7 +492,7 @@ struct SessionView: View {
         NavigationStack {
             List(model.session.exercises) { exercise in
                 Button {
-                    model.select(exerciseID: exercise.id)
+                    withAnimation(Theme.spring) { model.select(exerciseID: exercise.id) }
                     isChoosingExercise = false
                 } label: {
                     HStack(spacing: 12) {
@@ -702,7 +725,7 @@ struct SessionView: View {
                             exercise: exercise.exercise
                         )
                     } label: {
-                        SetRow(number: index + 1, set: set)
+                        SetRow(number: index + 1, set: set, isRecord: model.recordSetIDs.contains(set.id))
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Edits this logged set")
@@ -726,7 +749,8 @@ struct SessionView: View {
                 Button {
                     editingSet = ActiveSetEditTarget(record: latest, exercise: exercise.exercise)
                 } label: {
-                    SetRow(number: exercise.loggedSets.count, set: latest)
+                    SetRow(number: exercise.loggedSets.count, set: latest,
+                           isRecord: model.recordSetIDs.contains(latest.id))
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Edits this logged set")
@@ -744,7 +768,8 @@ struct SessionView: View {
                                         exercise: exercise.exercise
                                     )
                                 } label: {
-                                    SetRow(number: index + 1, set: set)
+                                    SetRow(number: index + 1, set: set,
+                                           isRecord: model.recordSetIDs.contains(set.id))
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityHint("Edits this logged set")
@@ -857,6 +882,8 @@ struct SessionView: View {
                     Text(setDetailsSummary)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                        .animation(Theme.quick, value: setDetailsSummary)
                     Spacer(minLength: 0)
                 }
                 // `.frame` before `.contentShape`, not after: a frame on the
@@ -921,7 +948,7 @@ struct SessionView: View {
                 // unchanged this call didn't fail, whatever the value was
                 // going in.
                 let failureBeforeLogging = model.failure
-                model.logSet()
+                withAnimation(Theme.spring) { model.logSet() }
                 if model.failure == failureBeforeLogging {
                     withAnimation(.snappy) { isPlateRowExpanded = false }
                 }
@@ -938,6 +965,7 @@ struct SessionView: View {
                         .font(.subheadline.weight(.semibold).monospacedDigit())
                         .opacity(0.85)
                         .contentTransition(.numericText())
+                        .animation(Theme.quick, value: logSetSummary)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: isCompact ? 56 : 62)
@@ -970,7 +998,7 @@ struct SessionView: View {
             HStack(spacing: 8) {
                 if model.session.currentIndex > 0 {
                     Button {
-                        model.goBack()
+                        withAnimation(Theme.spring) { model.goBack() }
                     } label: {
                         Label("Back", systemImage: "chevron.backward")
                             .font(.subheadline)
@@ -1020,7 +1048,7 @@ struct SessionView: View {
                 // trust.
                 if !model.session.isOnLastExercise {
                     Button {
-                        model.advance()
+                        withAnimation(Theme.spring) { model.advance() }
                     } label: {
                         Label("Next exercise", systemImage: "chevron.forward")
                             .font(.subheadline.weight(.semibold))
@@ -1160,19 +1188,24 @@ private struct PartialFinishSheet: View {
 /// expires because older corrections have a safer, explicit home in Today.
 private struct LoggedSetBanner: View {
     let record: SetRecord
+    /// Set when this set set one (task 2): the banner turns gold, says
+    /// which record, and the phone buzzes once (see `sensoryFeedback` on
+    /// the session body).
+    var personalRecord: PersonalRecord? = nil
     let unit: MassUnit
     let onUndo: () -> Void
     let onExpire: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+            Image(systemName: personalRecord == nil ? "checkmark.circle.fill" : "trophy.fill")
+                .foregroundStyle(personalRecord == nil ? Theme.done : Theme.record)
+                .contentTransition(.symbolEffect(.replace))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(record.isWarmup ? "Warmup logged" : "Set logged")
+                Text(title)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(personalRecord == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.record))
                 Text("\(record.load.formatted(in: unit)) × \(record.reps)")
                     .font(.body.weight(.semibold))
             }
@@ -1185,10 +1218,10 @@ private struct LoggedSetBanner: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-        .background(.bar)
+        .background(personalRecord == nil ? AnyShapeStyle(.bar) : AnyShapeStyle(Theme.record.opacity(0.16)))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(record.isWarmup ? "Warmup" : "Set") logged, "
+            "\(title), "
             + "\(record.load.formatted(in: unit)), \(record.reps) reps"
         )
         .accessibilityAction(named: "Undo logged set", onUndo)
@@ -1196,6 +1229,15 @@ private struct LoggedSetBanner: View {
             try? await Task.sleep(for: .seconds(8))
             guard !Task.isCancelled else { return }
             onExpire()
+        }
+    }
+
+    private var title: String {
+        guard let personalRecord else { return record.isWarmup ? "Warmup logged" : "Set logged" }
+        switch personalRecord.kind {
+        case .heaviest: return "Personal record · heaviest ever"
+        case .reps(_, let load): return "Personal record · most reps at \(load.formatted(in: unit))"
+        case .estimatedMax: return "Personal record · best estimated max"
         }
     }
 }
@@ -1261,7 +1303,7 @@ private struct AutoAdvancedBanner: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(Theme.done)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("Moved on")
@@ -1314,6 +1356,7 @@ private struct SetRow: View {
 
     let number: Int
     let set: SetRecord
+    var isRecord = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1324,6 +1367,16 @@ private struct SetRow: View {
 
             Text("\(set.load.formatted(in: gym.unit)) × \(set.reps)")
                 .font(.title3.weight(.medium).monospacedDigit())
+
+            if isRecord {
+                Text("PR")
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Theme.record, in: Capsule())
+                    .accessibilityLabel("Personal record")
+            }
 
             Spacer()
 
@@ -1723,7 +1776,7 @@ private struct RestBanner: View {
                         .stroke(.quaternary, lineWidth: 6)
                     Circle()
                         .trim(from: 0, to: rest.progress(at: context.date))
-                        .stroke(done ? Color.green : Color.accentColor,
+                        .stroke(done ? Theme.done : Color.accentColor,
                                 style: StrokeStyle(lineWidth: 6, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
@@ -1736,7 +1789,7 @@ private struct RestBanner: View {
                         .textCase(.uppercase)
                     Text(rest.displayTime(at: context.date))
                         .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(done ? Color.green : Color.primary)
+                        .foregroundStyle(done ? Theme.done : Color.primary)
                         .contentTransition(.numericText())
 
                     if showsTiming, let report {
@@ -2143,6 +2196,7 @@ private struct WeightStepper: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
+                .animation(Theme.quick, value: load)
             HStack(spacing: 4) {
                 Text("Adjust plates")
                     .font(.callout.weight(.semibold))
@@ -2164,6 +2218,7 @@ private struct WeightStepper: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
+                .animation(Theme.quick, value: load)
             HStack(spacing: 4) {
                 Text(detail)
                     .lineLimit(1)

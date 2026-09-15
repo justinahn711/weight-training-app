@@ -80,6 +80,7 @@ struct ContentView: View {
             progressTab
                 .tabItem { Label("Progress", systemImage: "chart.xyaxis.line") }
         }
+        .background(Theme.background.ignoresSafeArea())
         .task { await openStore() }
         // Asked once, on a store that has never had an answer — including a
         // pre-#136 install updating into this feature, which reads the same

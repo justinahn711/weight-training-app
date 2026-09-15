@@ -216,6 +216,83 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertNil(vm.autoAdvancedFrom, "a move the lifter made needs no way back offered")
     }
 
+    // MARK: - Records at log time
+
+    /// A dumbbell lift with `history` already on disk from three days ago.
+    private func viewModelWithHistory(_ history: [(load: Double, reps: Int)]) throws -> SessionViewModel {
+        let store = try TrainingStore.inMemory()
+        let lift = lateralRaise()
+        try store.create(lift)
+        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+            .addingTimeInterval(-3 * 86_400)
+        for (index, set) in history.enumerated() {
+            // Scored like the sets `logSet` writes, or a matching set would
+            // beat them on RPE-adjusted estimated max.
+            try store.log(SetRecord(exerciseID: lift.id, load: Load(set.load), reps: set.reps, rpe: .eight,
+                                    performedAt: noon.addingTimeInterval(Double(index) * 90)))
+        }
+        let session = Session(kind: .push, exercises: [SessionExercise(
+            exercise: lift, prescription: Prescription(load: Load(20), reps: 12, rpe: .eight)
+        )])
+        return SessionViewModel(store: store, session: session, draftID: UUID())
+    }
+
+    func test_logSet_firstOutingIsNotARecord() throws {
+        let vm = try viewModelWithHistory([])
+        vm.logSet()
+        XCTAssertNil(vm.recentRecord, "a first session is a data point, not a record (#70)")
+        XCTAssertTrue(vm.recordSetIDs.isEmpty)
+    }
+
+    func test_logSet_beatingEarlierTodayOnANewLiftIsNotARecord() throws {
+        let vm = try viewModelWithHistory([])
+        vm.pendingLoad = Load(20)
+        vm.logSet()
+        vm.pendingLoad = Load(30)
+        vm.logSet()
+        XCTAssertNil(vm.recentRecord, "records are judged against previous days, not the warm-up to a first session")
+    }
+
+    func test_logSet_heavierThanEverIsARecordAndUndoTakesItBack() throws {
+        let vm = try viewModelWithHistory([(20, 12), (20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let logged = try XCTUnwrap(vm.recentlyLoggedSet)
+        XCTAssertEqual(vm.recentRecord?.kind, .heaviest(Load(25)))
+        XCTAssertEqual(vm.recentRecord?.set.id, logged.id)
+        XCTAssertTrue(vm.recordSetIDs.contains(logged.id))
+
+        vm.undoRecentlyLoggedSet(id: logged.id)
+        XCTAssertNil(vm.recentRecord)
+        XCTAssertFalse(vm.recordSetIDs.contains(logged.id))
+    }
+
+    func test_logSet_matchingHistoryIsNotARecord() throws {
+        let vm = try viewModelWithHistory([(20, 12)])
+        vm.pendingLoad = Load(20)
+        vm.setPendingReps(12)
+        vm.logSet()
+        XCTAssertNil(vm.recentRecord)
+    }
+
+    func test_logSet_moreRepsAtTheSameWeightIsARecord_headlinedBelowHeaviest() throws {
+        let vm = try viewModelWithHistory([(20, 12)])
+        vm.pendingLoad = Load(20)
+        vm.setPendingReps(14)
+        vm.logSet()
+        XCTAssertEqual(vm.recentRecord?.kind, .reps(14, at: Load(20)))
+    }
+
+    func test_dismissingTheBanner_keepsTheRowBadge() throws {
+        let vm = try viewModelWithHistory([(20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let id = try XCTUnwrap(vm.recentlyLoggedSet?.id)
+        vm.dismissRecentSetUndo(id: id)
+        XCTAssertNil(vm.recentRecord)
+        XCTAssertTrue(vm.recordSetIDs.contains(id))
+    }
+
     // MARK: - Warmup ramp leads the exercise (#206)
     //
     // `seedPendingFromCurrent` runs inside `init`, so building a view model is

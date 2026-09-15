@@ -84,6 +84,18 @@ final class SessionViewModel {
     /// where you came from and offer the way back. Nil once dismissed.
     private(set) var autoAdvancedFrom: SessionExercise?
 
+    /// The record the most recent set just set, if it set one — what turns
+    /// the logged-set banner gold. Judged against the lift's whole history
+    /// by `PersonalRecords.set`, so a first outing never earns one (#70).
+    /// Cleared with the banner and on leaving the exercise; the badge on the
+    /// row itself lives on in `recordSetIDs`.
+    private(set) var recentRecord: PersonalRecord?
+
+    /// Sets logged this session that set a record, for the row badges.
+    /// Recomputed from history like every record is: undoing or deleting
+    /// the set takes the badge with it.
+    private(set) var recordSetIDs: Set<UUID> = []
+
     init(store: TrainingStore, session: Session, draftID: UUID) {
         self.store = store
         self.session = session
@@ -175,6 +187,15 @@ final class SessionViewModel {
             session.log(record)
             recentlyLoggedSet = record
             liveLogActionID = UUID()
+            // Judged against previous days, not earlier today: feeling out
+            // a new lift across three sets is one session, not three
+            // records. The digest's weekly view keeps the engine's own
+            // per-set judgement; this is only what the banner celebrates.
+            let today = Calendar.current.startOfDay(for: record.performedAt)
+            let previousDays = ((try? store.sets(forExercise: record.exerciseID)) ?? [])
+                .filter { $0.performedAt < today }
+            recentRecord = Self.headline(of: PersonalRecords.set(by: record, history: previousDays))
+            if recentRecord != nil { recordSetIDs.insert(record.id) }
             // Arm the Next-up card on the set that matches last time. Read
             // back off `session.current` rather than the `current` captured
             // above, because `session.log` is what just changed the count.
@@ -329,6 +350,8 @@ final class SessionViewModel {
             // The set that armed the move is gone, so the move is too.
             pendingAdvance = nil
             recentlyLoggedSet = nil
+            recordSetIDs.remove(record.id)
+            if recentRecord?.set.id == record.id { recentRecord = nil }
             liveLogActionID = UUID()
             publishActivity()
         } catch {
@@ -341,6 +364,21 @@ final class SessionViewModel {
     func dismissRecentSetUndo(id: UUID) {
         guard recentlyLoggedSet?.id == id else { return }
         recentlyLoggedSet = nil
+        recentRecord = nil
+    }
+
+    /// One record to announce when a set sets several. Heaviest is the one
+    /// people train for; an estimated max is a computed figure and comes
+    /// last, named as an estimate wherever it is shown.
+    private static func headline(of records: [PersonalRecord]) -> PersonalRecord? {
+        func rank(_ record: PersonalRecord) -> Int {
+            switch record.kind {
+            case .heaviest: return 0
+            case .reps: return 1
+            case .estimatedMax: return 2
+            }
+        }
+        return records.min { rank($0) < rank($1) }
     }
 
     /// The one place the session catches up after History changes durable set
@@ -385,6 +423,10 @@ final class SessionViewModel {
 
         if let recent = recentlyLoggedSet, !survivingIDs.contains(recent.id) {
             recentlyLoggedSet = nil
+        }
+        recordSetIDs.formIntersection(survivingIDs)
+        if let record = recentRecord, !survivingIDs.contains(record.set.id) {
+            recentRecord = nil
         }
 
         // Checked independently of the banner above, not nested inside it:
@@ -594,6 +636,7 @@ final class SessionViewModel {
     /// either bug.
     private func didChangeCurrentExercise() {
         recentlyLoggedSet = nil
+        recentRecord = nil
         pendingAdvance = nil
         autoAdvancedFrom = nil
         seedPendingFromCurrent()

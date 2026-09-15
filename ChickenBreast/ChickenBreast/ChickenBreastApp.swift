@@ -24,6 +24,8 @@ struct ChickenBreastApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                // Dark, always — see `Theme`.
+                .preferredColorScheme(.dark)
         }
     }
 }
