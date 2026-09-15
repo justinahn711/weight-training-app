@@ -52,6 +52,7 @@ struct ContentView: View {
     /// Presented only after Finish has persisted progression and cleared the
     /// draft. The sheet acknowledges the result; it never gates or repeats it.
     @State private var completionSummary: [ProgressionSummaryEntry] = []
+    @State private var completionRecords: [SessionRecordEntry] = []
     @State private var showingCompletionSummary = false
 
     /// The rotation currently in play, used for day names and ordering
@@ -100,7 +101,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showingCompletionSummary) {
-            ProgressionCompletionView(entries: completionSummary) {
+            ProgressionCompletionView(entries: completionSummary, records: completionRecords) {
                 showingCompletionSummary = false
             }
         }
@@ -259,6 +260,7 @@ struct ContentView: View {
                         )
                     },
                     weekly: weeklyVolume,
+                    days: days,
                     consistency: TrainingHistory.weeklyConsistency(days: days, target: weeklySessionTarget)
                 )
             } else {
@@ -339,7 +341,7 @@ struct ContentView: View {
 
             SyncBadge(status: sync)
 
-            if !completionSummary.isEmpty {
+            if !completionSummary.isEmpty || !completionRecords.isEmpty {
                 Button { showingCompletionSummary = true } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle")
@@ -692,9 +694,10 @@ struct ContentView: View {
     private func finishActiveSession() {
         guard let activeSession, activeSession.finish() else { return }
         completionSummary = activeSession.completionSummary
+        completionRecords = activeSession.completionRecords
         workoutDraft = nil
         route = nil
-        showingCompletionSummary = !completionSummary.isEmpty
+        showingCompletionSummary = !completionSummary.isEmpty || !completionRecords.isEmpty
     }
 
     /// Loads recovery when Health has already been answered, and otherwise

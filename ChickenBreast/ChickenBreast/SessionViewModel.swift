@@ -38,6 +38,12 @@ final class SessionViewModel {
     /// explanation the progression engine just produced (#184).
     private(set) var completionSummary: [ProgressionSummaryEntry] = []
 
+    /// Records set today, one per lift, for the finish sheet (task 5).
+    /// Computed at `finish()` from disk, so a set corrected mid-session is
+    /// judged as corrected. Lifts with no previous day are skipped: a first
+    /// outing is a data point, not a record.
+    private(set) var completionRecords: [SessionRecordEntry] = []
+
     /// The weight for the next set, seeded from the target and adjusted with
     /// the stepper. Held here rather than in the view so it survives the view
     /// being rebuilt as the day advances.
@@ -365,6 +371,22 @@ final class SessionViewModel {
         guard recentlyLoggedSet?.id == id else { return }
         recentlyLoggedSet = nil
         recentRecord = nil
+    }
+
+    /// Every record set today across the session, judged the way the
+    /// banner judges — against previous days — and then per set against
+    /// what came earlier today, so a lift that climbed through three
+    /// sets reports its best rather than all three. One per lift.
+    private func recordsSetToday() -> [SessionRecordEntry] {
+        let today = Calendar.current.startOfDay(for: session.startedAt)
+        return session.exercises.compactMap { exercise -> SessionRecordEntry? in
+            let history = (try? store.sets(forExercise: exercise.id)) ?? []
+            guard history.contains(where: { !$0.isWarmup && $0.performedAt < today }) else { return nil }
+            guard let record = Self.headline(of: PersonalRecords.recent(in: history, since: today)) else {
+                return nil
+            }
+            return SessionRecordEntry(exercise: exercise.exercise, record: record)
+        }
     }
 
     /// One record to announce when a set sets several. Heaviest is the one
@@ -803,6 +825,7 @@ final class SessionViewModel {
             // intentionally idempotent and `applied` is empty. Keep the exact
             // first result rather than losing its explanation on that retry.
             if !summary.isEmpty { completionSummary = summary }
+            completionRecords = recordsSetToday()
             // Clear after progression. If this save fails, retrying is safe:
             // progression is idempotent for the session day, while retaining
             // the draft keeps a failed Finish recoverable.
@@ -1339,4 +1362,11 @@ final class SessionViewModel {
     }
 
     func dismissFailure() { failure = nil }
+}
+
+/// A record with the lift it was set on, for the finish sheet.
+struct SessionRecordEntry: Hashable, Identifiable {
+    var id: UUID { record.set.id }
+    let exercise: Exercise
+    let record: PersonalRecord
 }

@@ -49,6 +49,20 @@ public struct E1RMTrend: Hashable, Sendable, Identifiable {
     public var latest: TrendPoint? { points.last }
     public var best: TrendPoint? { points.max { $0.e1RM < $1.e1RM } }
 
+    /// Sessions whose estimated max beat every session before it — the
+    /// points worth marking on the line. The first session is never one: a
+    /// first data point is not a record, the same rule `PersonalRecords`
+    /// applies. Estimated, like the line itself, and labelled so.
+    public var recordPoints: [TrendPoint] {
+        var best: Load?
+        var records: [TrendPoint] = []
+        for point in points {
+            if let best, point.e1RM > best { records.append(point) }
+            if best == nil || point.e1RM > best! { best = point.e1RM }
+        }
+        return records
+    }
+
     /// Change from the first session to the most recent, in pounds.
     public var change: Load? {
         guard let first = points.first, let last = points.last, points.count >= 2 else {

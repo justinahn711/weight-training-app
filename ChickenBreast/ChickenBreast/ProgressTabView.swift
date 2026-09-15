@@ -14,6 +14,7 @@ struct ProgressTabView: View {
     let trends: [E1RMTrend]
     let summary: WeeklySummary?
     let weekly: [WeeklyVolumePoint]
+    let days: [TrainingDay]
     let consistency: WeeklyConsistency
 
     private var hasAnything: Bool {
@@ -29,6 +30,7 @@ struct ProgressTabView: View {
                             WeeklyRingsCard(summary: summary, consistency: consistency)
                         }
                         VolumeChartCard(weekly: weekly)
+                        ConsistencyCard(cells: ConsistencyGrid.cells(days: days))
                         liftsSection
                     }
                     .padding(.horizontal, 16)
@@ -351,6 +353,100 @@ private struct VolumeChartCard: View {
 
     private static func count(_ value: Double) -> String {
         value == value.rounded() ? String(format: "%.0f", value) : String(format: "%.1f", value)
+    }
+}
+
+// MARK: - Consistency
+
+/// Twelve weeks of days, one square each, darker the more working sets the
+/// day had (task 7). A sequential ramp of the one accent hue: magnitude,
+/// not identity, so one hue light-to-dark and nothing else. Days after
+/// today are blank rather than "rest", and today carries a ring.
+private struct ConsistencyCard: View {
+    let cells: [ConsistencyCell]
+
+    private var calendar: Calendar { .current }
+    private var columns: [[ConsistencyCell]] {
+        stride(from: 0, to: cells.count, by: 7).map { Array(cells[$0..<min($0 + 7, cells.count)]) }
+    }
+    private var trainedDays: Int { cells.filter { $0.intensity != .none }.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Consistency")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(trainedDays)")
+                        .font(.title2.bold().monospacedDigit())
+                    Text("days trained in 12 weeks")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+
+            HStack(alignment: .top, spacing: 3) {
+                ForEach(Array(columns.enumerated()), id: \.offset) { _, week in
+                    VStack(spacing: 3) {
+                        ForEach(week) { cell in
+                            square(cell)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Consistency grid")
+
+            HStack(spacing: 4) {
+                Text("Less")
+                ForEach(TrainingIntensity.allCases, id: \.rawValue) { level in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(fill(level))
+                        .frame(width: 10, height: 10)
+                }
+                Text("More")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+        }
+        .padding(16)
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("progress.consistency")
+    }
+
+    private func square(_ cell: ConsistencyCell) -> some View {
+        let isToday = calendar.isDateInToday(cell.date)
+        return RoundedRectangle(cornerRadius: 3)
+            .fill(cell.isFuture ? AnyShapeStyle(.clear) : AnyShapeStyle(fill(cell.intensity)))
+            .aspectRatio(1, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .overlay {
+                if isToday {
+                    RoundedRectangle(cornerRadius: 3).strokeBorder(Color.primary.opacity(0.7), lineWidth: 1.5)
+                }
+            }
+            .accessibilityLabel(cell.date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+            .accessibilityValue(
+                cell.isFuture ? "upcoming"
+                    : cell.workingSets == 0 ? "rest"
+                    : "\(cell.workingSets) working sets"
+            )
+            .accessibilityHidden(cell.isFuture)
+    }
+
+    private func fill(_ level: TrainingIntensity) -> AnyShapeStyle {
+        switch level {
+        case .none: return AnyShapeStyle(.fill.tertiary)
+        case .light: return AnyShapeStyle(Color.accentColor.opacity(0.3))
+        case .moderate: return AnyShapeStyle(Color.accentColor.opacity(0.55))
+        case .heavy: return AnyShapeStyle(Color.accentColor.opacity(0.8))
+        case .full: return AnyShapeStyle(Color.accentColor)
+        }
     }
 }
 

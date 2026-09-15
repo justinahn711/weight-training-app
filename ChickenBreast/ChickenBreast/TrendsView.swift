@@ -176,6 +176,36 @@ struct TrendDetailView: View {
 
             // Nothing is added at rest, so the chart draws exactly what it drew
             // before this change.
+            // Records, in the one colour that means one (task 5). Drawn after
+            // the line so the gold sits on top; the newest carries the label,
+            // the rest are marks, so a rising lift isn't wallpapered in "PR".
+            ForEach(trend.recordPoints) { point in
+                PointMark(
+                    x: .value("Date", point.date),
+                    y: .value(gym.unit.symbol, point.e1RM.value(in: gym.unit))
+                )
+                .symbolSize(90)
+                .foregroundStyle(Theme.record)
+                .accessibilityLabel("Estimated max record, \(point.date.formatted(.dateTime.month(.abbreviated).day()))")
+                .accessibilityValue(point.e1RM.rounded.formatted(in: gym.unit))
+            }
+            if scrubbed == nil, let newest = trend.recordPoints.last {
+                PointMark(
+                    x: .value("Date", newest.date),
+                    y: .value(gym.unit.symbol, newest.e1RM.value(in: gym.unit))
+                )
+                .symbolSize(0)
+                .annotation(position: .top, spacing: 6) {
+                    Text("PR")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Theme.record, in: Capsule())
+                }
+                .accessibilityHidden(true)
+            }
+
             if let scrubbed {
                 marker(for: scrubbed)
             }
