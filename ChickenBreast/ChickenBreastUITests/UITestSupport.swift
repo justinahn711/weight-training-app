@@ -72,6 +72,27 @@ class ChickenBreastUITestCase: XCTestCase {
     /// - `.contrast` — one case remains on the session screen, inside a
     ///   control whose colours carry meaning; recolouring it needs the design
     ///   answer #138 is already circling.
+    /// The types actually audited — everything except what `knownIssues`
+    /// holds open.
+    ///
+    /// Held-open types were being computed and then discarded: the handler
+    /// returned true for them, so they never failed anything, but the audit
+    /// had already done the work. Contrast in particular has to render and
+    /// sample pixels for every element it checks, which is the expensive kind
+    /// of work to do for a result nobody reads (#193).
+    ///
+    /// The cost of this is real and worth naming: a held-open issue is no
+    /// longer reported in the result bundle, so the backlog those entries
+    /// describe stops being observable from a test run. That backlog is
+    /// written down in `knownIssues` below and tracked in #113 and #138, which
+    /// is where it belongs — a comment nobody deletes beats a log nobody
+    /// reads, and reliability of the checks that *do* gate is worth more.
+    static let auditedTypes: XCUIAccessibilityAuditType = {
+        var all: XCUIAccessibilityAuditType = .all
+        all.subtract(knownIssues)
+        return all
+    }()
+
     static let knownIssues: XCUIAccessibilityAuditType = [
         .contrast,
         .textClipped,
@@ -146,7 +167,7 @@ class ChickenBreastUITestCase: XCTestCase {
 
     private func runAuditOnce(_ app: XCUIApplication) throws -> [String] {
         var seen: [String] = []
-        try app.performAccessibilityAudit { issue in
+        try app.performAccessibilityAudit(for: Self.auditedTypes) { issue in
             let element = Self.describe(issue.element)
             let detail = "\(issue.auditType): \(issue.detailedDescription ?? "no detail") — \(element)"
             seen.append(detail)
