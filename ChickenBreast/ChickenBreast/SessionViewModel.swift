@@ -90,8 +90,28 @@ final class SessionViewModel {
 
     // MARK: - Logging
 
+    /// Logs whatever the form currently holds.
+    ///
+    /// `isWarmup: false` is what the primary `Log Set` control and voice's
+    /// `.logSet` both send, and that default is where the ramp gets to lead
+    /// the exercise (#206): if the form is still showing the rung it was
+    /// seeded to (`isOnActiveWarmupRung`), this routes to `logWarmup`
+    /// instead — logging that rung and advancing, rather than crediting a
+    /// warmup as working volume. Nudging the stepper, adding a plate, or
+    /// dialling in the real working weight before tapping already moves the
+    /// form off that rung, so falling through to an ordinary working set
+    /// here needs no separate escape hatch — the app suggested the rung, it
+    /// never got to insist (the trap the issue warns against).
+    ///
+    /// `isWarmup: true` — only `Extra warmup` sends this — skips that check
+    /// entirely and always logs the values on screen as an unplanned
+    /// warmup, ramp or no ramp, exactly as it did before this change.
     func logSet(isWarmup: Bool = false) {
         guard let current else { return }
+        if !isWarmup, isOnActiveWarmupRung, let rung = nextWarmupRung {
+            logWarmup(rung)
+            return
+        }
         let record = SetRecord(
             exerciseID: current.exercise.id,
             load: pendingLoad,
@@ -105,8 +125,12 @@ final class SessionViewModel {
         commit(record, startsRest: !isWarmup)
     }
 
-    /// Logs one rung of the warmup ramp exactly as shown, without disturbing
-    /// the working weight already dialled in below.
+    /// Logs one rung of the warmup ramp exactly as shown, then advances the
+    /// form onto whichever rung is next — or the working weight, once this
+    /// was the last one (#206). Ignores whatever is currently dialled in
+    /// rather than reading `pendingLoad`/`pendingReps`: a rung tapped from
+    /// the list is a commitment to the number printed on it, not to
+    /// whatever the stepper happens to hold.
     func logWarmup(_ rung: WarmupSet) {
         guard let current else { return }
         commit(
@@ -119,6 +143,12 @@ final class SessionViewModel {
             ),
             startsRest: false
         )
+        // Reuses the exact seeding logic navigation already relies on
+        // (`seedPendingFromCurrent`) instead of a second copy of "what goes
+        // in the form now" — `current.loggedSets` just grew by one warmup
+        // above, so `nextWarmupRung` below already reflects the rung just
+        // logged as done.
+        seedPendingFromCurrent()
     }
 
     private func commit(_ record: SetRecord, startsRest: Bool) {
@@ -500,6 +530,24 @@ final class SessionViewModel {
     /// should pick up where it left off, not reset to the target.
     private func seedPendingFromCurrent() {
         guard let current else { return }
+
+        // A ramp still in progress leads the exercise (#206): the form seeds
+        // onto whichever rung nobody has logged yet, instead of the working
+        // weight, so the first thing on the buttons at a plate-built lift is
+        // the warmup that's actually next. `nextWarmupRung` is nil — and
+        // this branch is skipped — for a lift with no ramp at all, one
+        // that's been fully logged, one whose only working set already
+        // ended it (`warmupRamp` checks `workingSets.isEmpty`), and one
+        // that's been skipped (`clearWarmupRamp`), so a lift that never had
+        // a ramp keeps behaving exactly as it did before this change.
+        if let rung = nextWarmupRung {
+            pendingLoad = rung.load
+            pendingReps = rung.reps
+            pendingRPE = current.prescription.rpe
+            isWarmupRampExpanded = current.id == session.exercises.first?.id
+            return
+        }
+
         if let lastToday = current.loggedSets.last(where: { !$0.isWarmup }) {
             pendingLoad = lastToday.load
         } else {
@@ -1087,11 +1135,53 @@ final class SessionViewModel {
         )
     }
 
-    /// One tap to clear the block, per #15.
+    /// The rung the form should be leading with right now — nil once the
+    /// ramp is exhausted, was skipped, or never applied to this lift (#206).
+    ///
+    /// A thin wrapper over `WarmupRamp.nextRung`, which does the actual
+    /// work: comparing `warmupRamp` (regenerated fresh, never stored) against
+    /// today's already-logged warmup loads. `SessionView` reads this to
+    /// decide what the primary `Log Set` control is about to do — see
+    /// `logSet(isWarmup:)` — and can use it to label that control, e.g. "Log
+    /// warmup, 135 lb × 4" instead of a generic "Log Set", while a rung is
+    /// active.
+    var nextWarmupRung: WarmupSet? {
+        guard let current else { return nil }
+        let loggedToday = Set(current.loggedSets.filter(\.isWarmup).map(\.load))
+        return WarmupRamp.nextRung(in: warmupRamp, loggedWarmupLoads: loggedToday)
+    }
+
+    /// True while the form is still showing the rung it was seeded to.
+    ///
+    /// The one signal `logSet(isWarmup: false)` uses to decide between
+    /// logging the active rung and logging an ordinary working set (#206).
+    /// Matches on load *and* reps rather than load alone: a lifter who has
+    /// changed the rep count while the weight still reads the rung's number
+    /// has already started deciding this set for themselves, and the app
+    /// suggests, it doesn't get the last word.
+    var isOnActiveWarmupRung: Bool {
+        guard let rung = nextWarmupRung else { return false }
+        return pendingLoad == rung.load && pendingReps == rung.reps
+    }
+
+    /// Skips the ramp entirely and jumps straight to the working weight —
+    /// the one control #206 asks for. Reuses #15's per-exercise, per-session
+    /// dismissal (`clearedRamps`) rather than adding a second, differently-
+    /// scoped flag: see "Decisions the owner should confirm" in the PR for
+    /// why that scope is the right one for a skip too.
+    ///
+    /// The dismissal alone used to be enough, because tapping it only ever
+    /// hid a *list* the stepper below was never wired to. Now that the form
+    /// leads with the ramp, hiding the list without moving the numbers would
+    /// leave the stepper reading a warmup weight under a control that just
+    /// said "skip" — so this also re-seeds, which lands on the working
+    /// weight because `clearedRamps` already makes `nextWarmupRung` nil by
+    /// the time `seedPendingFromCurrent` looks.
     func clearWarmupRamp() {
         guard let current else { return }
         clearedRamps.insert(current.id)
         isWarmupRampExpanded = false
+        seedPendingFromCurrent()
     }
 
     /// The rep numbers offered on the row: a fixed 1...20, the same for every

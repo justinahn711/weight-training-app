@@ -18,13 +18,16 @@ import WeightTrainingStore
 ///
 /// This suite deliberately stays on one side of a line: everything here reads
 /// or mutates in-memory view-model state and touches nothing that requires a
-/// device to behave correctly. `TrainingStore.inMemory()` is used only because
-/// `SessionViewModel.init` requires *a* store to exist — no test below calls a
-/// method that reads or writes through it. Nothing here calls `logSet`,
-/// `advance`, `goBack`, `select`, `skipRest`, `startRest` or anything else
-/// that reaches `TrainingStore`, `GymSettings.shared` or `ActivityKit`; see
-/// the bottom of this file for why those are explicitly left for a UI or
-/// integration test instead, not silently skipped.
+/// device to behave correctly. `TrainingStore.inMemory()` is used because
+/// `SessionViewModel.init` requires *a* store to exist, and a handful of
+/// tests below do call `logSet`/`logWarmup` — a real write through that
+/// in-memory store — where what's being asserted is plain view-model state
+/// (`pendingLoad`, `pendingReps`, `session.current?.loggedSets`) rather than
+/// anything about persistence, notifications, or `ActivityKit` itself; see
+/// "Warmup ramp leads the exercise (#206)" below and the bottom of this file
+/// for exactly what that does and doesn't cover, and why `advance`, `goBack`,
+/// `select`, `skipRest` and `startRest` are still left for a UI or
+/// integration test instead.
 @MainActor
 final class SessionViewModelTests: XCTestCase {
 
@@ -50,10 +53,27 @@ final class SessionViewModelTests: XCTestCase {
         )
     }
 
-    private func sessionExercise(_ exercise: Exercise) -> SessionExercise {
+    private func sessionExercise(
+        _ exercise: Exercise,
+        loggedSets: [SetRecord] = []
+    ) -> SessionExercise {
         SessionExercise(
             exercise: exercise,
-            prescription: Prescription(load: Load(135), reps: 5, rpe: .eight)
+            prescription: Prescription(load: Load(135), reps: 5, rpe: .eight),
+            loggedSets: loggedSets
+        )
+    }
+
+    /// A warmup `SetRecord` at a rung's exact numbers, as if it had already
+    /// been logged earlier today — used to simulate ramp progress without
+    /// going through `logWarmup` (#206).
+    private func warmupRecord(_ rung: WarmupSet, exerciseID: UUID) -> SetRecord {
+        SetRecord(
+            exerciseID: exerciseID,
+            load: rung.load,
+            reps: rung.reps,
+            isWarmup: true,
+            performedAt: Date()
         )
     }
 
@@ -68,8 +88,208 @@ final class SessionViewModelTests: XCTestCase {
         for i in 0..<extraCount {
             roster.append(lateralRaise().renamed("Extra \(i)"))
         }
-        let session = Session(kind: .push, exercises: roster.map(sessionExercise))
+        let session = Session(kind: .push, exercises: roster.map { sessionExercise($0) })
         return SessionViewModel(store: store, session: session, draftID: UUID())
+    }
+
+    /// The `SessionExercise`-level counterpart to `makeViewModel(exercises:)`,
+    /// for tests that need to control `loggedSets` directly — simulating ramp
+    /// progress without going through `logWarmup` (#206).
+    private func makeViewModel(sessionExercises: [SessionExercise]) throws -> SessionViewModel {
+        let store = try TrainingStore.inMemory()
+        let session = Session(kind: .push, exercises: sessionExercises)
+        return SessionViewModel(store: store, session: session, draftID: UUID())
+    }
+
+    // MARK: - Warmup ramp leads the exercise (#206)
+    //
+    // `seedPendingFromCurrent` runs inside `init`, so building a view model is
+    // enough to exercise it without calling any of the store-writing methods
+    // excluded at the bottom of this file — except where a test is explicitly
+    // about `logSet`/`logWarmup`'s own new behavior, which follows the same
+    // precedent `test_reconcile_*` above already set: the in-memory store and
+    // a test host with Live Activities disabled make those calls safe here,
+    // see the note at the end of this file for exactly what that covers.
+
+    /// The done-when this issue names first: a plate-built lift with a ramp
+    /// still ahead of it seeds the first rung, not the working weight.
+    func test_seedPendingFromCurrent_seedsFirstUnloggedRungWhenRampIsActive() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(bench)])
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(135))
+        let firstRung = try XCTUnwrap(ramp.first)
+
+        XCTAssertEqual(vm.nextWarmupRung, firstRung)
+        XCTAssertEqual(vm.pendingLoad, firstRung.load)
+        XCTAssertEqual(vm.pendingReps, firstRung.reps)
+        XCTAssertTrue(vm.isOnActiveWarmupRung)
+    }
+
+    /// The regression this issue asks to guard hardest against: a lift
+    /// ineligible for a ramp (#157's `equipment.isPlateBuilt`) must seed
+    /// exactly like it always has — the working weight, no rung involved.
+    func test_seedPendingFromCurrent_seedsWorkingWeightWhenNoRampIsEligible() throws {
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(lateralRaise())])
+
+        XCTAssertNil(vm.nextWarmupRung)
+        XCTAssertTrue(vm.warmupRamp.isEmpty)
+        XCTAssertEqual(vm.pendingLoad, Load(135), "the prescription's load, unchanged by this issue")
+        XCTAssertFalse(vm.isOnActiveWarmupRung)
+    }
+
+    /// Rungs already logged earlier today — before this view model even
+    /// existed, e.g. a resumed draft — are skipped rather than re-suggested.
+    func test_seedPendingFromCurrent_skipsRungsAlreadyLoggedToday() throws {
+        let bench = benchPress()
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(135))
+        let alreadyDone = ramp.prefix(2).map { warmupRecord($0, exerciseID: bench.id) }
+        let vm = try makeViewModel(sessionExercises: [
+            sessionExercise(bench, loggedSets: Array(alreadyDone))
+        ])
+
+        XCTAssertEqual(vm.nextWarmupRung, ramp[2])
+        XCTAssertEqual(vm.pendingLoad, ramp[2].load)
+        XCTAssertEqual(vm.pendingReps, ramp[2].reps)
+    }
+
+    /// Every rung already logged: the ramp is exhausted, so seeding falls
+    /// through to the working weight exactly as a lift with no ramp does.
+    func test_seedPendingFromCurrent_landsOnWorkingWeightOnceRampIsExhausted() throws {
+        let bench = benchPress()
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(135))
+        let allDone = ramp.map { warmupRecord($0, exerciseID: bench.id) }
+        let vm = try makeViewModel(sessionExercises: [
+            sessionExercise(bench, loggedSets: allDone)
+        ])
+
+        XCTAssertNil(vm.nextWarmupRung)
+        XCTAssertEqual(vm.pendingLoad, Load(135))
+        XCTAssertFalse(vm.isOnActiveWarmupRung)
+    }
+
+    /// `isOnActiveWarmupRung` reflects the numbers on screen, not just
+    /// whether a rung exists — editing the stepper away from the suggestion
+    /// is what lets a working set through without a separate escape hatch
+    /// (the "must not trap" constraint in #206).
+    func test_isOnActiveWarmupRung_falseOnceThePendingValuesAreEdited() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(bench)])
+        XCTAssertTrue(vm.isOnActiveWarmupRung)
+
+        vm.adjustLoad(by: 1)
+
+        XCTAssertFalse(vm.isOnActiveWarmupRung, "the stepper moved the form off the suggested rung")
+        XCTAssertNotNil(vm.nextWarmupRung, "the rung itself is still there to log — nothing was decided for the lifter")
+    }
+
+    /// The one control #206 asks for: skipping jumps straight to the working
+    /// weight and the ramp stops being offered, in one tap.
+    func test_clearWarmupRamp_jumpsToWorkingWeightAndHidesTheRamp() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(bench)])
+        XCTAssertTrue(vm.isOnActiveWarmupRung, "sanity: starts on a rung")
+
+        vm.clearWarmupRamp()
+
+        XCTAssertTrue(vm.warmupRamp.isEmpty)
+        XCTAssertNil(vm.nextWarmupRung)
+        XCTAssertEqual(vm.pendingLoad, Load(135), "skip lands on the working weight, not wherever the stepper was")
+    }
+
+    /// Logging the rung the form is seeded to logs it as a warmup — never
+    /// working volume — and advances to the next rung.
+    func test_logSet_onActiveRung_logsAsWarmupAndAdvancesToTheNextRung() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(bench)])
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(135))
+
+        vm.logSet()
+
+        let logged = try XCTUnwrap(vm.session.current?.loggedSets.last)
+        XCTAssertTrue(logged.isWarmup)
+        XCTAssertEqual(logged.load, ramp[0].load)
+        XCTAssertEqual(logged.reps, ramp[0].reps)
+        XCTAssertEqual(vm.pendingLoad, ramp[1].load, "advanced to the second rung")
+        XCTAssertEqual(vm.pendingReps, ramp[1].reps)
+        XCTAssertTrue(vm.session.current!.workingSets.isEmpty, "a rung never counts as working volume")
+    }
+
+    /// Logging every rung in turn ends on the working weight, exactly as the
+    /// issue's done-when describes — no rung left dangling.
+    func test_logSet_repeatedThroughTheWholeRamp_endsOnTheWorkingWeight() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(bench)])
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(135))
+
+        for _ in ramp {
+            XCTAssertNotNil(vm.nextWarmupRung, "still expects a rung before logging it")
+            vm.logSet()
+        }
+
+        XCTAssertNil(vm.nextWarmupRung)
+        XCTAssertEqual(vm.pendingLoad, Load(135))
+        XCTAssertFalse(vm.isOnActiveWarmupRung)
+        XCTAssertEqual(vm.session.current?.loggedSets.filter(\.isWarmup).count, ramp.count)
+        XCTAssertTrue(vm.session.current!.workingSets.isEmpty, "still nothing but warmups on the books")
+    }
+
+    /// The load-bearing constraint: someone can log a working set while the
+    /// form sits on a warmup rung, just by dialling in the working numbers
+    /// first — the app suggests the rung, it never gets to insist.
+    func test_logSet_afterEditingOffTheRung_logsAWorkingSetInstead() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(bench)])
+        XCTAssertTrue(vm.isOnActiveWarmupRung, "sanity: starts on a rung")
+
+        vm.pendingLoad = Load(135)
+        vm.setPendingReps(5)
+        XCTAssertFalse(vm.isOnActiveWarmupRung)
+
+        vm.logSet()
+
+        let logged = try XCTUnwrap(vm.session.current?.loggedSets.last)
+        XCTAssertFalse(logged.isWarmup, "a working set, not a warmup, despite a ramp still being active moments ago")
+        XCTAssertEqual(logged.load, Load(135))
+        XCTAssertNotNil(logged.rpe, "working sets are scored")
+        XCTAssertTrue(vm.warmupRamp.isEmpty, "the ramp is retired the moment a working set lands (#15)")
+    }
+
+    /// `logWarmup(_:)` — the entry point a tappable rung row calls directly —
+    /// logs exactly the rung passed, ignoring whatever the stepper currently
+    /// holds, and still advances the form afterward.
+    func test_logWarmup_logsTheExactRungPassedRegardlessOfPendingValues() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(bench)])
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(135))
+        vm.pendingLoad = Load(999)
+        vm.setPendingReps(17)
+
+        vm.logWarmup(ramp[0])
+
+        let logged = try XCTUnwrap(vm.session.current?.loggedSets.last)
+        XCTAssertEqual(logged.load, ramp[0].load, "the rung's own number, not the stray pending value")
+        XCTAssertEqual(logged.reps, ramp[0].reps)
+        XCTAssertEqual(vm.pendingLoad, ramp[1].load, "advances the same way logSet's dispatch does")
+    }
+
+    /// `Extra warmup` (#157's explicit escape hatch) survives this change
+    /// unchanged: it always logs whatever is dialled in as an unplanned
+    /// warmup and never advances the ramp itself — see "Decisions the owner
+    /// should confirm" in the PR for why it wasn't subsumed.
+    func test_logSet_explicitWarmupTrue_doesNotConsultTheRampAndDoesNotAdvance() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(sessionExercises: [sessionExercise(bench)])
+        let seededLoad = vm.pendingLoad
+        let seededReps = vm.pendingReps
+
+        vm.logSet(isWarmup: true)
+
+        let logged = try XCTUnwrap(vm.session.current?.loggedSets.last)
+        XCTAssertTrue(logged.isWarmup)
+        XCTAssertEqual(logged.load, seededLoad)
+        XCTAssertNil(logged.rpe, "warmups are never scored")
+        XCTAssertEqual(vm.pendingLoad, seededLoad, "Extra warmup leaves the stepper exactly where it was (#170)")
+        XCTAssertEqual(vm.pendingReps, seededReps)
     }
 
     // MARK: - repChoices (#171, #181)
@@ -316,6 +536,19 @@ private extension Exercise {
 // `SessionViewModel` (explicitly out of scope for this PR — see the issue)
 // or accepting a slower, store-backed integration test, which is a different
 // suite than the one this issue asked for.
+//
+// The one narrowing to that: #206's "Warmup ramp leads the exercise" section
+// above *does* call `logSet` and `logWarmup` directly, for the same reason
+// `reconcilePersistedSetsAfterHistoryEdit`'s tests already call `logSet()` as
+// setup (see below) — `TrainingStore.inMemory()` makes the write safe in this
+// host, and nothing under test there is `store`, `RestNotification`, or
+// `ActivityKit` itself; it's `pendingLoad`, `pendingReps`, and
+// `session.current?.loggedSets`, i.e. exactly the view-model state this suite
+// already exists to check. What's still left to a UI or integration test:
+// that tapping the real `Log Set` control invokes `logSet()` at all, that a
+// rung logged this way actually reaches disk and survives a relaunch, and
+// that the rest timer / Live Activity behave correctly around a warmup
+// (already excluded above, unchanged by #206).
 //
 // `startRest()`, added for #173, lands in the same excluded set for the same
 // reason: it calls `beginRest`, which touches `RestNotification` (a real
