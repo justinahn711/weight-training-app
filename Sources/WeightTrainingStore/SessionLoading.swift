@@ -242,6 +242,21 @@ extension TrainingStore {
             calendar: calendar
         )
     }
+
+    /// Hard-set volume per calendar week, for the Progress tab's chart.
+    public func weeklyVolume(
+        weeks: Int = WeeklyVolumeBuilder.defaultWeeks,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> [WeeklyVolumePoint] {
+        WeeklyVolumeBuilder.weeks(
+            weeks,
+            history: try allSets(),
+            exercises: try exercises(),
+            now: now,
+            calendar: calendar
+        )
+    }
 }
 
 extension TrainingStore {

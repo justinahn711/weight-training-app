@@ -36,6 +36,9 @@ struct ContentView: View {
     @State private var volume: VolumeReport?
     @State private var showingVolume = false
     @State private var trends: [E1RMTrend] = []
+    /// Hard sets per calendar week, for the Progress tab's chart and rings.
+    @State private var weeklyVolume: [WeeklyVolumePoint] = []
+    @State private var weeklySessionTarget = 3
     @State private var digest: Digest?
     @State private var showingDigest = false
     @State private var sync = SyncStatus()
@@ -246,7 +249,17 @@ struct ContentView: View {
     private var progressTab: some View {
         NavigationStack {
             if insightsLoaded {
-                TrendsView(trends: trends)
+                ProgressTabView(
+                    trends: trends,
+                    summary: volume.map {
+                        WeeklySummary.current(
+                            days: days, weekly: weeklyVolume, volume: $0,
+                            sessionTarget: weeklySessionTarget
+                        )
+                    },
+                    weekly: weeklyVolume,
+                    consistency: TrainingHistory.weeklyConsistency(days: days, target: weeklySessionTarget)
+                )
             } else {
                 unavailable("Progress")
             }
@@ -536,6 +549,8 @@ struct ContentView: View {
         digest = try store.digest()
         trends = try store.e1RMTrends()
         days = try store.trainingDays()
+        weeklyVolume = try store.weeklyVolume()
+        weeklySessionTarget = try store.gymConfig().weeklySessionTarget
         insightsLoaded = true
     }
 
