@@ -51,6 +51,19 @@ struct SessionView: View {
     /// edits (#138). It stays open while plates are added, then closes when
     /// the lifter moves to a different exercise.
     @State private var isPlateRowExpanded = false
+    /// Reps and RPE are corrections, not required input — both default to the
+    /// prescribed or last-used value, and `Log Set` records whatever is
+    /// standing without either ever being touched. Collapsed by default for
+    /// the same reason the plate row is (#138): the two chip rows cost ~130pt
+    /// together and were previously resident on every exercise regardless of
+    /// whether either was ever adjusted (#205).
+    ///
+    /// ASSUMPTION FLAGGED FOR CONFIRMATION (#205): the owner didn't say
+    /// whether reps/RPE are touched every set or occasionally. If they're
+    /// closer to "every set," this should default open, or the disclosure
+    /// should come out entirely in favour of the pre-#205 always-visible
+    /// rows. See the PR description.
+    @State private var isSetDetailsExpanded = false
     /// Pins the logged row being corrected even if voice navigation moves the
     /// workout while its sheet is open.
     @State private var editingSet: ActiveSetEditTarget?
@@ -148,6 +161,10 @@ struct SessionView: View {
         }
         .onChange(of: model.current?.id) { _, _ in
             isPlateRowExpanded = false
+            // Same reset as the plate row, and for the same reason: a
+            // disclosure left open by the previous lift would otherwise leak
+            // its state into a lift the lifter never opened it on (#205).
+            isSetDetailsExpanded = false
         }
         .onChange(of: model.plateOptions) { _, options in
             if options.isEmpty {
@@ -795,21 +812,74 @@ struct SessionView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            if isCompact {
+            // Reps and RPE, disclosed rather than resident (#205). Both
+            // default to the prescribed or last-used value, so `Log Set`
+            // already works with neither ever opened — this is the
+            // correction path, not the common one, following the same
+            // disclosure #138 gave the plate row. See the flagged assumption
+            // on `isSetDetailsExpanded` above; if the owner comes back and
+            // says these ARE touched every set, this should default to
+            // expanded (or the disclosure should come out) rather than stay
+            // collapsed by default.
+            Button {
+                withAnimation(.snappy) { isSetDetailsExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isSetDetailsExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Text("Reps & RPE")
+                        .font(.subheadline.weight(.semibold))
+                    Text(setDetailsSummary)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                // `.frame` before `.contentShape`, not after: a frame on the
+                // outer `Button` only grows its layout slot, and
+                // `.contentShape` is what the audit actually measures (#114).
+                // Chaining them in the other order — frame outside the
+                // button, after `.buttonStyle` — was the exact mistake #114
+                // found four times already; the system audit caught it here
+                // as "Hit area is too small" at 18pt before this fix.
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Reps and RPE")
+            .accessibilityValue(
+                isSetDetailsExpanded
+                    ? "Expanded, \(setDetailsSummary)"
+                    : "Collapsed, \(setDetailsSummary)"
+            )
+            .accessibilityHint(
+                isSetDetailsExpanded ? "Hides the reps and RPE rows" : "Shows the reps and RPE rows"
+            )
+            .accessibilityIdentifier("session.setDetails.disclosure")
+
+            if isSetDetailsExpanded {
+                // Side by side whenever there's room, rather than only on
+                // the short-phone `isCompact` path — stacking the two full
+                // width was itself half of what made this section 130pt
+                // instead of 66 (#205). Accessibility text still stacks: two
+                // scrolling rows sharing half the width each would clip at
+                // the larger sizes #113 exists to protect.
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 8) {
                         repChoices(exercise)
                         rpeChoices
                     }
+                    // Matches the plate row's own transition just above
+                    // (#138): the section grows from where it was opened
+                    // rather than the whole bar jumping.
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 } else {
                     HStack(alignment: .top, spacing: 8) {
                         repChoices(exercise)
                         rpeChoices
                     }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-            } else {
-                repChoices(exercise)
-                rpeChoices
             }
 
             Button {
@@ -840,7 +910,41 @@ struct SessionView: View {
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("session.log-set")
 
-            HStack {
+            // One row instead of two (#207). `Next exercise` used to be a
+            // full-width bordered row below this one, spending an entire row
+            // of vertical space on a control tapped once per exercise, on a
+            // screen where the set rows are already losing (#205). #177's
+            // brief was "Back and Next must not be mis-tappable," not "Next
+            // must be full width" — full width was one way to buy separation,
+            // not the only one. Here the separation comes from placement and
+            // hierarchy instead of area: Back sits at the row's leading edge
+            // in muted plain text, `Next exercise` / `Finish workout` sits at
+            // the trailing edge as the one bordered, tinted control on the
+            // row, and `Extra warmup` — used just as rarely, and paired with
+            // `Back` even before this change — sits between them. The two
+            // flexible spacers push Back and Next to opposite ends of the
+            // screen width and put a third control physically in the gap, so
+            // a thumb sliding from one has to cross both empty space and
+            // Extra warmup before it could land on the other — a wider
+            // margin than the previous same-row adjacency #177 was written
+            // to fix ever had, just built horizontally instead of by
+            // stacking rows.
+            HStack(spacing: 8) {
+                if model.session.currentIndex > 0 {
+                    Button {
+                        model.goBack()
+                    } label: {
+                        Label("Back", systemImage: "chevron.backward")
+                            .font(.subheadline)
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("session.exercise.previous")
+                }
+
+                Spacer(minLength: 8)
+
                 // Renamed from a bare "Warmup" (#157). That word already
                 // named the ramp above — a suggested sequence generated from
                 // today's working load — so a second, unrelated control with
@@ -861,67 +965,57 @@ struct SessionView: View {
                 // got you there are exactly what gets you to the next one.
                 Button("Extra warmup") { model.logSet(isWarmup: true) }
                     .font(.subheadline)
+                    .foregroundStyle(.secondary)
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
                     .accessibilityHint("Logs the current values as an extra warmup set")
                     .accessibilityIdentifier("session.log-warmup")
-                Spacer()
-                // `Back` stays paired with `Extra warmup` on this secondary
-                // row instead of beside `Next exercise` (#177). It is muted —
-                // plain text, secondary colour, no fill — because it is the
-                // correction, not the common action, and correcting a
-                // direction that shares a row, a style and a thumb's-width
-                // of space with the control that moves the opposite way is
-                // exactly how a rest-set mis-tap costs a navigation.
-                if model.session.currentIndex > 0 {
-                    Button {
-                        model.goBack()
-                    } label: {
-                        Label("Back", systemImage: "chevron.backward")
-                            .font(.subheadline)
-                    }
-                    .foregroundStyle(.secondary)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                    .accessibilityIdentifier("session.exercise.previous")
-                }
-            }
 
-            // Its own row, full width, bordered rather than plain text: this
-            // is the common action (#177), the one advancing the whole
-            // session, so it earns a visual weight distinct from — and
-            // physically apart from — the correction above. `Finish workout`
-            // takes the identical treatment on the last exercise, so the
-            // swap changes only the label and destination, never the
-            // hierarchy the lifter has learned to trust.
-            if !model.session.isOnLastExercise {
-                Button {
-                    model.advance()
-                } label: {
-                    Label("Next exercise", systemImage: "chevron.forward")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 44)
+                Spacer(minLength: 8)
+
+                // The common action (#177): the one advancing the whole
+                // session, and still the one control on this row with a
+                // border and a tint, rather than full width. `Finish
+                // workout` takes the identical treatment on the last
+                // exercise, so the swap changes only the label and
+                // destination, never the hierarchy the lifter has learned to
+                // trust.
+                if !model.session.isOnLastExercise {
+                    Button {
+                        model.advance()
+                    } label: {
+                        Label("Next exercise", systemImage: "chevron.forward")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 2)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.accentColor)
+                    .accessibilityIdentifier("session.exercise.next")
+                } else {
+                    Button(action: requestFinish) {
+                        Text("Finish workout")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 2)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.accentColor)
+                    .accessibilityIdentifier("session.finish.footer")
                 }
-                .buttonStyle(.bordered)
-                .tint(.accentColor)
-                .accessibilityIdentifier("session.exercise.next")
-            } else {
-                Button(action: requestFinish) {
-                    Text("Finish workout")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 44)
-                }
-                .buttonStyle(.bordered)
-                .tint(.accentColor)
-                .accessibilityIdentifier("session.finish.footer")
             }
         }
         .padding(.horizontal, isCompact ? 12 : 20)
         .padding(.top, isCompact ? 8 : 12)
         .padding(.bottom, isCompact ? 4 : 8)
         .background(.bar)
+        // `.contain` keeps every child individually reachable — this isn't
+        // `.combine` — while giving the bar itself a queryable frame, which
+        // is what a regression test for #205's actual claim (a real pt
+        // number, not a font-metrics estimate) needs to read off the
+        // simulator.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("session.actionBar")
     }
 
     private func repChoices(_ exercise: SessionExercise) -> some View {
@@ -949,6 +1043,15 @@ struct SessionView: View {
             onSelect: { model.pendingRPE = $0 }
         )
         .frame(maxWidth: .infinity)
+    }
+
+    /// What the collapsed reps/RPE disclosure reads before it's opened
+    /// (#205) — enough to confirm at a glance that the standing values are
+    /// still the intended ones without spending the ~130pt the two chip
+    /// rows cost when both are on screen.
+    private var setDetailsSummary: String {
+        let reps = model.pendingReps
+        return "\(reps) rep\(reps == 1 ? "" : "s") · \(model.pendingRPE.description)"
     }
 
     /// A normal completed workout stays one tap. Finishing while planned lifts

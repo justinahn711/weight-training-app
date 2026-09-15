@@ -50,12 +50,17 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         undo.tap()
     }
 
-    /// Back and Next exercise used to sit side by side, adjacent, and moving
-    /// in opposite directions (#177). Both already carry 44pt hit areas from
-    /// #114, so this guards the thing #114 didn't: that a mis-tap between
-    /// them isn't one slide of a thumb away. Back is now a muted control on
-    /// its own row, entirely above the full-width Next exercise / Finish
-    /// workout row below it.
+    /// Back and Next exercise used to sit on separate rows — Back muted,
+    /// above a full-width Next exercise / Finish workout row (#177). #207
+    /// folded navigation back into a single row to give the set rows more
+    /// of the screen (#205): Back now sits at the row's leading edge, Next
+    /// (or Finish) at the trailing edge, with Extra warmup and two flexible
+    /// spacers between them. This test used to check that Back sat entirely
+    /// above Next; that invariant no longer holds by construction now that
+    /// they share a row, so it's replaced with the horizontal equivalent —
+    /// opposite ends of the row, with a third control's width of empty space
+    /// and Extra warmup actually between them, so a thumb sliding from one
+    /// has to cross both before it could land on the other.
     func testBackAndNextExerciseAreSeparated() throws {
         let app = launch()
         try openPushDay(app)
@@ -64,6 +69,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let next = app.buttons["session.exercise.next"]
         let back = app.buttons["session.exercise.previous"]
         let finish = app.buttons["session.finish.footer"]
+        let warmup = app.buttons["session.log-warmup"]
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
@@ -82,24 +88,30 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
         XCTAssertTrue(back.waitForExistence(timeout: 5), "Back should appear once there is a prior exercise")
         XCTAssertTrue(next.waitForExistence(timeout: 5), "Next exercise should appear once off the last exercise")
+        XCTAssertTrue(warmup.waitForExistence(timeout: 5))
 
         for button in [back, next] {
             XCTAssertGreaterThanOrEqual(button.frame.width, 44)
             XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         }
 
-        // Separated by row, not merely by width: Back sits entirely above
-        // Next exercise rather than beside it, where a thumb sliding to the
-        // common action could clip the correction instead.
+        // Same row now, opposite ends: Back leads, Next trails, and Extra
+        // warmup sits physically in between both of them — a thumb sliding
+        // from Back to Next has to cross Extra warmup's frame to get there.
         XCTAssertLessThanOrEqual(
-            back.frame.maxY, next.frame.minY,
-            "Back and Next exercise should occupy separate rows, not sit side by side"
+            back.frame.maxX, warmup.frame.minX,
+            "Back should sit entirely left of Extra warmup"
+        )
+        XCTAssertLessThanOrEqual(
+            warmup.frame.maxX, next.frame.minX,
+            "Extra warmup should sit entirely left of Next exercise"
         )
     }
 
     /// The last exercise swaps Next exercise for Finish workout (#177); the
     /// separation from Back has to hold for that swap too, not just the
-    /// common case checked above.
+    /// common case checked above. Since #207, that separation is horizontal
+    /// (see `testBackAndNextExerciseAreSeparated`'s header), not row-based.
     func testFinishWorkoutReplacesNextOnLastExerciseAndStaysSeparatedFromBack() throws {
         let app = launch()
         try openPushDay(app)
@@ -107,6 +119,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
         let next = app.buttons["session.exercise.next"]
         let finish = app.buttons["session.finish.footer"]
+        let warmup = app.buttons["session.log-warmup"]
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
@@ -130,9 +143,14 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
         let back = app.buttons["session.exercise.previous"]
         XCTAssertTrue(back.waitForExistence(timeout: 5))
+        XCTAssertTrue(warmup.waitForExistence(timeout: 5))
         XCTAssertLessThanOrEqual(
-            back.frame.maxY, finish.frame.minY,
-            "Back and the footer's Finish workout should stay on separate rows"
+            back.frame.maxX, warmup.frame.minX,
+            "Back should sit entirely left of Extra warmup"
+        )
+        XCTAssertLessThanOrEqual(
+            warmup.frame.maxX, finish.frame.minX,
+            "Extra warmup should sit entirely left of the footer's Finish workout"
         )
     }
 
@@ -142,6 +160,12 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         try openPushDay(app)
         startSessionIfPreviewed(app)
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20))
+
+        // Reps and RPE are behind a disclosure now, collapsed by default
+        // (#205) — the chips this test checks don't exist until it's opened.
+        let disclosure = app.buttons["session.setDetails.disclosure"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
+        disclosure.tap()
 
         let chips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'rpe.'"))
         XCTAssertGreaterThan(chips.count, 0, "RPE chips should carry stable identifiers")
@@ -221,6 +245,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let next = app.buttons["session.exercise.next"]
         let back = app.buttons["session.exercise.previous"]
         let finish = app.buttons["session.finish.footer"]
+        let warmup = app.buttons["session.log-warmup"]
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
@@ -239,18 +264,50 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
         XCTAssertTrue(back.waitForExistence(timeout: 5), "Back should appear once there is a prior exercise")
         XCTAssertTrue(next.waitForExistence(timeout: 5), "Next exercise should appear once off the last exercise")
+        XCTAssertTrue(warmup.waitForExistence(timeout: 5))
 
         for button in [back, next] {
             XCTAssertGreaterThanOrEqual(button.frame.width, 44)
             XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         }
 
-        // Separated by row, not merely by width: Back sits entirely above
-        // Next exercise rather than beside it, where a thumb sliding to the
-        // common action could clip the correction instead.
+        // Same-row separation since #207 — see
+        // `testBackAndNextExerciseAreSeparated`'s header for why this is
+        // horizontal now rather than row-based.
         XCTAssertLessThanOrEqual(
-            back.frame.maxY, next.frame.minY,
-            "Back and Next exercise should occupy separate rows, not sit side by side"
+            back.frame.maxX, warmup.frame.minX,
+            "Back should sit entirely left of Extra warmup"
+        )
+        XCTAssertLessThanOrEqual(
+            warmup.frame.maxX, next.frame.minX,
+            "Extra warmup should sit entirely left of Next exercise"
+        )
+    }
+
+    /// The measured claim #205 makes: the action bar's minimum height, with
+    /// nothing conditional open (plate row collapsed, reps/RPE disclosure
+    /// collapsed), dropped from the ~368pt #205 measured before this change.
+    /// Asserted well above the actual figure reported in the PR so this
+    /// stays a real regression guard rather than a brittle pixel match —
+    /// the point is "still small," not "exactly this."
+    func testActionBarMinimumHeightIsReclaimedForSetRows() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        let actionBar = app.otherElements["session.actionBar"]
+        XCTAssertTrue(actionBar.waitForExistence(timeout: 5), "action bar should be reachable by identifier")
+
+        let height = actionBar.frame.height
+        // Printed for the record (#205 asked for a measured number, not a
+        // font-metrics estimate) — visible in the xcodebuild test log.
+        print("SessionView action bar minimum height: \(height)pt")
+        XCTAssertGreaterThan(height, 0, "the action bar should have a real, non-zero frame")
+        XCTAssertLessThanOrEqual(
+            height, 340,
+            "the action bar should no longer approach the ~368pt #205 measured before this change"
         )
     }
 }
