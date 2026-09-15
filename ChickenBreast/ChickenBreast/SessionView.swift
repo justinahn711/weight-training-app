@@ -785,7 +785,10 @@ struct SessionView: View {
     // MARK: - Action below
 
     private func actionBar(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
-        VStack(spacing: isCompact ? 8 : 12) {
+        // 10 rather than 12 between rows: the bigger stepper and Log Set
+        // below (task 6) are paid for here and in the row heights, so the
+        // bar stays under the ceiling #205 set and its UI test enforces.
+        VStack(spacing: isCompact ? 8 : 10) {
             // Beside the number, never as it — chips sit directly above the
             // stepper they're talking about, and the stepper is unaffected
             // until one is tapped.
@@ -937,7 +940,7 @@ struct SessionView: View {
                         .contentTransition(.numericText())
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: isCompact ? 58 : 68)
+                .frame(height: isCompact ? 56 : 62)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.roundedRectangle(radius: 16))
@@ -2102,7 +2105,7 @@ private struct WeightStepper: View {
                     plateReadout(detail: plates)
                         // The whole readout is the target, not the tiny
                         // chevron. It remains easy to hit with chalky hands.
-                        .frame(maxWidth: .infinity, minHeight: 64)
+                        .frame(maxWidth: .infinity, minHeight: 60)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -2118,7 +2121,7 @@ private struct WeightStepper: View {
             } else {
                 Button(action: onEnterWeight ?? {}) {
                     readout(detail: adjustmentLabel, showsEntry: onEnterWeight != nil)
-                        .frame(maxWidth: .infinity, minHeight: 64)
+                        .frame(maxWidth: .infinity, minHeight: 60)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -2129,14 +2132,14 @@ private struct WeightStepper: View {
             }
             button("plus", caption: incrementCaption, label: incrementLabel, action: onIncrement)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func plateReadout(detail: String?) -> some View {
         VStack(spacing: 1) {
             Text(load.formatted(in: gym.unit))
-                .font(.system(size: 44, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
@@ -2157,7 +2160,7 @@ private struct WeightStepper: View {
     private func readout(detail: String, showsEntry: Bool) -> some View {
         VStack(spacing: 0) {
             Text(load.formatted(in: gym.unit))
-                .font(.system(size: 44, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
@@ -2183,7 +2186,7 @@ private struct WeightStepper: View {
                 if let caption { Text(caption).font(.caption2.weight(.semibold)) }
             }
                 // Oversized on purpose: tapped with chalky hands, mid-set.
-                .frame(width: 72, height: 64)
+                .frame(width: 72, height: 60)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
