@@ -67,6 +67,23 @@ final class SessionViewModel {
     /// see `didChangeCurrentExercise()` (#169).
     private(set) var recentlyLoggedSet: SetRecord?
 
+    /// The lift the session will move to on its own when the running rest
+    /// ends, or nil when nothing is armed. Set by the working set that brings
+    /// today level with last time's count (`justReachedUsualSetCount`), shown
+    /// as the Next-up card for the whole rest so the move is announced rather
+    /// than sprung, and cleared by `Stay`, by any navigation, and by undoing
+    /// the set that armed it.
+    ///
+    /// This is the one exception to `Session`'s "the app never advances on
+    /// its own", and it is bounded by three things: it is opt-out in
+    /// Settings, it is visible for a full rest before it happens, and the
+    /// banner it leaves behind carries a one-tap `Back`.
+    private(set) var pendingAdvance: SessionExercise?
+
+    /// The lift just left by an automatic advance, so the banner can say
+    /// where you came from and offer the way back. Nil once dismissed.
+    private(set) var autoAdvancedFrom: SessionExercise?
+
     init(store: TrainingStore, session: Session, draftID: UUID) {
         self.store = store
         self.session = session
@@ -158,6 +175,15 @@ final class SessionViewModel {
             session.log(record)
             recentlyLoggedSet = record
             liveLogActionID = UUID()
+            // Arm the Next-up card on the set that matches last time. Read
+            // back off `session.current` rather than the `current` captured
+            // above, because `session.log` is what just changed the count.
+            if startsRest,
+               RestAlertSettings.autoAdvanceEnabled,
+               session.current?.justReachedUsualSetCount == true,
+               let next = session.next {
+                pendingAdvance = next
+            }
             // Log, start resting, and be ready for the next set — one tap does
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
@@ -233,7 +259,52 @@ final class SessionViewModel {
     func skipRest() {
         rest = nil
         RestNotification.cancel()
+        // Skipping the rest that was going to move you on means "I'm ready":
+        // go now rather than leaving a card that promised a move on a rest
+        // that no longer exists.
+        if pendingAdvance != nil {
+            performPendingAdvance()
+            return
+        }
         publishActivity()
+    }
+
+    /// Called by the rest banner's clock when the countdown reaches zero.
+    /// Moves on if a move was armed for the lift still on screen.
+    func restDidComplete() {
+        guard pendingAdvance != nil else { return }
+        performPendingAdvance()
+    }
+
+    /// `Stay` on the Next-up card: one more set is coming, so keep the screen
+    /// where it is. Nothing re-arms until a later set matches the count
+    /// again, which it can't — equality is exact.
+    func stayOnCurrentExercise() {
+        pendingAdvance = nil
+        publishActivity()
+    }
+
+    /// The way back from an automatic move, for as long as its banner shows.
+    func undoAutoAdvance() {
+        guard let from = autoAdvancedFrom else { return }
+        select(exerciseID: from.id)
+    }
+
+    func dismissAutoAdvanceNotice() {
+        autoAdvancedFrom = nil
+    }
+
+    private func performPendingAdvance() {
+        guard let next = pendingAdvance else { return }
+        let from = current
+        // A completed rest has nothing left to say on the next lift; a live
+        // one (skip) has already been dismissed by its caller.
+        rest = nil
+        RestNotification.cancel()
+        select(exerciseID: next.id)
+        // `select` cleared it via `didChangeCurrentExercise`; the notice is
+        // set after, so it survives into the new exercise on purpose.
+        autoAdvancedFrom = from
     }
 
     /// Removes the specifically named, just-logged set from session and disk.
@@ -255,6 +326,8 @@ final class SessionViewModel {
                 // A buzz for a set you took back is worse than no buzz at all.
                 RestNotification.cancel()
             }
+            // The set that armed the move is gone, so the move is too.
+            pendingAdvance = nil
             recentlyLoggedSet = nil
             liveLogActionID = UUID()
             publishActivity()
@@ -521,6 +594,8 @@ final class SessionViewModel {
     /// either bug.
     private func didChangeCurrentExercise() {
         recentlyLoggedSet = nil
+        pendingAdvance = nil
+        autoAdvancedFrom = nil
         seedPendingFromCurrent()
         publishActivity()
     }

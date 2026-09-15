@@ -35,6 +35,24 @@ public struct SessionExercise: Identifiable, Hashable, Sendable {
     public var workingSets: [SetRecord] { loggedSets.filter { !$0.isWarmup } }
 
     public var hasBeenStarted: Bool { !loggedSets.isEmpty }
+
+    /// How many working sets this lift got last time, if it has a last time.
+    ///
+    /// There is no planned set count (see `Session`), so this is the only
+    /// honest reference for "probably done with this lift": what was
+    /// actually done the previous session. Nil on a first outing — unknown
+    /// means silent, so the screen offers nothing rather than guessing.
+    public var usualSetCount: Int? {
+        guard let count = lastPerformance?.sets.count, count > 0 else { return nil }
+        return count
+    }
+
+    /// True on the set that brings today level with last time — exactly level,
+    /// not past it. Going beyond is the lifter's call and re-arms nothing.
+    public var justReachedUsualSetCount: Bool {
+        guard let usualSetCount else { return false }
+        return workingSets.count == usualSetCount
+    }
 }
 
 /// A training day in progress.
@@ -67,6 +85,12 @@ public struct Session: Hashable, Sendable {
     public var isEmpty: Bool { exercises.isEmpty }
 
     public var isOnLastExercise: Bool { currentIndex >= exercises.count - 1 }
+
+    /// The exercise after the current one, or nil on the last.
+    public var next: SessionExercise? {
+        let index = currentIndex + 1
+        return exercises.indices.contains(index) ? exercises[index] : nil
+    }
 
     /// Every set logged today, across all exercises, in performed order.
     public var allLoggedSets: [SetRecord] {
