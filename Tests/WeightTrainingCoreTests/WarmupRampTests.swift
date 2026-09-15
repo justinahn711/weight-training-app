@@ -162,4 +162,46 @@ final class WarmupRampTests: XCTestCase {
         // Session grouping
         XCTAssertEqual(performed.groupedIntoSessions().first?.count, 1)
     }
+
+    // MARK: - nextRung (#206)
+
+    /// Nothing logged yet: the first rung on the ladder is next.
+    func testNextRungIsFirstWhenNothingLoggedYet() {
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(225))
+        XCTAssertEqual(WarmupRamp.nextRung(in: ramp, loggedWarmupLoads: []), ramp.first)
+    }
+
+    /// Logging the first two rungs' loads moves "next" to the third —
+    /// matched by load, the same identity `WarmupSet.id` already uses.
+    func testNextRungSkipsLoadsAlreadyLogged() {
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(225))
+        let done = Set(ramp.prefix(2).map(\.load))
+        XCTAssertEqual(WarmupRamp.nextRung(in: ramp, loggedWarmupLoads: done), ramp[2])
+    }
+
+    /// Every rung logged: nothing left, which is what tells the form to
+    /// land on the working weight instead of a rung.
+    func testNextRungIsNilOnceEveryRungIsLogged() {
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(225))
+        let done = Set(ramp.map(\.load))
+        XCTAssertNil(WarmupRamp.nextRung(in: ramp, loggedWarmupLoads: done))
+    }
+
+    /// A logged load that doesn't name any rung on this ladder — an extra
+    /// warmup at an unrelated weight, or a rung from a since-regenerated
+    /// ramp at a different working load — is simply ignored rather than
+    /// mistaken for progress.
+    func testNextRungIgnoresLoadsThatDontMatchAnyRung() {
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(225))
+        XCTAssertEqual(
+            WarmupRamp.nextRung(in: ramp, loggedWarmupLoads: [Load(999)]),
+            ramp.first
+        )
+    }
+
+    /// No ramp at all — the lift is ineligible, or the ladder is empty —
+    /// has nothing next, the same nil a fully-logged ramp produces.
+    func testNextRungOnEmptyRampIsNil() {
+        XCTAssertNil(WarmupRamp.nextRung(in: [], loggedWarmupLoads: []))
+    }
 }
