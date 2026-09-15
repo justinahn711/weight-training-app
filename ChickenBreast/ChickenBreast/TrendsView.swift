@@ -7,90 +7,19 @@ import Charts
 import SwiftUI
 import WeightTrainingCore
 
-/// e1RM trend per lift (#24) — the "am I actually progressing" view.
-///
-/// RPE-adjusted, so the same weight moved more easily reads as progress rather
-/// than as a flat week. That adjustment is the reason this chart is worth
-/// drawing at all: raw top-set weight would show a plateau through exactly the
-/// stretch where the lift got stronger.
-struct TrendsView: View {
-    let trends: [E1RMTrend]
-
-    var body: some View {
-        Group {
-            if trends.isEmpty {
-                ContentUnavailableView(
-                    "Nothing logged yet",
-                    systemImage: "chart.xyaxis.line",
-                    description: Text("Trends appear once you've trained a lift.")
-                )
-            } else {
-                List {
-                    ForEach(groups, id: \.title) { group in
-                        Section {
-                            ForEach(group.trends) { trend in
-                                NavigationLink {
-                                    TrendDetailView(trend: trend)
-                                } label: {
-                                    TrendSummaryRow(trend: trend)
-                                }
-                            }
-                        } header: {
-                            Text(group.title)
-                        }
-                    }
-                }
-            }
-        }
-        .navigationTitle("Progress")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    /// Lifts grouped by the muscle they primarily train.
-    ///
-    /// A chart per lift in one list is right at three lifts and wrong at
-    /// twenty-five: the screen you open to answer one question makes you scroll
-    /// past every other. `E1RMTrendBuilder` already omits lifts with no history
-    /// for the same reason — "sixteen of them empty buries the three that have
-    /// something to say" — but that filter stops helping once they all have
-    /// history, which is exactly when the app has been working.
-    ///
-    /// Grouped on the primary muscle rather than the day kind, because day
-    /// membership lives on a mutable `DayTemplate`: grouping a year of history
-    /// by it would move when a template is edited, and a lift dropped from a
-    /// template would lose its home while keeping its history. The muscle is a
-    /// fact about the lift.
-    private var groups: [(title: String, trends: [E1RMTrend])] {
-        let byMuscle = Dictionary(grouping: trends) { $0.primaryMuscle }
-        return Self.muscleOrder.compactMap { muscle in
-            guard let group = byMuscle[muscle], !group.isEmpty else { return nil }
-            return (muscle.displayName, group.sorted { $0.exercise.name < $1.exercise.name })
-        } + (byMuscle[nil].map { [("Other", $0.sorted { $0.exercise.name < $1.exercise.name })] } ?? [])
-    }
-
-    /// Push, then pull, then legs — the order the training is thought about.
-    ///
-    /// Deliberately a presentation ordering rather than a `Muscle.dayKind` in
-    /// Core. Day kinds here are *derived from logged sets*, not from muscle
-    /// taxonomy, so asserting a fixed muscle-to-day relationship in the domain
-    /// would state something the engine does not believe.
-    private static let muscleOrder: [Muscle] = [
-        .chest, .frontDelts, .sideDelts, .triceps,
-        .lats, .traps, .rearDelts, .biceps, .forearms,
-        .quads, .hamstrings, .glutes, .calves,
-        .abs,
-    ]
-}
-
-private extension E1RMTrend {
-    var primaryMuscle: Muscle? {
-        exercise.muscles.first { $0.role == .primary }?.muscle
-    }
-}
+// e1RM trend per lift (#24) — the "am I actually progressing" view.
+//
+// RPE-adjusted, so the same weight moved more easily reads as progress rather
+// than as a flat week. That adjustment is the reason this chart is worth
+// drawing at all: raw top-set weight would show a plateau through exactly the
+// stretch where the lift got stronger.
+//
+// The list that used to live here is now `ProgressTabView`, which composes
+// these rows under the rings and the volume chart.
 
 /// One line in the list: enough to see which lifts are moving without opening
 /// any of them, and no more.
-private struct TrendSummaryRow: View {
+struct TrendSummaryRow: View {
     private var gym: GymSettings { .shared }
 
     let trend: E1RMTrend
@@ -247,6 +176,36 @@ struct TrendDetailView: View {
 
             // Nothing is added at rest, so the chart draws exactly what it drew
             // before this change.
+            // Records, in the one colour that means one (task 5). Drawn after
+            // the line so the gold sits on top; the newest carries the label,
+            // the rest are marks, so a rising lift isn't wallpapered in "PR".
+            ForEach(trend.recordPoints) { point in
+                PointMark(
+                    x: .value("Date", point.date),
+                    y: .value(gym.unit.symbol, point.e1RM.value(in: gym.unit))
+                )
+                .symbolSize(90)
+                .foregroundStyle(Theme.record)
+                .accessibilityLabel("Estimated max record, \(point.date.formatted(.dateTime.month(.abbreviated).day()))")
+                .accessibilityValue(point.e1RM.rounded.formatted(in: gym.unit))
+            }
+            if scrubbed == nil, let newest = trend.recordPoints.last {
+                PointMark(
+                    x: .value("Date", newest.date),
+                    y: .value(gym.unit.symbol, newest.e1RM.value(in: gym.unit))
+                )
+                .symbolSize(0)
+                .annotation(position: .top, spacing: 6) {
+                    Text("PR")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Theme.record, in: Capsule())
+                }
+                .accessibilityHidden(true)
+            }
+
             if let scrubbed {
                 marker(for: scrubbed)
             }

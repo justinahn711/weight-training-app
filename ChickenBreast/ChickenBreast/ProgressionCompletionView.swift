@@ -5,6 +5,7 @@ import WeightTrainingCore
 /// persisted before this appears, so dismissing it is navigation, not consent.
 struct ProgressionCompletionView: View {
     let entries: [ProgressionSummaryEntry]
+    var records: [SessionRecordEntry] = []
     let onDone: () -> Void
 
     private var unit: MassUnit { GymSettings.shared.unit }
@@ -13,12 +14,24 @@ struct ProgressionCompletionView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    Text("Next time")
-                        .font(.title2.bold())
-                        .padding(.bottom, 2)
+                    if !records.isEmpty {
+                        Text(records.count == 1 ? "Personal record" : "Personal records")
+                            .font(.title2.bold())
+                            .padding(.bottom, 2)
+                        ForEach(records) { entry in
+                            recordRow(entry)
+                        }
+                    }
 
-                    ForEach(entries) { entry in
-                        progressionRow(entry)
+                    if !entries.isEmpty {
+                        Text("Next time")
+                            .font(.title2.bold())
+                            .padding(.top, records.isEmpty ? 0 : 8)
+                            .padding(.bottom, 2)
+
+                        ForEach(entries) { entry in
+                            progressionRow(entry)
+                        }
                     }
                 }
                 .padding(20)
@@ -35,6 +48,37 @@ struct ProgressionCompletionView: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .accessibilityIdentifier("completion.progression.sheet")
+    }
+
+    private func recordRow(_ entry: SessionRecordEntry) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "trophy.fill")
+                .foregroundStyle(Theme.record)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.exercise.name)
+                    .font(.headline)
+                Text(recordLine(entry.record))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Theme.record.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("completion.record.\(entry.id)")
+    }
+
+    private func recordLine(_ record: PersonalRecord) -> String {
+        switch record.kind {
+        case .heaviest(let load):
+            return "\(load.formatted(in: unit)) × \(record.set.reps) — heaviest ever"
+        case .reps(let reps, let load):
+            return "\(reps) reps at \(load.formatted(in: unit)) — most ever at that weight"
+        case .estimatedMax(let estimate):
+            return "Estimated max \(estimate.formatted(in: unit)) — a best"
+        }
     }
 
     private func progressionRow(_ entry: ProgressionSummaryEntry) -> some View {

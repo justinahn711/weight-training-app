@@ -38,6 +38,12 @@ final class SessionViewModel {
     /// explanation the progression engine just produced (#184).
     private(set) var completionSummary: [ProgressionSummaryEntry] = []
 
+    /// Records set today, one per lift, for the finish sheet (task 5).
+    /// Computed at `finish()` from disk, so a set corrected mid-session is
+    /// judged as corrected. Lifts with no previous day are skipped: a first
+    /// outing is a data point, not a record.
+    private(set) var completionRecords: [SessionRecordEntry] = []
+
     /// The weight for the next set, seeded from the target and adjusted with
     /// the stepper. Held here rather than in the view so it survives the view
     /// being rebuilt as the day advances.
@@ -66,6 +72,35 @@ final class SessionViewModel {
     /// about the set itself changed, so leaving one is also cleared here —
     /// see `didChangeCurrentExercise()` (#169).
     private(set) var recentlyLoggedSet: SetRecord?
+
+    /// The lift the session will move to on its own when the running rest
+    /// ends, or nil when nothing is armed. Set by the working set that brings
+    /// today level with last time's count (`justReachedUsualSetCount`), shown
+    /// as the Next-up card for the whole rest so the move is announced rather
+    /// than sprung, and cleared by `Stay`, by any navigation, and by undoing
+    /// the set that armed it.
+    ///
+    /// This is the one exception to `Session`'s "the app never advances on
+    /// its own", and it is bounded by three things: it is opt-out in
+    /// Settings, it is visible for a full rest before it happens, and the
+    /// banner it leaves behind carries a one-tap `Back`.
+    private(set) var pendingAdvance: SessionExercise?
+
+    /// The lift just left by an automatic advance, so the banner can say
+    /// where you came from and offer the way back. Nil once dismissed.
+    private(set) var autoAdvancedFrom: SessionExercise?
+
+    /// The record the most recent set just set, if it set one — what turns
+    /// the logged-set banner gold. Judged against the lift's whole history
+    /// by `PersonalRecords.set`, so a first outing never earns one (#70).
+    /// Cleared with the banner and on leaving the exercise; the badge on the
+    /// row itself lives on in `recordSetIDs`.
+    private(set) var recentRecord: PersonalRecord?
+
+    /// Sets logged this session that set a record, for the row badges.
+    /// Recomputed from history like every record is: undoing or deleting
+    /// the set takes the badge with it.
+    private(set) var recordSetIDs: Set<UUID> = []
 
     init(store: TrainingStore, session: Session, draftID: UUID) {
         self.store = store
@@ -158,6 +193,24 @@ final class SessionViewModel {
             session.log(record)
             recentlyLoggedSet = record
             liveLogActionID = UUID()
+            // Judged against previous days, not earlier today: feeling out
+            // a new lift across three sets is one session, not three
+            // records. The digest's weekly view keeps the engine's own
+            // per-set judgement; this is only what the banner celebrates.
+            let today = Calendar.current.startOfDay(for: record.performedAt)
+            let previousDays = ((try? store.sets(forExercise: record.exerciseID)) ?? [])
+                .filter { $0.performedAt < today }
+            recentRecord = Self.headline(of: PersonalRecords.set(by: record, history: previousDays))
+            if recentRecord != nil { recordSetIDs.insert(record.id) }
+            // Arm the Next-up card on the set that matches last time. Read
+            // back off `session.current` rather than the `current` captured
+            // above, because `session.log` is what just changed the count.
+            if startsRest,
+               RestAlertSettings.autoAdvanceEnabled,
+               session.current?.justReachedUsualSetCount == true,
+               let next = session.next {
+                pendingAdvance = next
+            }
             // Log, start resting, and be ready for the next set — one tap does
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
@@ -233,7 +286,52 @@ final class SessionViewModel {
     func skipRest() {
         rest = nil
         RestNotification.cancel()
+        // Skipping the rest that was going to move you on means "I'm ready":
+        // go now rather than leaving a card that promised a move on a rest
+        // that no longer exists.
+        if pendingAdvance != nil {
+            performPendingAdvance()
+            return
+        }
         publishActivity()
+    }
+
+    /// Called by the rest banner's clock when the countdown reaches zero.
+    /// Moves on if a move was armed for the lift still on screen.
+    func restDidComplete() {
+        guard pendingAdvance != nil else { return }
+        performPendingAdvance()
+    }
+
+    /// `Stay` on the Next-up card: one more set is coming, so keep the screen
+    /// where it is. Nothing re-arms until a later set matches the count
+    /// again, which it can't — equality is exact.
+    func stayOnCurrentExercise() {
+        pendingAdvance = nil
+        publishActivity()
+    }
+
+    /// The way back from an automatic move, for as long as its banner shows.
+    func undoAutoAdvance() {
+        guard let from = autoAdvancedFrom else { return }
+        select(exerciseID: from.id)
+    }
+
+    func dismissAutoAdvanceNotice() {
+        autoAdvancedFrom = nil
+    }
+
+    private func performPendingAdvance() {
+        guard let next = pendingAdvance else { return }
+        let from = current
+        // A completed rest has nothing left to say on the next lift; a live
+        // one (skip) has already been dismissed by its caller.
+        rest = nil
+        RestNotification.cancel()
+        select(exerciseID: next.id)
+        // `select` cleared it via `didChangeCurrentExercise`; the notice is
+        // set after, so it survives into the new exercise on purpose.
+        autoAdvancedFrom = from
     }
 
     /// Removes the specifically named, just-logged set from session and disk.
@@ -255,7 +353,11 @@ final class SessionViewModel {
                 // A buzz for a set you took back is worse than no buzz at all.
                 RestNotification.cancel()
             }
+            // The set that armed the move is gone, so the move is too.
+            pendingAdvance = nil
             recentlyLoggedSet = nil
+            recordSetIDs.remove(record.id)
+            if recentRecord?.set.id == record.id { recentRecord = nil }
             liveLogActionID = UUID()
             publishActivity()
         } catch {
@@ -268,6 +370,37 @@ final class SessionViewModel {
     func dismissRecentSetUndo(id: UUID) {
         guard recentlyLoggedSet?.id == id else { return }
         recentlyLoggedSet = nil
+        recentRecord = nil
+    }
+
+    /// Every record set today across the session, judged the way the
+    /// banner judges — against previous days — and then per set against
+    /// what came earlier today, so a lift that climbed through three
+    /// sets reports its best rather than all three. One per lift.
+    private func recordsSetToday() -> [SessionRecordEntry] {
+        let today = Calendar.current.startOfDay(for: session.startedAt)
+        return session.exercises.compactMap { exercise -> SessionRecordEntry? in
+            let history = (try? store.sets(forExercise: exercise.id)) ?? []
+            guard history.contains(where: { !$0.isWarmup && $0.performedAt < today }) else { return nil }
+            guard let record = Self.headline(of: PersonalRecords.recent(in: history, since: today)) else {
+                return nil
+            }
+            return SessionRecordEntry(exercise: exercise.exercise, record: record)
+        }
+    }
+
+    /// One record to announce when a set sets several. Heaviest is the one
+    /// people train for; an estimated max is a computed figure and comes
+    /// last, named as an estimate wherever it is shown.
+    private static func headline(of records: [PersonalRecord]) -> PersonalRecord? {
+        func rank(_ record: PersonalRecord) -> Int {
+            switch record.kind {
+            case .heaviest: return 0
+            case .reps: return 1
+            case .estimatedMax: return 2
+            }
+        }
+        return records.min { rank($0) < rank($1) }
     }
 
     /// The one place the session catches up after History changes durable set
@@ -312,6 +445,10 @@ final class SessionViewModel {
 
         if let recent = recentlyLoggedSet, !survivingIDs.contains(recent.id) {
             recentlyLoggedSet = nil
+        }
+        recordSetIDs.formIntersection(survivingIDs)
+        if let record = recentRecord, !survivingIDs.contains(record.set.id) {
+            recentRecord = nil
         }
 
         // Checked independently of the banner above, not nested inside it:
@@ -521,6 +658,9 @@ final class SessionViewModel {
     /// either bug.
     private func didChangeCurrentExercise() {
         recentlyLoggedSet = nil
+        recentRecord = nil
+        pendingAdvance = nil
+        autoAdvancedFrom = nil
         seedPendingFromCurrent()
         publishActivity()
     }
@@ -685,6 +825,7 @@ final class SessionViewModel {
             // intentionally idempotent and `applied` is empty. Keep the exact
             // first result rather than losing its explanation on that retry.
             if !summary.isEmpty { completionSummary = summary }
+            completionRecords = recordsSetToday()
             // Clear after progression. If this save fails, retrying is safe:
             // progression is idempotent for the session day, while retaining
             // the draft keeps a failed Finish recoverable.
@@ -1221,4 +1362,11 @@ final class SessionViewModel {
     }
 
     func dismissFailure() { failure = nil }
+}
+
+/// A record with the lift it was set on, for the finish sheet.
+struct SessionRecordEntry: Hashable, Identifiable {
+    var id: UUID { record.set.id }
+    let exercise: Exercise
+    let record: PersonalRecord
 }

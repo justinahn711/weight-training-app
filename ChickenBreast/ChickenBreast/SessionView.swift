@@ -72,6 +72,18 @@ struct SessionView: View {
 
     var body: some View {
         sessionContent
+            // A record is felt before it is read: the phone is often on the
+            // floor when the set ends. `.success` is the system's own "you
+            // did the thing" pattern, distinct from the rest-over buzz.
+            .sensoryFeedback(.success, trigger: model.recentRecord?.set.id) { _, new in new != nil }
+            // The spring behind every banner arriving or leaving (task 3).
+            // Keyed on the states that add or remove one, so a tick of the
+            // rest clock never re-runs it.
+            .animation(Theme.spring, value: model.rest?.startedAt)
+            .animation(Theme.spring, value: model.recentlyLoggedSet?.id)
+            .animation(Theme.spring, value: model.pendingAdvance?.id)
+            .animation(Theme.spring, value: model.autoAdvancedFrom?.id)
+            .animation(Theme.spring, value: model.session.currentIndex)
             // `confirmationDialog` can adapt to an anchored popover. The
             // partial-finish checkpoint must stay thumb-reachable on every
             // iPhone, so use a real bottom sheet instead (#158).
@@ -285,6 +297,13 @@ struct SessionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: isCompact ? 12 : 20) {
                 header(exercise, isCompact: isCompact)
+                    // A new lift arrives from the side, on the spring the
+                    // body keys on `currentIndex`; the old one fades under it.
+                    .id(exercise.id)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .opacity
+                    ))
 
                 if includesStatus {
                     statusBanners
@@ -341,8 +360,30 @@ struct SessionView: View {
                 }
             )
         }
+        if let next = model.pendingAdvance {
+            NextUpCard(
+                next: next,
+                isResting: model.rest != nil,
+                onStay: { withAnimation(Theme.spring) { model.stayOnCurrentExercise() } },
+                onGo: { withAnimation(Theme.spring) { model.skipRest() } }
+            )
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+        if let from = model.autoAdvancedFrom {
+            AutoAdvancedBanner(
+                from: from,
+                onBack: { withAnimation(Theme.spring) { model.undoAutoAdvance() } },
+                onExpire: { model.dismissAutoAdvanceNotice() }
+            )
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
         if let rest = model.rest {
-            RestBanner(rest: rest, onSkip: { model.skipRest() })
+            RestBanner(
+                rest: rest,
+                onSkip: { withAnimation(Theme.spring) { model.skipRest() } },
+                onComplete: { withAnimation(Theme.spring) { model.restDidComplete() } }
+            )
+            .transition(.move(edge: .top).combined(with: .opacity))
         } else {
             // The other half of #173: a rest that was skipped, lost, or never
             // started could only be replaced by logging a set that wasn't
@@ -353,15 +394,18 @@ struct SessionView: View {
             // put a button on when nothing is running — so this sits in the
             // same spot, styled low enough not to read as a status when there
             // is nothing to report.
-            StartRestControl(onStart: { model.startRest() })
+            StartRestControl(onStart: { withAnimation(Theme.spring) { model.startRest() } })
+                .transition(.opacity)
         }
         if let record = model.recentlyLoggedSet {
             LoggedSetBanner(
                 record: record,
+                personalRecord: model.recentRecord?.set.id == record.id ? model.recentRecord : nil,
                 unit: gym.unit,
-                onUndo: { model.undoRecentlyLoggedSet(id: record.id) },
-                onExpire: { model.dismissRecentSetUndo(id: record.id) }
+                onUndo: { withAnimation(Theme.spring) { model.undoRecentlyLoggedSet(id: record.id) } },
+                onExpire: { withAnimation(Theme.spring) { model.dismissRecentSetUndo(id: record.id) } }
             )
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -448,7 +492,7 @@ struct SessionView: View {
         NavigationStack {
             List(model.session.exercises) { exercise in
                 Button {
-                    model.select(exerciseID: exercise.id)
+                    withAnimation(Theme.spring) { model.select(exerciseID: exercise.id) }
                     isChoosingExercise = false
                 } label: {
                     HStack(spacing: 12) {
@@ -681,7 +725,7 @@ struct SessionView: View {
                             exercise: exercise.exercise
                         )
                     } label: {
-                        SetRow(number: index + 1, set: set)
+                        SetRow(number: index + 1, set: set, isRecord: model.recordSetIDs.contains(set.id))
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Edits this logged set")
@@ -705,7 +749,8 @@ struct SessionView: View {
                 Button {
                     editingSet = ActiveSetEditTarget(record: latest, exercise: exercise.exercise)
                 } label: {
-                    SetRow(number: exercise.loggedSets.count, set: latest)
+                    SetRow(number: exercise.loggedSets.count, set: latest,
+                           isRecord: model.recordSetIDs.contains(latest.id))
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Edits this logged set")
@@ -723,7 +768,8 @@ struct SessionView: View {
                                         exercise: exercise.exercise
                                     )
                                 } label: {
-                                    SetRow(number: index + 1, set: set)
+                                    SetRow(number: index + 1, set: set,
+                                           isRecord: model.recordSetIDs.contains(set.id))
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityHint("Edits this logged set")
@@ -764,7 +810,10 @@ struct SessionView: View {
     // MARK: - Action below
 
     private func actionBar(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
-        VStack(spacing: isCompact ? 8 : 12) {
+        // 10 rather than 12 between rows: the bigger stepper and Log Set
+        // below (task 6) are paid for here and in the row heights, so the
+        // bar stays under the ceiling #205 set and its UI test enforces.
+        VStack(spacing: isCompact ? 8 : 10) {
             // Beside the number, never as it — chips sit directly above the
             // stepper they're talking about, and the stepper is unaffected
             // until one is tapped.
@@ -833,6 +882,8 @@ struct SessionView: View {
                     Text(setDetailsSummary)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                        .animation(Theme.quick, value: setDetailsSummary)
                     Spacer(minLength: 0)
                 }
                 // `.frame` before `.contentShape`, not after: a frame on the
@@ -897,17 +948,32 @@ struct SessionView: View {
                 // unchanged this call didn't fail, whatever the value was
                 // going in.
                 let failureBeforeLogging = model.failure
-                model.logSet()
+                withAnimation(Theme.spring) { model.logSet() }
                 if model.failure == failureBeforeLogging {
                     withAnimation(.snappy) { isPlateRowExpanded = false }
                 }
             } label: {
-                Text("Log Set")
-                    .font(.title3.bold())
-                    .frame(maxWidth: .infinity)
-                    .frame(height: isCompact ? 50 : 56)
+                // The values on the button, so confirming them is the same
+                // glance as tapping: one look says "185 × 8, yes" and one tap
+                // logs it. `Log Set` stays the accessible name (the UI tests
+                // and VoiceOver both find it by that), the numbers are its
+                // value.
+                VStack(spacing: 0) {
+                    Text("Log Set")
+                        .font(isCompact ? .title3.bold() : .title2.bold())
+                    Text(logSetSummary)
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .opacity(0.85)
+                        .contentTransition(.numericText())
+                        .animation(Theme.quick, value: logSetSummary)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: isCompact ? 56 : 62)
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.roundedRectangle(radius: 16))
+            .accessibilityLabel("Log Set")
+            .accessibilityValue(logSetSummary)
             .accessibilityIdentifier("session.log-set")
 
             // One row instead of two (#207). `Next exercise` used to be a
@@ -932,7 +998,7 @@ struct SessionView: View {
             HStack(spacing: 8) {
                 if model.session.currentIndex > 0 {
                     Button {
-                        model.goBack()
+                        withAnimation(Theme.spring) { model.goBack() }
                     } label: {
                         Label("Back", systemImage: "chevron.backward")
                             .font(.subheadline)
@@ -982,7 +1048,7 @@ struct SessionView: View {
                 // trust.
                 if !model.session.isOnLastExercise {
                     Button {
-                        model.advance()
+                        withAnimation(Theme.spring) { model.advance() }
                     } label: {
                         Label("Next exercise", systemImage: "chevron.forward")
                             .font(.subheadline.weight(.semibold))
@@ -1049,6 +1115,11 @@ struct SessionView: View {
     /// (#205) — enough to confirm at a glance that the standing values are
     /// still the intended ones without spending the ~130pt the two chip
     /// rows cost when both are on screen.
+    /// What one tap of `Log Set` will write, spelled on the button itself.
+    private var logSetSummary: String {
+        "\(model.pendingLoad.formatted(in: gym.unit)) × \(model.pendingReps)"
+    }
+
     private var setDetailsSummary: String {
         let reps = model.pendingReps
         return "\(reps) rep\(reps == 1 ? "" : "s") · \(model.pendingRPE.description)"
@@ -1117,19 +1188,24 @@ private struct PartialFinishSheet: View {
 /// expires because older corrections have a safer, explicit home in Today.
 private struct LoggedSetBanner: View {
     let record: SetRecord
+    /// Set when this set set one (task 2): the banner turns gold, says
+    /// which record, and the phone buzzes once (see `sensoryFeedback` on
+    /// the session body).
+    var personalRecord: PersonalRecord? = nil
     let unit: MassUnit
     let onUndo: () -> Void
     let onExpire: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+            Image(systemName: personalRecord == nil ? "checkmark.circle.fill" : "trophy.fill")
+                .foregroundStyle(personalRecord == nil ? Theme.done : Theme.record)
+                .contentTransition(.symbolEffect(.replace))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(record.isWarmup ? "Warmup logged" : "Set logged")
+                Text(title)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(personalRecord == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.record))
                 Text("\(record.load.formatted(in: unit)) × \(record.reps)")
                     .font(.body.weight(.semibold))
             }
@@ -1142,14 +1218,116 @@ private struct LoggedSetBanner: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-        .background(.bar)
+        .background(personalRecord == nil ? AnyShapeStyle(.bar) : AnyShapeStyle(Theme.record.opacity(0.16)))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(record.isWarmup ? "Warmup" : "Set") logged, "
+            "\(title), "
             + "\(record.load.formatted(in: unit)), \(record.reps) reps"
         )
         .accessibilityAction(named: "Undo logged set", onUndo)
         .task(id: record.id) {
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            onExpire()
+        }
+    }
+
+    private var title: String {
+        guard let personalRecord else { return record.isWarmup ? "Warmup logged" : "Set logged" }
+        switch personalRecord.kind {
+        case .heaviest: return "Personal record · heaviest ever"
+        case .reps(_, let load): return "Personal record · most reps at \(load.formatted(in: unit))"
+        case .estimatedMax: return "Personal record · best estimated max"
+        }
+    }
+}
+
+/// The move the session is about to make on its own (task 4): shown for the
+/// whole rest after the set that matched last time's count, so it is never a
+/// surprise. `Stay` is the big target — it is the one that has to be easy to
+/// hit when the answer is "one more".
+private struct NextUpCard: View {
+    let next: SessionExercise
+    let isResting: Bool
+    let onStay: () -> Void
+    let onGo: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.tint)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(isResting ? "Next up when rest ends" : "Next up")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Text(next.exercise.name)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Stay", action: onStay)
+                .font(.body.weight(.semibold))
+                .buttonStyle(.bordered)
+                .accessibilityHint("Keeps this lift on screen for another set")
+                .accessibilityIdentifier("session.nextUp.stay")
+
+            Button(action: onGo) {
+                Image(systemName: "chevron.forward")
+                    .font(.body.weight(.bold))
+                    .frame(minWidth: 44, minHeight: 36)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityLabel("Go to \(next.exercise.name) now")
+            .accessibilityIdentifier("session.nextUp.go")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(.fill.tertiary)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("session.nextUp")
+    }
+}
+
+/// What the automatic move leaves behind: where you came from and the way
+/// back, for eight seconds — the same window `LoggedSetBanner` gives Undo.
+private struct AutoAdvancedBanner: View {
+    let from: SessionExercise
+    let onBack: () -> Void
+    let onExpire: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Theme.done)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Moved on")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("\(from.exercise.name) done")
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Back", action: onBack)
+                .font(.body.weight(.semibold))
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("session.autoAdvanced.back")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Moved on, \(from.exercise.name) done")
+        .accessibilityAction(named: "Back to \(from.exercise.name)", onBack)
+        .task(id: from.id) {
             try? await Task.sleep(for: .seconds(8))
             guard !Task.isCancelled else { return }
             onExpire()
@@ -1178,6 +1356,7 @@ private struct SetRow: View {
 
     let number: Int
     let set: SetRecord
+    var isRecord = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1188,6 +1367,16 @@ private struct SetRow: View {
 
             Text("\(set.load.formatted(in: gym.unit)) × \(set.reps)")
                 .font(.title3.weight(.medium).monospacedDigit())
+
+            if isRecord {
+                Text("PR")
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Theme.record, in: Capsule())
+                    .accessibilityLabel("Personal record")
+            }
 
             Spacer()
 
@@ -1567,6 +1756,11 @@ private struct StartRestControl: View {
 private struct RestBanner: View {
     let rest: RestTimer
     let onSkip: () -> Void
+    /// Fired once when the countdown reaches zero — the clock this banner
+    /// keeps is the only one the session has, so the model hears about the
+    /// end of a rest from here. Fires immediately for a rest that was
+    /// already over when the banner appeared (a reconciled relaunch).
+    var onComplete: () -> Void = {}
 
     @AppStorage(RestAlertSettings.timingKey) private var showsTiming = RestAlertSettings.timingDefault
 
@@ -1582,7 +1776,7 @@ private struct RestBanner: View {
                         .stroke(.quaternary, lineWidth: 6)
                     Circle()
                         .trim(from: 0, to: rest.progress(at: context.date))
-                        .stroke(done ? Color.green : Color.accentColor,
+                        .stroke(done ? Theme.done : Color.accentColor,
                                 style: StrokeStyle(lineWidth: 6, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
@@ -1595,7 +1789,7 @@ private struct RestBanner: View {
                         .textCase(.uppercase)
                     Text(rest.displayTime(at: context.date))
                         .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(done ? Color.green : Color.primary)
+                        .foregroundStyle(done ? Theme.done : Color.primary)
                         .contentTransition(.numericText())
 
                     if showsTiming, let report {
@@ -1633,7 +1827,10 @@ private struct RestBanner: View {
         // undone or the rest is skipped — the view goes away with it either way.
         .task(id: rest) {
             let deadline = rest.endsAt
-            guard deadline.timeIntervalSinceNow > 0 else { return }
+            guard deadline.timeIntervalSinceNow > 0 else {
+                onComplete()
+                return
+            }
 
             // Halve the wait, repeatedly, rather than sleeping to the
             // deadline in one go.
@@ -1665,6 +1862,11 @@ private struct RestBanner: View {
                 try? await Task.sleep(for: .seconds(step), tolerance: .zero)
                 guard !Task.isCancelled else { return }
             }
+
+            // Before the lateness guard below: that guard is about whether a
+            // buzz is still worth giving, and a move that was announced for
+            // the whole rest is still owed however late the clock ran.
+            onComplete()
 
             // Backgrounding suspends this, so on return the loop exits
             // immediately and would buzz for a rest that ended ten minutes ago
@@ -1956,7 +2158,7 @@ private struct WeightStepper: View {
                     plateReadout(detail: plates)
                         // The whole readout is the target, not the tiny
                         // chevron. It remains easy to hit with chalky hands.
-                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .frame(maxWidth: .infinity, minHeight: 60)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1972,7 +2174,7 @@ private struct WeightStepper: View {
             } else {
                 Button(action: onEnterWeight ?? {}) {
                     readout(detail: adjustmentLabel, showsEntry: onEnterWeight != nil)
-                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .frame(maxWidth: .infinity, minHeight: 60)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1983,16 +2185,18 @@ private struct WeightStepper: View {
             }
             button("plus", caption: incrementCaption, label: incrementLabel, action: onIncrement)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func plateReadout(detail: String?) -> some View {
         VStack(spacing: 1) {
             Text(load.formatted(in: gym.unit))
-                .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .contentTransition(.numericText())
+                .animation(Theme.quick, value: load)
             HStack(spacing: 4) {
                 Text("Adjust plates")
                     .font(.callout.weight(.semibold))
@@ -2010,9 +2214,11 @@ private struct WeightStepper: View {
     private func readout(detail: String, showsEntry: Bool) -> some View {
         VStack(spacing: 0) {
             Text(load.formatted(in: gym.unit))
-                .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .contentTransition(.numericText())
+                .animation(Theme.quick, value: load)
             HStack(spacing: 4) {
                 Text(detail)
                     .lineLimit(1)
@@ -2031,11 +2237,11 @@ private struct WeightStepper: View {
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 1) {
-                Image(systemName: symbol).font(.title2.weight(.semibold))
+                Image(systemName: symbol).font(.title.weight(.semibold))
                 if let caption { Text(caption).font(.caption2.weight(.semibold)) }
             }
                 // Oversized on purpose: tapped with chalky hands, mid-set.
-                .frame(width: 64, height: 56)
+                .frame(width: 72, height: 60)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

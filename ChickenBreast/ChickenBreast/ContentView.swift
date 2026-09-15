@@ -36,6 +36,9 @@ struct ContentView: View {
     @State private var volume: VolumeReport?
     @State private var showingVolume = false
     @State private var trends: [E1RMTrend] = []
+    /// Hard sets per calendar week, for the Progress tab's chart and rings.
+    @State private var weeklyVolume: [WeeklyVolumePoint] = []
+    @State private var weeklySessionTarget = 3
     @State private var digest: Digest?
     @State private var showingDigest = false
     @State private var sync = SyncStatus()
@@ -49,6 +52,7 @@ struct ContentView: View {
     /// Presented only after Finish has persisted progression and cleared the
     /// draft. The sheet acknowledges the result; it never gates or repeats it.
     @State private var completionSummary: [ProgressionSummaryEntry] = []
+    @State private var completionRecords: [SessionRecordEntry] = []
     @State private var showingCompletionSummary = false
 
     /// The rotation currently in play, used for day names and ordering
@@ -77,6 +81,7 @@ struct ContentView: View {
             progressTab
                 .tabItem { Label("Progress", systemImage: "chart.xyaxis.line") }
         }
+        .background(Theme.background.ignoresSafeArea())
         .task { await openStore() }
         // Asked once, on a store that has never had an answer — including a
         // pre-#136 install updating into this feature, which reads the same
@@ -96,7 +101,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showingCompletionSummary) {
-            ProgressionCompletionView(entries: completionSummary) {
+            ProgressionCompletionView(entries: completionSummary, records: completionRecords) {
                 showingCompletionSummary = false
             }
         }
@@ -246,7 +251,18 @@ struct ContentView: View {
     private var progressTab: some View {
         NavigationStack {
             if insightsLoaded {
-                TrendsView(trends: trends)
+                ProgressTabView(
+                    trends: trends,
+                    summary: volume.map {
+                        WeeklySummary.current(
+                            days: days, weekly: weeklyVolume, volume: $0,
+                            sessionTarget: weeklySessionTarget
+                        )
+                    },
+                    weekly: weeklyVolume,
+                    days: days,
+                    consistency: TrainingHistory.weeklyConsistency(days: days, target: weeklySessionTarget)
+                )
             } else {
                 unavailable("Progress")
             }
@@ -325,7 +341,7 @@ struct ContentView: View {
 
             SyncBadge(status: sync)
 
-            if !completionSummary.isEmpty {
+            if !completionSummary.isEmpty || !completionRecords.isEmpty {
                 Button { showingCompletionSummary = true } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle")
@@ -536,6 +552,8 @@ struct ContentView: View {
         digest = try store.digest()
         trends = try store.e1RMTrends()
         days = try store.trainingDays()
+        weeklyVolume = try store.weeklyVolume()
+        weeklySessionTarget = try store.gymConfig().weeklySessionTarget
         insightsLoaded = true
     }
 
@@ -676,9 +694,10 @@ struct ContentView: View {
     private func finishActiveSession() {
         guard let activeSession, activeSession.finish() else { return }
         completionSummary = activeSession.completionSummary
+        completionRecords = activeSession.completionRecords
         workoutDraft = nil
         route = nil
-        showingCompletionSummary = !completionSummary.isEmpty
+        showingCompletionSummary = !completionSummary.isEmpty || !completionRecords.isEmpty
     }
 
     /// Loads recovery when Health has already been answered, and otherwise

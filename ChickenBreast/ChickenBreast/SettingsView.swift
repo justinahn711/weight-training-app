@@ -37,6 +37,7 @@ struct SettingsView: View {
     @AppStorage(RestAlertSettings.notificationKey) private var notification = true
     @AppStorage(RestAlertSettings.timingKey) private var timing = RestAlertSettings.timingDefault
     @AppStorage(RestAlertSettings.digestKey) private var digestReminder = false
+    @AppStorage(RestAlertSettings.autoAdvanceKey) private var autoAdvance = true
 
     /// Whether iOS will actually deliver what the toggle above asks for. A
     /// toggle that's on while notifications are denied at the system level is
@@ -100,6 +101,15 @@ struct SettingsView: View {
                 Text(notification
                      ? "A banner when the target passes, so a phone in a pocket still tells you. The buzz happens either way."
                      : "The phone will buzz when rest is over and say nothing else.")
+            }
+
+            Section {
+                Toggle("Move on when rest ends", isOn: $autoAdvance)
+                    .accessibilityIdentifier("settings.autoAdvance")
+            } header: {
+                Text("Next lift")
+            } footer: {
+                Text("Once you've matched last time's set count, the rest after that set ends on the next lift. The Next up card has a Stay button for the day you want one more.")
             }
 
             Section {

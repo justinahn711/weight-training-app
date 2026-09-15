@@ -101,6 +101,198 @@ final class SessionViewModelTests: XCTestCase {
         return SessionViewModel(store: store, session: session, draftID: UUID())
     }
 
+    // MARK: - Next up: moving on once last time's set count is matched
+
+    /// A dumbbell lift with no ramp, so `logSet()` writes a working set from
+    /// the first tap, and a last performance of `sets` working sets.
+    private func liftWithHistory(_ name: String, sets: Int) -> SessionExercise {
+        let lift = lateralRaise().renamed(name)
+        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+            .addingTimeInterval(-3 * 86_400)
+        let last = (0..<sets).map {
+            SetRecord(exerciseID: lift.id, load: Load(20), reps: 12,
+                      performedAt: noon.addingTimeInterval(Double($0) * 90))
+        }
+        return SessionExercise(
+            exercise: lift,
+            prescription: Prescription(load: Load(20), reps: 12, rpe: .eight),
+            lastPerformance: sets > 0 ? LastPerformance(performedAt: noon, sets: last) : nil
+        )
+    }
+
+    private func autoAdvanceViewModel(lastSets: Int = 2) throws -> SessionViewModel {
+        UserDefaults.standard.set(true, forKey: RestAlertSettings.autoAdvanceKey)
+        return try makeViewModel(sessionExercises: [
+            liftWithHistory("First", sets: lastSets),
+            liftWithHistory("Second", sets: 3),
+        ])
+    }
+
+    func test_pendingAdvance_armsOnTheSetThatMatchesLastTime() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 2)
+        vm.logSet()
+        XCTAssertNil(vm.pendingAdvance, "one short of last time is not done")
+        vm.logSet()
+        XCTAssertEqual(vm.pendingAdvance?.exercise.name, "Second")
+        XCTAssertEqual(vm.current?.exercise.name, "First", "armed, not moved: the rest is still running")
+    }
+
+    func test_pendingAdvance_neverArmsOnAFirstOuting() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 0)
+        vm.logSet(); vm.logSet(); vm.logSet()
+        XCTAssertNil(vm.pendingAdvance, "unknown means silent")
+    }
+
+    func test_pendingAdvance_neverArmsWhenSwitchedOff() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        UserDefaults.standard.set(false, forKey: RestAlertSettings.autoAdvanceKey)
+        defer { UserDefaults.standard.set(true, forKey: RestAlertSettings.autoAdvanceKey) }
+        vm.logSet()
+        XCTAssertNil(vm.pendingAdvance)
+    }
+
+    func test_pendingAdvance_neverArmsOnTheLastExercise() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.advance()
+        vm.logSet(); vm.logSet(); vm.logSet()
+        XCTAssertNil(vm.pendingAdvance, "there is nowhere to go; finishing stays deliberate")
+    }
+
+    func test_stay_disarmsAndGoingBeyondDoesNotReArm() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        XCTAssertNotNil(vm.pendingAdvance)
+        vm.stayOnCurrentExercise()
+        XCTAssertNil(vm.pendingAdvance)
+        vm.logSet()
+        XCTAssertNil(vm.pendingAdvance, "equality is exact: set two of a usual one re-arms nothing")
+        vm.restDidComplete()
+        XCTAssertEqual(vm.current?.exercise.name, "First")
+    }
+
+    func test_undoingTheArmingSet_disarms() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        let id = try XCTUnwrap(vm.recentlyLoggedSet?.id)
+        vm.undoRecentlyLoggedSet(id: id)
+        XCTAssertNil(vm.pendingAdvance)
+    }
+
+    func test_restDidComplete_movesOnAndLeavesAWayBack() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        vm.restDidComplete()
+        XCTAssertEqual(vm.current?.exercise.name, "Second")
+        XCTAssertNil(vm.pendingAdvance)
+        XCTAssertNil(vm.rest, "a finished rest has nothing to say on the next lift")
+        XCTAssertEqual(vm.autoAdvancedFrom?.exercise.name, "First")
+        XCTAssertNil(vm.recentlyLoggedSet, "the undo offer belongs to the lift just left (#169)")
+
+        vm.undoAutoAdvance()
+        XCTAssertEqual(vm.current?.exercise.name, "First")
+        XCTAssertNil(vm.autoAdvancedFrom)
+    }
+
+    func test_restDidComplete_doesNothingWhenNothingIsArmed() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 2)
+        vm.logSet()
+        vm.restDidComplete()
+        XCTAssertEqual(vm.current?.exercise.name, "First")
+    }
+
+    func test_skipRest_whileArmed_movesOnNow() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        vm.skipRest()
+        XCTAssertEqual(vm.current?.exercise.name, "Second")
+        XCTAssertEqual(vm.autoAdvancedFrom?.exercise.name, "First")
+    }
+
+    func test_manualNavigation_disarms() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        vm.advance()
+        XCTAssertNil(vm.pendingAdvance)
+        XCTAssertNil(vm.autoAdvancedFrom, "a move the lifter made needs no way back offered")
+    }
+
+    // MARK: - Records at log time
+
+    /// A dumbbell lift with `history` already on disk from three days ago.
+    private func viewModelWithHistory(_ history: [(load: Double, reps: Int)]) throws -> SessionViewModel {
+        let store = try TrainingStore.inMemory()
+        let lift = lateralRaise()
+        try store.create(lift)
+        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+            .addingTimeInterval(-3 * 86_400)
+        for (index, set) in history.enumerated() {
+            // Scored like the sets `logSet` writes, or a matching set would
+            // beat them on RPE-adjusted estimated max.
+            try store.log(SetRecord(exerciseID: lift.id, load: Load(set.load), reps: set.reps, rpe: .eight,
+                                    performedAt: noon.addingTimeInterval(Double(index) * 90)))
+        }
+        let session = Session(kind: .push, exercises: [SessionExercise(
+            exercise: lift, prescription: Prescription(load: Load(20), reps: 12, rpe: .eight)
+        )])
+        return SessionViewModel(store: store, session: session, draftID: UUID())
+    }
+
+    func test_logSet_firstOutingIsNotARecord() throws {
+        let vm = try viewModelWithHistory([])
+        vm.logSet()
+        XCTAssertNil(vm.recentRecord, "a first session is a data point, not a record (#70)")
+        XCTAssertTrue(vm.recordSetIDs.isEmpty)
+    }
+
+    func test_logSet_beatingEarlierTodayOnANewLiftIsNotARecord() throws {
+        let vm = try viewModelWithHistory([])
+        vm.pendingLoad = Load(20)
+        vm.logSet()
+        vm.pendingLoad = Load(30)
+        vm.logSet()
+        XCTAssertNil(vm.recentRecord, "records are judged against previous days, not the warm-up to a first session")
+    }
+
+    func test_logSet_heavierThanEverIsARecordAndUndoTakesItBack() throws {
+        let vm = try viewModelWithHistory([(20, 12), (20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let logged = try XCTUnwrap(vm.recentlyLoggedSet)
+        XCTAssertEqual(vm.recentRecord?.kind, .heaviest(Load(25)))
+        XCTAssertEqual(vm.recentRecord?.set.id, logged.id)
+        XCTAssertTrue(vm.recordSetIDs.contains(logged.id))
+
+        vm.undoRecentlyLoggedSet(id: logged.id)
+        XCTAssertNil(vm.recentRecord)
+        XCTAssertFalse(vm.recordSetIDs.contains(logged.id))
+    }
+
+    func test_logSet_matchingHistoryIsNotARecord() throws {
+        let vm = try viewModelWithHistory([(20, 12)])
+        vm.pendingLoad = Load(20)
+        vm.setPendingReps(12)
+        vm.logSet()
+        XCTAssertNil(vm.recentRecord)
+    }
+
+    func test_logSet_moreRepsAtTheSameWeightIsARecord_headlinedBelowHeaviest() throws {
+        let vm = try viewModelWithHistory([(20, 12)])
+        vm.pendingLoad = Load(20)
+        vm.setPendingReps(14)
+        vm.logSet()
+        XCTAssertEqual(vm.recentRecord?.kind, .reps(14, at: Load(20)))
+    }
+
+    func test_dismissingTheBanner_keepsTheRowBadge() throws {
+        let vm = try viewModelWithHistory([(20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let id = try XCTUnwrap(vm.recentlyLoggedSet?.id)
+        vm.dismissRecentSetUndo(id: id)
+        XCTAssertNil(vm.recentRecord)
+        XCTAssertTrue(vm.recordSetIDs.contains(id))
+    }
+
     // MARK: - Warmup ramp leads the exercise (#206)
     //
     // `seedPendingFromCurrent` runs inside `init`, so building a view model is
