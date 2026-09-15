@@ -835,10 +835,17 @@ struct SessionView: View {
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                 }
+                // `.frame` before `.contentShape`, not after: a frame on the
+                // outer `Button` only grows its layout slot, and
+                // `.contentShape` is what the audit actually measures (#114).
+                // Chaining them in the other order — frame outside the
+                // button, after `.buttonStyle` — was the exact mistake #114
+                // found four times already; the system audit caught it here
+                // as "Hit area is too small" at 18pt before this fix.
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .frame(minHeight: 44)
             .accessibilityLabel("Reps and RPE")
             .accessibilityValue(
                 isSetDetailsExpanded

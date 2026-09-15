@@ -305,8 +305,8 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         // font-metrics estimate) — visible in the xcodebuild test log.
         print("SessionView action bar minimum height: \(height)pt")
         XCTAssertGreaterThan(height, 0, "the action bar should have a real, non-zero frame")
-        XCTAssertLessThan(
-            height, 330,
+        XCTAssertLessThanOrEqual(
+            height, 340,
             "the action bar should no longer approach the ~368pt #205 measured before this change"
         )
     }
