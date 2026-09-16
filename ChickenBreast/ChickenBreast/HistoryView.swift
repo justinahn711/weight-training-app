@@ -19,13 +19,23 @@ import WeightTrainingStore
 struct HistoryView: View {
     let store: TrainingStore
 
-    /// Told whenever a delete lands on disk, so a session still open in the
-    /// Train tab can catch up (#199). History writes through the store
-    /// directly rather than through the session — Today and History are
-    /// different tabs, and this is the seam between them. Defaulted to a
-    /// no-op so every existing call site (including tests and previews that
-    /// predate #199) keeps compiling without naming a session that usually
-    /// isn't there.
+    /// Told whenever a delete *or a correction* lands on disk, so a session
+    /// still open in the Train tab can catch up (#199, #218). History writes
+    /// through the store directly rather than through the session — Today
+    /// and History are different tabs, and this is the seam between them.
+    /// Defaulted to a no-op so every existing call site (including tests and
+    /// previews that predate #199) keeps compiling without naming a session
+    /// that usually isn't there.
+    ///
+    /// The name is a holdover from #199, which only had deletes to worry
+    /// about — `reconcilePersistedSetsAfterHistoryEdit()`, what this is wired
+    /// to in `ContentView`, was already named for the general case. #218
+    /// found the wiring here had never caught up: correcting a set's weight,
+    /// reps or RPE only reloaded History's own list, so a set inside a still
+    /// -open session read stale until something unrelated happened to resume
+    /// it. Left named `onSetsDeleted` rather than renamed, because the
+    /// argument label is shared with `ContentView.swift`, which this file
+    /// does not own.
     let onSetsDeleted: () -> Void
 
     /// Reloaded here rather than handed down, because correcting a set (#61)
@@ -454,7 +464,19 @@ struct DayDetailView: View {
                 set: target.record,
                 exercise: target.exercise,
                 onSave: { corrected in
-                    apply { try store.updateSet(corrected) }
+                    // Routed like the delete below rather than through
+                    // `apply` (#218): a correction changes a row a running
+                    // session may hold too, and `onSetsDeleted()` is the only
+                    // seam that tells it to catch up (#199). `apply` only
+                    // called `onChange()`, which reloads History's own list
+                    // and nothing else.
+                    do {
+                        try store.updateSet(corrected)
+                        onChange()
+                        onSetsDeleted()
+                    } catch {
+                        failure = error.localizedDescription
+                    }
                 },
                 onDelete: {
                     // Not routed through `apply`: that helper only calls
@@ -576,7 +598,9 @@ struct DayDetailView: View {
     private func accessibilityLabel(for set: SetRecord) -> String {
         var text = "\(set.load.formatted(in: GymSettings.shared.unit)) times \(set.reps)"
         if set.isWarmup { text += ", warmup" }
-        if let rpe = set.rpe { text += ", RPE \(rpe)" }
+        // `historyRPEText` already reads "RPE 8" (#218) — a literal "RPE "
+        // in front of it read "RPE RPE 8" to VoiceOver.
+        if let rpe = set.rpe { text += ", \(historyRPEText(rpe))" }
         return text
     }
 
@@ -624,15 +648,6 @@ struct DayDetailView: View {
         }
     }
 
-    private func apply(_ work: () throws -> Void) {
-        do {
-            try work()
-            onChange()
-        } catch {
-            failure = error.localizedDescription
-        }
-    }
-
     private var dayLabel: String {
         day.date.formatted(.dateTime.weekday(.abbreviated).month().day())
     }
@@ -644,6 +659,67 @@ struct DayDetailView: View {
     }
 }
 
+
+/// The text a set's RPE reads as, wherever History shows one.
+///
+/// A free function rather than inlined into each `Text(...)`, so a
+/// regression can be caught by `swift test` without booting a simulator.
+/// `RPE.description` (#4, #5) already spells out "RPE 8" — `SetRow` below
+/// used to wrap it in a second literal "RPE ", which read "RPE RPE 8" on
+/// every row and in VoiceOver's description of it (#218). Not `private`,
+/// so `ChickenBreastTests` can reach it via `@testable import`.
+func historyRPEText(_ rpe: RPE) -> String {
+    rpe.description
+}
+
+/// What typing `text` into History's exact-weight field means for `exercise`,
+/// given what the field last agreed with `pounds` about (`committed`).
+///
+/// Pulled out of `EditSetView` so the interaction between it and
+/// `TypedWeight.resolve` (#99) — which already owns parsing and buildability
+/// — can be checked by `swift test` without instantiating SwiftUI (#218).
+/// `EditSetView` itself only holds state and renders; this is where "does the
+/// typed value snap to what the equipment can build" actually gets decided.
+enum HistoryWeightEdit: Equatable {
+    /// Nothing to act on: either untouched, or a prior edit already folded
+    /// back into `pounds` (see `EditSetView.commit`).
+    case unedited
+    /// Parses and is buildable outright — safe for `pounds` to adopt.
+    case exact(Load)
+    /// Parses, but this exercise's equipment cannot be set to it. The
+    /// nearest weight it *can* build is offered, never substituted (#218).
+    case unbuildable(requested: Load, achievable: Load)
+    /// Not a number at all, or ambiguous in the way `TypedWeight.parse` (#99)
+    /// deliberately refuses to guess at.
+    case unparseable
+}
+
+func resolveHistoryWeightEdit(
+    text: String, committed: String, unit: MassUnit, exercise: Exercise
+) -> HistoryWeightEdit {
+    guard text != committed else { return .unedited }
+    guard let resolution = TypedWeight.resolve(text, in: unit, for: exercise) else {
+        return .unparseable
+    }
+    switch resolution {
+    case .exact(let load):
+        return .exact(load)
+    case .nearest(let requested, let achievable):
+        return .unbuildable(requested: requested, achievable: achievable)
+    }
+}
+
+/// Whether Save should be live given the exact-weight field's current state.
+/// Save stays explicit either way (#218) — this only gates the button, and
+/// only for the weight field: an unresolved typed number must block Save
+/// rather than be silently dropped in favour of whatever `pounds` still
+/// holds.
+func canSaveHistoryWeightEdit(_ edit: HistoryWeightEdit) -> Bool {
+    switch edit {
+    case .unedited, .exact: return true
+    case .unbuildable, .unparseable: return false
+    }
+}
 
 /// Corrects one logged set (#61).
 ///
@@ -665,6 +741,14 @@ private struct EditSetView: View {
     @State private var isWarmup: Bool
     @State private var confirmingDelete = false
 
+    /// The exact-entry field's text, and the text `pounds` was last known to
+    /// agree with. Comparing the two is how "hasn't resolved to anything yet"
+    /// is told apart from "already matches what's stored" without a third
+    /// piece of state to keep in sync (#218: 45 lb -> 135 lb was 18 taps at a
+    /// 5 lb step, and the stepper alone is what made it that slow).
+    @State private var weightText: String
+    @State private var committedText: String
+
     init(set: SetRecord, exercise: Exercise,
          onSave: @escaping (SetRecord) -> Void, onDelete: @escaping () -> Void) {
         self.set = set
@@ -675,7 +759,23 @@ private struct EditSetView: View {
         _reps = State(initialValue: set.reps)
         _rpe = State(initialValue: set.rpe)
         _isWarmup = State(initialValue: set.isWarmup)
+        let text = Self.text(for: set.load.pounds)
+        _weightText = State(initialValue: text)
+        _committedText = State(initialValue: text)
     }
+
+    /// What the typed field currently means — delegated to
+    /// `resolveHistoryWeightEdit` (top of this file) so the actual decision
+    /// is covered by `swift test` rather than only by this view rendering
+    /// correctly (#218).
+    private var weightEdit: HistoryWeightEdit {
+        resolveHistoryWeightEdit(
+            text: weightText, committed: committedText,
+            unit: GymSettings.shared.unit, exercise: exercise
+        )
+    }
+
+    private var canSave: Bool { canSaveHistoryWeightEdit(weightEdit) }
 
     var body: some View {
         NavigationStack {
@@ -684,18 +784,51 @@ private struct EditSetView: View {
                     // Stepped by the lift's own increment, so a correction
                     // can't produce a weight the equipment can't be set to
                     // (#20, #39).
-                    Stepper(value: $pounds, in: 0...2000, step: exercise.increment.pounds) {
+                    Stepper(value: poundsBinding, in: 0...2000, step: exercise.increment.pounds) {
                         // Stepped in pounds because that is what is stored, but
                         // read in the unit the lifter uses (#67) — the step
                         // itself is the equipment's own, so the numbers land
                         // where the equipment does.
                         LabeledContent("Weight", value: format(pounds))
                     }
+                    // Direct entry beside the stepper rather than behind
+                    // another sheet (#218) — a big correction is common
+                    // enough (a wrong unit typed at the rack, a set logged
+                    // against the wrong day's weight) that hiding the fast
+                    // path a tap away from where it's needed would only help
+                    // someone who already knew it existed.
+                    HStack {
+                        TextField("Exact weight", text: $weightText)
+                            .keyboardType(.decimalPad)
+                            .font(.body.monospacedDigit())
+                        Text(GymSettings.shared.unit.symbol)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Exact weight")
+                    if case .unparseable = weightEdit {
+                        Text("Enter a number, like 135 or 135.5.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Stepper(value: $reps, in: 1...50) {
                         LabeledContent("Reps", value: "\(reps)")
                     }
                 } header: {
                     Text(exercise.name)
+                }
+
+                if case .unbuildable(let requested, let achievable) = weightEdit {
+                    Section {
+                        Text("\(requested.formatted(in: GymSettings.shared.unit)) cannot be set on this equipment.")
+                        Button("Use \(achievable.formatted(in: GymSettings.shared.unit))") {
+                            commit(achievable)
+                        }
+                        .font(.body.weight(.semibold))
+                    } header: {
+                        Text("Not available")
+                    } footer: {
+                        Text("The nearest achievable weight is offered, never substituted silently.")
+                    }
                 }
 
                 Section {
@@ -736,6 +869,7 @@ private struct EditSetView: View {
                         onSave(corrected)
                         dismiss()
                     }
+                    .disabled(!canSave)
                 }
             }
             .confirmationDialog("Delete this set?", isPresented: $confirmingDelete,
@@ -747,11 +881,56 @@ private struct EditSetView: View {
             } message: {
                 Text("It stops counting towards volume, e1RM and your next target.")
             }
+            // Every keystroke is checked, not just a final commit — the same
+            // reason `TypedWeight` itself treats an empty field as "not yet"
+            // rather than an error while a paste or a clear is mid-flight.
+            // The moment typing resolves to a real, buildable weight it's
+            // folded into `pounds` immediately, so the stepper below and the
+            // eventual Save both act on it without a separate confirm step.
+            .onChange(of: weightText) { _, newValue in
+                guard case .exact(let load) = resolveHistoryWeightEdit(
+                    text: newValue, committed: committedText,
+                    unit: GymSettings.shared.unit, exercise: exercise
+                ) else { return }
+                pounds = load.pounds
+                committedText = newValue
+            }
         }
+    }
+
+    /// The stepper's own binding, routed through here so a tap on it also
+    /// keeps the typed field's text in sync (#218) — without this, stepping
+    /// down after typing a big correction would leave the text field showing
+    /// a number `pounds` had already moved past.
+    private var poundsBinding: Binding<Double> {
+        Binding(
+            get: { pounds },
+            set: { commit(Load($0)) }
+        )
+    }
+
+    /// Accepts a resolved weight from any source — the stepper, a typed exact
+    /// value, or the nearest-achievable offer — and makes it the one thing
+    /// every control agrees on.
+    private func commit(_ load: Load) {
+        pounds = load.pounds
+        let text = Self.text(for: load.pounds)
+        weightText = text
+        committedText = text
     }
 
     private func format(_ pounds: Double) -> String {
         GymSettings.shared.unit.format(pounds: pounds)
+    }
+
+    /// The exact-entry field's text for a given weight: native precision, no
+    /// unit symbol (the symbol sits beside the field instead), matching how
+    /// `WeightEntrySheet` in `SessionView.swift` reads its own initial text —
+    /// that sheet is the pattern this reuses rather than a second parser
+    /// (#218).
+    private static func text(for pounds: Double) -> String {
+        let unit = GymSettings.shared.unit
+        return unit.format(unit.value(fromPounds: pounds), withSymbol: false)
     }
 }
 
@@ -770,7 +949,13 @@ private struct SetRow: View {
             }
             Spacer()
             if let rpe = set.rpe {
-                Text("RPE \(rpe)")
+                // `historyRPEText` (top of this file) already reads "RPE 8"
+                // (`RPE.description`, added in #4/#5, before this row
+                // existed) — wrapping it in another literal "RPE " here read
+                // "RPE RPE 8" (#218). `SessionView.swift`'s equivalent row
+                // already gets this right with the same `Text(rpe.description)`,
+                // which is the pattern this matches.
+                Text(historyRPEText(rpe))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
