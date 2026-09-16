@@ -154,29 +154,44 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         )
     }
 
-    /// Selection on the rep and RPE chips has to survive being unseen.
-    func testChipSelectionIsExposedAsATrait() throws {
+    /// Reps and RPE replaced a disclosure-hidden pair of scrolling chip rows
+    /// with always-visible steppers, following a platform-conformance audit
+    /// that named the chip rows a web-shaped control standing in for a
+    /// native one. This is the replacement's own version of the test above:
+    /// every control is reachable without opening anything first, each
+    /// meets the 44pt touch-target floor, and the current value is exposed
+    /// as the control's accessibility value rather than a chip's `.isSelected`
+    /// trait — there is exactly one number per row because there is exactly
+    /// one control, not several competing for the selected trait.
+    func testRepsAndRPEStepperAreAlwaysVisibleAndMeetTouchTargets() throws {
         let app = launch()
         try openPushDay(app)
         startSessionIfPreviewed(app)
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20))
 
-        // Reps and RPE are behind a disclosure now, collapsed by default
-        // (#205) — the chips this test checks don't exist until it's opened.
-        let disclosure = app.buttons["session.setDetails.disclosure"]
-        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
-        disclosure.tap()
+        let repsMinus = app.buttons["session.reps.decrement"]
+        let repsValue = app.buttons["session.reps.value"]
+        let repsPlus = app.buttons["session.reps.increment"]
+        let rpeMinus = app.buttons["session.rpe.decrement"]
+        let rpeValue = app.buttons["session.rpe.value"]
+        let rpePlus = app.buttons["session.rpe.increment"]
 
-        let chips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'rpe.'"))
-        XCTAssertGreaterThan(chips.count, 0, "RPE chips should carry stable identifiers")
-
-        var selected = 0
-        for index in 0..<chips.count where chips.element(boundBy: index).isSelected {
-            selected += 1
+        // No disclosure to open first — every control exists immediately.
+        for control in [repsMinus, repsValue, repsPlus, rpeMinus, rpeValue, rpePlus] {
+            XCTAssertTrue(control.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
         }
-        // Exactly one: a row where none is selected reads as "no RPE chosen"
-        // when one plainly is, and more than one is incoherent.
-        XCTAssertEqual(selected, 1, "exactly one RPE chip should report the selected trait")
+
+        let repsBefore = repsValue.value as? String
+        repsPlus.tap()
+        XCTAssertNotEqual(repsBefore, repsValue.value as? String,
+                          "the reps stepper's accessibility value should change on tap")
+
+        let rpeBefore = rpeValue.value as? String
+        rpePlus.tap()
+        XCTAssertNotEqual(rpeBefore, rpeValue.value as? String,
+                          "the RPE stepper's accessibility value should change on tap")
     }
 
     /// A partial finish must be a bottom sheet, never an unanchored bubble at
@@ -285,11 +300,13 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
     }
 
     /// The measured claim #205 makes: the action bar's minimum height, with
-    /// nothing conditional open (plate row collapsed, reps/RPE disclosure
-    /// collapsed), dropped from the ~368pt #205 measured before this change.
-    /// Asserted well above the actual figure reported in the PR so this
-    /// stays a real regression guard rather than a brittle pixel match —
-    /// the point is "still small," not "exactly this."
+    /// nothing conditional open (only the plate row can still collapse;
+    /// reps and RPE stopped being conditional when their disclosure was
+    /// replaced with always-visible steppers), stays well under the ~368pt
+    /// #205 measured before that change. Asserted well above the actual
+    /// figure reported in the PR so this stays a real regression guard
+    /// rather than a brittle pixel match — the point is "still small," not
+    /// "exactly this."
     func testActionBarMinimumHeightIsReclaimedForSetRows() throws {
         let app = launch()
         try openPushDay(app)

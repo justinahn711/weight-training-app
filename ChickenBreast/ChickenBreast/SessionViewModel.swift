@@ -603,6 +603,26 @@ final class SessionViewModel {
         setPendingReps(max(1, pendingReps + delta))
     }
 
+    /// Moves RPE one step through `RPE.sessionChips`, clamped at the ends —
+    /// the inline stepper's answer to what the old chip row offered by
+    /// tapping a specific value directly. Same set, same order, one tap
+    /// moves by one step instead of naming the destination.
+    ///
+    /// `pendingRPE` can start on 6.5, which `sessionChips` omits (voice
+    /// parsing and a stored `ProgressState` both reach the full
+    /// `RPE.allowedValues` grid). Falls back to the nearest chip at or below
+    /// the current value so a step from an off-grid start still lands
+    /// somewhere sensible rather than doing nothing.
+    func adjustRPE(by steps: Int) {
+        let chips = RPE.sessionChips
+        guard !chips.isEmpty else { return }
+        let index = chips.firstIndex(of: pendingRPE)
+            ?? chips.lastIndex(where: { $0 <= pendingRPE })
+            ?? 0
+        let newIndex = min(max(0, index + steps), chips.count - 1)
+        pendingRPE = chips[newIndex]
+    }
+
     /// Selects an exact positive count for the visible exercise.
     func setPendingReps(_ reps: Int) {
         guard let exerciseID = current?.id, reps > 0 else { return }

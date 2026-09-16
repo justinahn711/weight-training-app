@@ -19,6 +19,12 @@ struct SessionView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
+    /// Read once per render and threaded into every `Theme.spring`/`.quick`
+    /// call in this file — see `Theme`'s own doc for why the accessor takes
+    /// this as an argument rather than reaching past it (a P1 finding from
+    /// `/impeccable audit`: this screen shipped several springs with no
+    /// Reduce Motion alternative).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State var model: SessionViewModel
     let onFinish: () -> Void
@@ -51,19 +57,6 @@ struct SessionView: View {
     /// edits (#138). It stays open while plates are added, then closes when
     /// the lifter moves to a different exercise.
     @State private var isPlateRowExpanded = false
-    /// Reps and RPE are corrections, not required input — both default to the
-    /// prescribed or last-used value, and `Log Set` records whatever is
-    /// standing without either ever being touched. Collapsed by default for
-    /// the same reason the plate row is (#138): the two chip rows cost ~130pt
-    /// together and were previously resident on every exercise regardless of
-    /// whether either was ever adjusted (#205).
-    ///
-    /// ASSUMPTION FLAGGED FOR CONFIRMATION (#205): the owner didn't say
-    /// whether reps/RPE are touched every set or occasionally. If they're
-    /// closer to "every set," this should default open, or the disclosure
-    /// should come out entirely in favour of the pre-#205 always-visible
-    /// rows. See the PR description.
-    @State private var isSetDetailsExpanded = false
     /// Pins the logged row being corrected even if voice navigation moves the
     /// workout while its sheet is open.
     @State private var editingSet: ActiveSetEditTarget?
@@ -79,11 +72,11 @@ struct SessionView: View {
             // The spring behind every banner arriving or leaving (task 3).
             // Keyed on the states that add or remove one, so a tick of the
             // rest clock never re-runs it.
-            .animation(Theme.spring, value: model.rest?.startedAt)
-            .animation(Theme.spring, value: model.recentlyLoggedSet?.id)
-            .animation(Theme.spring, value: model.pendingAdvance?.id)
-            .animation(Theme.spring, value: model.autoAdvancedFrom?.id)
-            .animation(Theme.spring, value: model.session.currentIndex)
+            .animation(Theme.spring(reduceMotion: reduceMotion), value: model.rest?.startedAt)
+            .animation(Theme.spring(reduceMotion: reduceMotion), value: model.recentlyLoggedSet?.id)
+            .animation(Theme.spring(reduceMotion: reduceMotion), value: model.pendingAdvance?.id)
+            .animation(Theme.spring(reduceMotion: reduceMotion), value: model.autoAdvancedFrom?.id)
+            .animation(Theme.spring(reduceMotion: reduceMotion), value: model.session.currentIndex)
             // `confirmationDialog` can adapt to an anchored popover. The
             // partial-finish checkpoint must stay thumb-reachable on every
             // iPhone, so use a real bottom sheet instead (#158).
@@ -173,10 +166,6 @@ struct SessionView: View {
         }
         .onChange(of: model.current?.id) { _, _ in
             isPlateRowExpanded = false
-            // Same reset as the plate row, and for the same reason: a
-            // disclosure left open by the previous lift would otherwise leak
-            // its state into a lift the lifter never opened it on (#205).
-            isSetDetailsExpanded = false
         }
         .onChange(of: model.plateOptions) { _, options in
             if options.isEmpty {
@@ -299,11 +288,16 @@ struct SessionView: View {
                 header(exercise, isCompact: isCompact)
                     // A new lift arrives from the side, on the spring the
                     // body keys on `currentIndex`; the old one fades under it.
+                    // Reduce Motion drops the slide for a plain crossfade —
+                    // the exercise still visibly changes, nothing moves
+                    // across the screen to get there.
                     .id(exercise.id)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .opacity
-                    ))
+                    .transition(reduceMotion
+                        ? .opacity
+                        : .asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .opacity
+                        ))
 
                 if includesStatus {
                     statusBanners
@@ -364,15 +358,15 @@ struct SessionView: View {
             NextUpCard(
                 next: next,
                 isResting: model.rest != nil,
-                onStay: { withAnimation(Theme.spring) { model.stayOnCurrentExercise() } },
-                onGo: { withAnimation(Theme.spring) { model.skipRest() } }
+                onStay: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.stayOnCurrentExercise() } },
+                onGo: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.skipRest() } }
             )
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
         if let from = model.autoAdvancedFrom {
             AutoAdvancedBanner(
                 from: from,
-                onBack: { withAnimation(Theme.spring) { model.undoAutoAdvance() } },
+                onBack: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoAutoAdvance() } },
                 onExpire: { model.dismissAutoAdvanceNotice() }
             )
             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -380,8 +374,8 @@ struct SessionView: View {
         if let rest = model.rest {
             RestBanner(
                 rest: rest,
-                onSkip: { withAnimation(Theme.spring) { model.skipRest() } },
-                onComplete: { withAnimation(Theme.spring) { model.restDidComplete() } }
+                onSkip: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.skipRest() } },
+                onComplete: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.restDidComplete() } }
             )
             .transition(.move(edge: .top).combined(with: .opacity))
         } else {
@@ -394,7 +388,7 @@ struct SessionView: View {
             // put a button on when nothing is running — so this sits in the
             // same spot, styled low enough not to read as a status when there
             // is nothing to report.
-            StartRestControl(onStart: { withAnimation(Theme.spring) { model.startRest() } })
+            StartRestControl(onStart: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.startRest() } })
                 .transition(.opacity)
         }
         if let record = model.recentlyLoggedSet {
@@ -402,8 +396,8 @@ struct SessionView: View {
                 record: record,
                 personalRecord: model.recentRecord?.set.id == record.id ? model.recentRecord : nil,
                 unit: gym.unit,
-                onUndo: { withAnimation(Theme.spring) { model.undoRecentlyLoggedSet(id: record.id) } },
-                onExpire: { withAnimation(Theme.spring) { model.dismissRecentSetUndo(id: record.id) } }
+                onUndo: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoRecentlyLoggedSet(id: record.id) } },
+                onExpire: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.dismissRecentSetUndo(id: record.id) } }
             )
             .transition(.move(edge: .top).combined(with: .opacity))
         }
@@ -492,7 +486,7 @@ struct SessionView: View {
         NavigationStack {
             List(model.session.exercises) { exercise in
                 Button {
-                    withAnimation(Theme.spring) { model.select(exerciseID: exercise.id) }
+                    withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.select(exerciseID: exercise.id) }
                     isChoosingExercise = false
                 } label: {
                     HStack(spacing: 12) {
@@ -861,75 +855,31 @@ struct SessionView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Reps and RPE, disclosed rather than resident (#205). Both
-            // default to the prescribed or last-used value, so `Log Set`
-            // already works with neither ever opened — this is the
-            // correction path, not the common one, following the same
-            // disclosure #138 gave the plate row. See the flagged assumption
-            // on `isSetDetailsExpanded` above; if the owner comes back and
-            // says these ARE touched every set, this should default to
-            // expanded (or the disclosure should come out) rather than stay
-            // collapsed by default.
-            Button {
-                withAnimation(.snappy) { isSetDetailsExpanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: isSetDetailsExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    Text("Reps & RPE")
-                        .font(.subheadline.weight(.semibold))
-                    Text(setDetailsSummary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .contentTransition(.numericText())
-                        .animation(Theme.quick, value: setDetailsSummary)
-                    Spacer(minLength: 0)
+            // Reps and RPE, always visible, one tap per step.
+            //
+            // Used to be a disclosure hiding two horizontally-scrolling chip
+            // rows (#205's ~130pt worry). A platform-conformance audit named
+            // that a web-shaped control standing in for a native stepper: the
+            // selected chip auto-centered in an extent nobody could see the
+            // edges of, sighted or not, and a drag that drifted vertically
+            // lost itself to the page scroll. Two `InlineStepper`s at button
+            // scale answer both at once — nothing scrolls anywhere in the
+            // action bar, and the ~130pt worry doesn't apply: a stepper row
+            // costs about what the disclosure header alone used to, not what
+            // two open chip rows did.
+            //
+            // Both default to the prescribed or last-used value, so `Log Set`
+            // already works with neither ever touched — this row is the
+            // correction path, one tap at a time, never a scroll.
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) {
+                    repsStepper(exercise)
+                    rpeStepper
                 }
-                // `.frame` before `.contentShape`, not after: a frame on the
-                // outer `Button` only grows its layout slot, and
-                // `.contentShape` is what the audit actually measures (#114).
-                // Chaining them in the other order — frame outside the
-                // button, after `.buttonStyle` — was the exact mistake #114
-                // found four times already; the system audit caught it here
-                // as "Hit area is too small" at 18pt before this fix.
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Reps and RPE")
-            .accessibilityValue(
-                isSetDetailsExpanded
-                    ? "Expanded, \(setDetailsSummary)"
-                    : "Collapsed, \(setDetailsSummary)"
-            )
-            .accessibilityHint(
-                isSetDetailsExpanded ? "Hides the reps and RPE rows" : "Shows the reps and RPE rows"
-            )
-            .accessibilityIdentifier("session.setDetails.disclosure")
-
-            if isSetDetailsExpanded {
-                // Side by side whenever there's room, rather than only on
-                // the short-phone `isCompact` path — stacking the two full
-                // width was itself half of what made this section 130pt
-                // instead of 66 (#205). Accessibility text still stacks: two
-                // scrolling rows sharing half the width each would clip at
-                // the larger sizes #113 exists to protect.
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 8) {
-                        repChoices(exercise)
-                        rpeChoices
-                    }
-                    // Matches the plate row's own transition just above
-                    // (#138): the section grows from where it was opened
-                    // rather than the whole bar jumping.
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                } else {
-                    HStack(alignment: .top, spacing: 8) {
-                        repChoices(exercise)
-                        rpeChoices
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                HStack(spacing: 8) {
+                    repsStepper(exercise)
+                    rpeStepper
                 }
             }
 
@@ -948,7 +898,7 @@ struct SessionView: View {
                 // unchanged this call didn't fail, whatever the value was
                 // going in.
                 let failureBeforeLogging = model.failure
-                withAnimation(Theme.spring) { model.logSet() }
+                withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.logSet() }
                 if model.failure == failureBeforeLogging {
                     withAnimation(.snappy) { isPlateRowExpanded = false }
                 }
@@ -965,7 +915,7 @@ struct SessionView: View {
                         .font(.subheadline.weight(.semibold).monospacedDigit())
                         .opacity(0.85)
                         .contentTransition(.numericText())
-                        .animation(Theme.quick, value: logSetSummary)
+                        .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: isCompact ? 56 : 62)
@@ -998,7 +948,7 @@ struct SessionView: View {
             HStack(spacing: 8) {
                 if model.session.currentIndex > 0 {
                     Button {
-                        withAnimation(Theme.spring) { model.goBack() }
+                        withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.goBack() }
                     } label: {
                         Label("Back", systemImage: "chevron.backward")
                             .font(.subheadline)
@@ -1048,7 +998,7 @@ struct SessionView: View {
                 // trust.
                 if !model.session.isOnLastExercise {
                     Button {
-                        withAnimation(Theme.spring) { model.advance() }
+                        withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.advance() }
                     } label: {
                         Label("Next exercise", systemImage: "chevron.forward")
                             .font(.subheadline.weight(.semibold))
@@ -1084,45 +1034,41 @@ struct SessionView: View {
         .accessibilityIdentifier("session.actionBar")
     }
 
-    private func repChoices(_ exercise: SessionExercise) -> some View {
-        RepChoiceRow(
-            exerciseID: exercise.id,
-            values: model.repChoices,
-            selected: model.pendingReps,
-            usesOtherCount: model.usesOtherRepCount,
-            onSelect: { model.setPendingReps($0) },
-            onOther: {
+    private func repsStepper(_ exercise: SessionExercise) -> some View {
+        let reps = model.pendingReps
+        let text = "\(reps) rep\(reps == 1 ? "" : "s")"
+        return InlineStepper(
+            identifierPrefix: "session.reps",
+            caption: "Reps",
+            valueText: text,
+            accessibilityValue: text,
+            onTapValue: {
                 enteringReps = RepEntryTarget(id: exercise.id, reps: model.pendingReps)
-            }
+            },
+            onDecrement: { model.adjustReps(by: -1) },
+            onIncrement: { model.adjustReps(by: 1) }
         )
         .frame(maxWidth: .infinity)
     }
 
-    private var rpeChoices: some View {
-        ChoiceRow(
+    /// No tap-to-enter, unlike reps: RPE is a bounded, discrete scale
+    /// (`RPE.sessionChips`), not an open count, so there's no "exact value
+    /// outside quick reach" case for a sheet to solve.
+    private var rpeStepper: some View {
+        InlineStepper(
+            identifierPrefix: "session.rpe",
             caption: "RPE",
-            values: RPE.sessionChips,
-            isSelected: { $0 == model.pendingRPE },
-            label: { $0.value == $0.value.rounded()
-                ? String(format: "%.0f", $0.value)
-                : String(format: "%.1f", $0.value) },
-            onSelect: { model.pendingRPE = $0 }
+            valueText: model.pendingRPE.description,
+            accessibilityValue: model.pendingRPE.description,
+            onDecrement: { model.adjustRPE(by: -1) },
+            onIncrement: { model.adjustRPE(by: 1) }
         )
         .frame(maxWidth: .infinity)
     }
 
-    /// What the collapsed reps/RPE disclosure reads before it's opened
-    /// (#205) — enough to confirm at a glance that the standing values are
-    /// still the intended ones without spending the ~130pt the two chip
-    /// rows cost when both are on screen.
     /// What one tap of `Log Set` will write, spelled on the button itself.
     private var logSetSummary: String {
         "\(model.pendingLoad.formatted(in: gym.unit)) × \(model.pendingReps)"
-    }
-
-    private var setDetailsSummary: String {
-        let reps = model.pendingReps
-        return "\(reps) rep\(reps == 1 ? "" : "s") · \(model.pendingRPE.description)"
     }
 
     /// A normal completed workout stays one tap. Finishing while planned lifts
@@ -1279,7 +1225,7 @@ private struct NextUpCard: View {
             Button(action: onGo) {
                 Image(systemName: "chevron.forward")
                     .font(.body.weight(.bold))
-                    .frame(minWidth: 44, minHeight: 36)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
             .accessibilityLabel("Go to \(next.exercise.name) now")
@@ -2148,6 +2094,7 @@ private struct WeightStepper: View {
     let onDecrement: () -> Void
     let onIncrement: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var repeater = StepRepeater()
 
     var body: some View {
@@ -2196,7 +2143,7 @@ private struct WeightStepper: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
-                .animation(Theme.quick, value: load)
+                .animation(Theme.quick(reduceMotion: reduceMotion), value: load)
             HStack(spacing: 4) {
                 Text("Adjust plates")
                     .font(.callout.weight(.semibold))
@@ -2218,7 +2165,7 @@ private struct WeightStepper: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
-                .animation(Theme.quick, value: load)
+                .animation(Theme.quick(reduceMotion: reduceMotion), value: load)
             HStack(spacing: 4) {
                 Text(detail)
                     .lineLimit(1)
@@ -2355,111 +2302,77 @@ struct ChoiceRow<Value: Hashable>: View {
     }
 }
 
-/// Target-centred shortcuts plus one stable path to every positive rep count.
+/// A compact − / value / + control for a value nudged between sets, one tap
+/// per step. Replaces the reps/RPE chip rows (`ChoiceRow` still serves the
+/// exercise-config sheet, where a scrolling row of *many* named values is the
+/// right shape — this screen's job was always "nudge the standing value by
+/// one," which a stepper answers directly with no scrolling and no extent
+/// hidden past the edge of the screen.
 ///
-/// `Other` stays fixed beside the scrolling quick choices instead of hiding at
-/// the far end or inserting the selected exception among them. That keeps the
-/// route visible and the common controls from moving beneath a finger, while
-/// the button itself becomes the exact selected number so the form always says
-/// what Log Set will record (#131).
-private struct RepChoiceRow: View {
-    let exerciseID: UUID
-    let values: [Int]
-    let selected: Int
-    let usesOtherCount: Bool
-    let onSelect: (Int) -> Void
-    let onOther: () -> Void
+/// Same − / value / + shape `WeightStepper` uses for the weight itself, held
+/// to button-minimum scale because reps and RPE are the correction path; the
+/// working weight is not.
+private struct InlineStepper: View {
+    let identifierPrefix: String
+    let caption: String
+    let valueText: String
+    let accessibilityValue: String
+    var onTapValue: (() -> Void)? = nil
+    let onDecrement: () -> Void
+    let onIncrement: () -> Void
 
-    /// A quick-chip tap already happened at a visible, intentional location.
-    /// Remember it long enough to avoid moving the row after that tap; changes
-    /// from navigation or the exact-entry sheet do need recentering.
-    @State private var directSelection: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var repeater = StepRepeater()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Reps")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-
-            HStack(spacing: 8) {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(values, id: \.self) { value in
-                                let isSelected = value == selected
-                                Button {
-                                    directSelection = value
-                                    onSelect(value)
-                                } label: {
-                                    repChip(String(value), selected: isSelected)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("\(value) reps")
-                                .accessibilityAddTraits(isSelected ? .isSelected : [])
-                                .id(value)
-                            }
-                        }
-                        .padding(.horizontal, 2)
-                    }
-                    .onAppear {
-                        scrollToSelected(using: proxy)
-                    }
-                    .onChange(of: exerciseID) {
-                        directSelection = nil
-                        scrollToSelected(using: proxy)
-                    }
-                    .onChange(of: values) {
-                        scrollToSelected(using: proxy)
-                    }
-                    .onChange(of: selected) { _, newValue in
-                        if directSelection == newValue {
-                            directSelection = nil
-                        } else {
-                            directSelection = nil
-                            // Saving an in-range value through Other has no
-                            // selected trailing control, so its chip must be
-                            // brought into view when the sheet closes.
-                            scrollToSelected(using: proxy)
-                        }
-                    }
-                }
-
-                Button(action: onOther) {
-                    repChip(usesOtherCount ? String(selected) : "Other",
-                            selected: usesOtherCount)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(usesOtherCount
-                                    ? "Change rep count"
-                                    : "Enter another rep count")
-                .accessibilityValue(usesOtherCount
-                                    ? "\(selected) reps selected"
-                                    : "Current selection, \(selected) reps")
-                .accessibilityAddTraits(usesOtherCount ? .isSelected : [])
-            }
+        HStack(spacing: 0) {
+            stepButton("minus", label: "Decrease \(caption)", identifierSuffix: "decrement", action: onDecrement)
+            valueButton
+            stepButton("plus", label: "Increase \(caption)", identifierSuffix: "increment", action: onIncrement)
         }
+        .padding(.vertical, 4)
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func repChip(_ label: String, selected: Bool) -> some View {
-        Text(label)
-            .font(.title3.weight(selected ? .bold : .medium).monospacedDigit())
-            .foregroundStyle(selected ? Color.white : Color.primary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .frame(minWidth: 54, minHeight: 48)
-            .padding(.horizontal, label == "Other" ? 4 : 0)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(selected ? AnyShapeStyle(Color.accentColor)
-                                   : AnyShapeStyle(.fill.quaternary))
-            )
+    /// A `Button`, disabled when there's nothing to tap into, the same shape
+    /// `WeightStepper`'s own value readout uses when `onEnterWeight` is nil —
+    /// one idiom for "this number is also a button, sometimes."
+    private var valueButton: some View {
+        Button(action: onTapValue ?? {}) {
+            Text(valueText)
+                .font(.title3.weight(.semibold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .contentTransition(.numericText())
+                .animation(Theme.quick(reduceMotion: reduceMotion), value: valueText)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(onTapValue == nil)
+        .accessibilityLabel(onTapValue == nil ? caption : "Enter exact \(caption.lowercased())")
+        .accessibilityValue(accessibilityValue)
+        .accessibilityHint(onTapValue == nil ? "" : "Plus and minus remain the primary controls")
+        .accessibilityIdentifier("\(identifierPrefix).value")
     }
 
-    private func scrollToSelected(using proxy: ScrollViewProxy) {
-        if values.contains(selected) {
-            proxy.scrollTo(selected, anchor: .center)
+    private func stepButton(
+        _ symbol: String, label: String, identifierSuffix: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier("\(identifierPrefix).\(identifierSuffix)")
+        // Held rather than tapped repeatedly, same as the weight stepper's
+        // own buttons (#77): a long move is quick, a short one stays exact.
+        .onLongPressGesture(minimumDuration: 0.4, pressing: { isPressing in
+            if isPressing { repeater.start(action) } else { repeater.stop() }
+        }, perform: {})
     }
 }
 

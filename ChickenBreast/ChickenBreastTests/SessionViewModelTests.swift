@@ -484,6 +484,45 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.pendingReps, seededReps)
     }
 
+    // MARK: - adjustRPE — the inline stepper's step through RPE.sessionChips
+
+    func test_adjustRPE_stepsThroughSessionChipsInOrder() throws {
+        let vm = try makeViewModel()
+        vm.pendingRPE = .eight
+        vm.adjustRPE(by: 1)
+        XCTAssertEqual(vm.pendingRPE, RPE(8.5))
+        vm.adjustRPE(by: 1)
+        XCTAssertEqual(vm.pendingRPE, .nine)
+        vm.adjustRPE(by: -2)
+        XCTAssertEqual(vm.pendingRPE, .eight)
+    }
+
+    func test_adjustRPE_clampsAtBothEnds() throws {
+        let vm = try makeViewModel()
+        vm.pendingRPE = .six
+        vm.adjustRPE(by: -1)
+        XCTAssertEqual(vm.pendingRPE, .six, "six is the floor chip; stepping down further does nothing")
+
+        vm.pendingRPE = .ten
+        vm.adjustRPE(by: 1)
+        XCTAssertEqual(vm.pendingRPE, .ten)
+    }
+
+    /// `pendingRPE` can start on 6.5 — `sessionChips` omits it, but voice
+    /// parsing and a stored `ProgressState` both reach the wider
+    /// `RPE.allowedValues` grid. A step from there must land somewhere on
+    /// the chip grid rather than silently doing nothing.
+    func test_adjustRPE_fromAnOffGridValue_snapsOntoTheChipGrid() throws {
+        let vm = try makeViewModel()
+        vm.pendingRPE = RPE(6.5)!
+        vm.adjustRPE(by: 1)
+        XCTAssertEqual(vm.pendingRPE, .seven, "one step up from the nearest chip at or below 6.5")
+
+        vm.pendingRPE = RPE(6.5)!
+        vm.adjustRPE(by: -1)
+        XCTAssertEqual(vm.pendingRPE, .six, "one step down from the nearest chip at or below 6.5")
+    }
+
     // MARK: - repChoices (#171, #181)
 
     /// The reason this issue exists: a pure `[Int]` that used to require a
