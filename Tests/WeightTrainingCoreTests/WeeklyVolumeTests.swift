@@ -34,33 +34,58 @@ final class WeeklyVolumeTests: XCTestCase {
         XCTAssertEqual(points.count, 12)
         XCTAssertEqual(points.last?.weekStart, calendar.dateInterval(of: .weekOfYear, for: now)?.start)
         XCTAssertTrue(zip(points, points.dropFirst()).allSatisfy { $0.weekStart < $1.weekStart })
-        XCTAssertTrue(points.allSatisfy { $0.total == 0 }, "empty weeks are present at zero")
+        XCTAssertTrue(points.allSatisfy { $0.muscleCredit == 0 }, "empty weeks are present at zero")
+        XCTAssertTrue(points.allSatisfy { $0.hardSetCount == 0 })
     }
 
-    func testSetsLandInTheirCalendarWeekWithPrimaryFullAndSecondaryHalf() {
+    /// The case #214 names specifically: a compound lift with a primary and a
+    /// secondary muscle. Incline DB Press is chest primary, front delts and
+    /// triceps secondary, so 4 logged sets are 4 literal hard sets but 8 of
+    /// muscle credit (4 chest + 2 front delts + 2 triceps) — the two numbers
+    /// are supposed to disagree, and a headline built from the wrong one is
+    /// exactly the bug this issue is about.
+    func testHardSetCountIsLiteralWhileMuscleCreditIsWeighted() {
         let points = weeks(4, sets("Incline DB Press", count: 4, daysAgo: 1))
         let thisWeek = points.last!
+        XCTAssertEqual(thisWeek.hardSetCount, 4, "one logged hard set reads as one")
         XCTAssertEqual(thisWeek.setsByMuscle[.chest], 4)
+        XCTAssertEqual(thisWeek.setsByMuscle[.frontDelts], 2)
         XCTAssertEqual(thisWeek.setsByMuscle[.triceps], 2)
-        XCTAssertEqual(thisWeek.sets(in: .chest), 4)
-        XCTAssertEqual(thisWeek.sets(in: .arms), 2)
-        XCTAssertEqual(thisWeek.sets(in: .legs), 0)
-        XCTAssertEqual(thisWeek.sets(in: nil), thisWeek.total)
-        XCTAssertTrue(points.dropLast().allSatisfy { $0.total == 0 })
+        XCTAssertEqual(thisWeek.muscleCredit, 8, "credit is not the headline number")
+        XCTAssertEqual(thisWeek.muscleCredit(in: .chest), 4)
+        XCTAssertEqual(thisWeek.muscleCredit(in: .arms), 2)
+        XCTAssertEqual(thisWeek.muscleCredit(in: .legs), 0)
+        XCTAssertEqual(thisWeek.muscleCredit(in: nil), thisWeek.muscleCredit)
+        XCTAssertTrue(points.dropLast().allSatisfy { $0.muscleCredit == 0 && $0.hardSetCount == 0 })
     }
 
     func testLastWeekIsLastWeekNotSevenDaysAgo() {
         // Thursday minus 4 days is the previous week's Sunday.
         let points = weeks(2, sets("Incline DB Press", count: 3, daysAgo: 4))
         XCTAssertEqual(points[0].setsByMuscle[.chest], 3)
-        XCTAssertEqual(points[1].total, 0)
+        XCTAssertEqual(points[0].hardSetCount, 3)
+        XCTAssertEqual(points[1].muscleCredit, 0)
+        XCTAssertEqual(points[1].hardSetCount, 0)
     }
 
     func testWarmupsEasySetsAndTheFutureAreNotVolume() {
         let history = sets("Incline DB Press", count: 3, daysAgo: 1, warmup: true)
             + sets("Incline DB Press", count: 3, daysAgo: 1, rpe: RPE(6))
             + sets("Incline DB Press", count: 3, daysAgo: -1)
-        XCTAssertEqual(weeks(2, history).last?.total, 0)
+        let thisWeek = weeks(2, history).last
+        XCTAssertEqual(thisWeek?.muscleCredit, 0)
+        XCTAssertEqual(thisWeek?.hardSetCount, 0)
+    }
+
+    /// A set whose exercise can't be resolved still happened — the literal
+    /// count keeps it, even though it can't contribute muscle credit without
+    /// knowing what it trained (#214).
+    func testHardSetCountKeepsASetWithAnUnresolvedExercise() {
+        let orphan = [SetRecord(exerciseID: UUID(), load: Load(100), reps: 10, rpe: RPE(8),
+                                performedAt: now.addingTimeInterval(-86_400))]
+        let thisWeek = weeks(2, orphan).last
+        XCTAssertEqual(thisWeek?.hardSetCount, 1)
+        XCTAssertEqual(thisWeek?.muscleCredit, 0, "no exercise means no muscle to credit")
     }
 
     func testEveryMuscleHasARegion() {
@@ -79,12 +104,26 @@ final class WeeklySummaryTests: XCTestCase {
         c.firstWeekday = 2 // Monday, so the edges below don't move with locale
         return c
     }
+    /// Thursday 9 Oct 2025, noon UTC.
     private let now = Date(timeIntervalSince1970: 1_760_011_200)
 
-    private func week(_ back: Int, total: Double) -> WeeklyVolumePoint {
+    private func week(_ back: Int, hardSets: Int) -> WeeklyVolumePoint {
         let current = calendar.dateInterval(of: .weekOfYear, for: now)!.start
         let start = calendar.date(byAdding: .weekOfYear, value: -back, to: current)!
-        return WeeklyVolumePoint(weekStart: start, setsByMuscle: [.chest: total])
+        return WeeklyVolumePoint(weekStart: start, setsByMuscle: [:], hardSetCount: hardSets)
+    }
+
+    /// A `VolumeReport` standing in for "the current trailing window", with a
+    /// literal hard-set count under the caller's control. Defaults to the
+    /// real trailing-7-day window so `windowDays` reads 7 unless a test needs
+    /// otherwise.
+    private func volume(hardSetCount: Int = 0, windowDays: Int = VolumeReport.windowDays) -> VolumeReport {
+        VolumeReport(
+            muscles: [],
+            from: calendar.date(byAdding: .day, value: -windowDays, to: now)!,
+            to: now,
+            hardSetCount: hardSetCount
+        )
     }
 
     private func day(_ daysAgo: Int, working: Int = 3) -> TrainingDay {
@@ -100,15 +139,17 @@ final class WeeklySummaryTests: XCTestCase {
                          volume: VolumeReport? = nil, target: Int = 3) -> WeeklySummary {
         WeeklySummary.current(
             days: days, weekly: weekly,
-            volume: volume ?? VolumeReport.trailing(history: [], exercises: ExerciseLibrary.all, now: now, calendar: calendar),
+            volume: volume ?? self.volume(),
             sessionTarget: target, now: now, calendar: calendar
         )
     }
 
-    func testSessionsCountDistinctDaysThisWeekOnly() {
-        // Thursday: 0 and 2 days ago are this week, 4 days ago is last week.
-        let s = summary(days: [day(0), day(2), day(4), day(0, working: 1)], weekly: [])
-        XCTAssertEqual(s.sessions, 2)
+    /// Sessions now read the same trailing window as the muscles ring (#214),
+    /// not the calendar week: 8 days ago is outside a 7-day window even
+    /// though "this week" vs "last week" would have drawn the line elsewhere.
+    func testSessionsCountDistinctDaysInTheTrailingWindowOnly() {
+        let s = summary(days: [day(0), day(6), day(8), day(0, working: 1)], weekly: [])
+        XCTAssertEqual(s.sessions, 2, "0 and 6 days ago are inside 7 days; 8 is not")
         XCTAssertEqual(s.sessionTarget, 3)
         XCTAssertEqual(s.sessionProgress, 2.0 / 3.0, accuracy: 0.001)
     }
@@ -124,22 +165,23 @@ final class WeeklySummaryTests: XCTestCase {
     }
 
     func testUsualIsTheMeanOfUpToFourPreviousTrainedWeeks() {
-        let weekly = [week(6, total: 100), week(5, total: 0), week(4, total: 40),
-                      week(3, total: 50), week(2, total: 60), week(1, total: 50), week(0, total: 30)]
-        let s = summary(days: [], weekly: weekly)
+        let weekly = [week(6, hardSets: 100), week(5, hardSets: 0), week(4, hardSets: 40),
+                      week(3, hardSets: 50), week(2, hardSets: 60), week(1, hardSets: 50)]
+        let s = summary(days: [], weekly: weekly, volume: volume(hardSetCount: 30))
         XCTAssertEqual(s.hardSets, 30)
         XCTAssertEqual(s.usualHardSets, 50, "weeks 4..1; the 100 is a fifth trained week back, the 0 is skipped")
         XCTAssertEqual(s.setProgress!, 0.6, accuracy: 0.001)
     }
 
     func testNoPreviousWeekMeansNoSetsRing() {
-        let s = summary(days: [], weekly: [week(1, total: 0), week(0, total: 30)])
+        let s = summary(days: [], weekly: [week(1, hardSets: 0)])
         XCTAssertNil(s.usualHardSets)
         XCTAssertNil(s.setProgress)
     }
 
     func testProgressClampsAtOne() {
-        let s = summary(days: [day(0), day(1), day(2)], weekly: [week(1, total: 10), week(0, total: 30)], target: 2)
+        let s = summary(days: [day(0), day(1), day(2)], weekly: [week(1, hardSets: 10)],
+                        volume: volume(hardSetCount: 30), target: 2)
         XCTAssertEqual(s.sessionProgress, 1)
         XCTAssertEqual(s.setProgress, 1)
         XCTAssertEqual(s.sessions, 3, "the overflow is still reported as a number")
@@ -155,5 +197,28 @@ final class WeeklySummaryTests: XCTestCase {
         XCTAssertEqual(s.musclesOnTarget, 2, "overreaching is not a hole")
         XCTAssertEqual(s.muscleCount, 3)
         XCTAssertEqual(s.muscleProgress, 2.0 / 3.0, accuracy: 0.001)
+    }
+
+    func testWindowDaysMatchesTheVolumeReportItWasBuiltFrom() {
+        let s = summary(days: [], weekly: [], volume: volume(windowDays: 7))
+        XCTAssertEqual(s.windowDays, 7, "the label on the card must say what the rings actually measured")
+    }
+
+    /// #214's headline case at the summary level: a compound lift with a
+    /// primary and a secondary muscle must still read as its literal set
+    /// count on the ring, never the muscle-credited total.
+    func testHardSetsIsLiteralForACompoundLiftEvenThoughItsCreditIsHigher() {
+        let lift = ExerciseLibrary.all.first { $0.name == "Incline DB Press" }!
+        let compoundSets = (0..<4).map { index in
+            SetRecord(exerciseID: lift.id, load: Load(100), reps: 10, rpe: RPE(8),
+                      performedAt: now.addingTimeInterval(-86_400 + Double(index) * 300))
+        }
+        let report = VolumeReport.trailing(history: compoundSets, exercises: ExerciseLibrary.all,
+                                           now: now, calendar: calendar)
+        XCTAssertEqual(report.hardSetCount, 4)
+        XCTAssertEqual(report.muscles.reduce(0) { $0 + $1.sets }, 8, "chest 4 + front delts 2 + triceps 2")
+
+        let s = summary(days: [], weekly: [], volume: report)
+        XCTAssertEqual(s.hardSets, 4, "the headline is the literal count, not the credited one")
     }
 }
