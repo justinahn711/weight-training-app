@@ -117,6 +117,47 @@ final class VolumeReportTests: XCTestCase {
         XCTAssertEqual(fortnight.muscles.first { $0.muscle == .chest }?.sets, 4)
     }
 
+    // MARK: - Hard set count (#214)
+
+    /// The case #214 names: a compound lift with a primary and a secondary
+    /// muscle. `hardSetCount` must read the number of sets actually logged,
+    /// while `MuscleVolume.sets` keeps crediting the way the guard needs to.
+    /// A headline built from the wrong one is exactly the bug.
+    func testHardSetCountIsLiteralWhileMuscleVolumeIsCredited() {
+        // Incline DB Press: chest primary, front delts and triceps secondary.
+        let built = report(sets("Incline DB Press", count: 4, daysAgo: 1))
+        XCTAssertEqual(built.hardSetCount, 4, "four logged sets, not four credited to each muscle")
+        XCTAssertEqual(volume(built, .chest).sets, 4)
+        XCTAssertEqual(volume(built, .frontDelts).sets, 2)
+        XCTAssertEqual(volume(built, .triceps).sets, 2)
+        XCTAssertEqual(built.muscles.reduce(0) { $0 + $1.sets }, 8,
+                       "summed muscle credit is not the literal count")
+    }
+
+    func testHardSetCountExcludesWarmupsEasySetsAndTheFuture() {
+        let history = sets("Incline DB Press", count: 3, daysAgo: 1, warmup: true)
+            + sets("Incline DB Press", count: 3, daysAgo: 1, rpe: RPE(6.5))
+            + sets("Incline DB Press", count: 3, daysAgo: -1)
+        XCTAssertEqual(report(history).hardSetCount, 0)
+    }
+
+    /// A set counts even when its exercise can no longer be resolved — a
+    /// literal count is a fact about what was logged, not about whether the
+    /// library still has the lift (#214).
+    func testHardSetCountKeepsSetsWithUnresolvedExercises() {
+        let orphan = [SetRecord(exerciseID: UUID(), load: Load(100), reps: 10,
+                                rpe: RPE(8), performedAt: now)]
+        XCTAssertEqual(report(orphan).hardSetCount, 1)
+        XCTAssertEqual(report(orphan).muscles.reduce(0) { $0 + $1.sets }, 0)
+    }
+
+    func testHardSetCountRollsWithTheSameWindowAsMuscleVolume() {
+        let inside = report(sets("Incline DB Press", count: 4, daysAgo: 6.5))
+        XCTAssertEqual(inside.hardSetCount, 4)
+        let outside = report(sets("Incline DB Press", count: 4, daysAgo: 7.5))
+        XCTAssertEqual(outside.hardSetCount, 0, "older than the window")
+    }
+
     // MARK: - Standing
 
     func testStandingAgainstTheBand() {
