@@ -341,27 +341,6 @@ struct ContentView: View {
 
             SyncBadge(status: sync)
 
-            if !completionSummary.isEmpty || !completionRecords.isEmpty {
-                Button { showingCompletionSummary = true } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle")
-                            .foregroundStyle(.tint)
-                        Text("Review what’s next")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.tint)
-                    }
-                    .foregroundStyle(.primary)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("home.completion-summary")
-                .accessibilityHint("Shows the targets saved after your last workout.")
-            }
-
             if let cycle {
                 Text(cycle.summary())
                     .font(.headline)
@@ -373,59 +352,18 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if healthNeedsPermission {
-                healthCard
-            }
-
-            if let digest, !digest.isEmpty {
-                Button { showingDigest = true } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkles").foregroundStyle(.tint)
-                        Text("\(digest.bullets.count) thing\(digest.bullets.count == 1 ? "" : "s") to look at")
-                            .font(.subheadline.weight(.medium))
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.tint)
-                    }
-                    // Same correction as the recovery card above: tinted words
-                    // on a tint wash fail contrast, so the words go primary and
-                    // the tint stays on the icons, where it decorates rather
-                    // than carries meaning (#114).
-                    .foregroundStyle(.primary)
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 14)
-                    .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            // The volume guard is worth nothing behind a tap nobody takes, so
-            // the headline finding sits on the first screen.
-            //
-            // Shown whether or not anything is starved, which it was not
-            // before: the toolbar button was the only route when the week
-            // looked fine, and #112 removed it. A finding worth surfacing
-            // loudly is still worth reaching quietly.
-            // Height reserved from first paint, not claimed when the insights
-            // land. Making the row unconditional put it on every launch rather
-            // than only for a lifter behind on something — and it arrives after
-            // Train is already tappable (#115), so the centred stack re-laid
-            // out and every day button moved under a thumb already reaching for
-            // one.
-            Group {
-                if let volume {
-                    volumeRow(volume)
-                }
-            }
-            // 44 rather than 22, matching the row's own minimum. The
-            // reservation still does its #115 job — the space is claimed at
-            // first paint so the day buttons never move under a thumb — but
-            // reserving less than the control needs made the outer frame the
-            // real hit area, which is how a full-width row ended up 18pt tall.
-            .frame(height: 44)
-
+            // Resume — or, with no draft, the day picker — is the first
+            // substantive, thumb-reachable action under the header (#215).
+            // Everything below this point is optional: setup and insight
+            // prompts that used to sit above this block and made a returning
+            // lifter scan past them to get back to training. Nothing above
+            // this point in the VStack is affected by what follows, so this
+            // block's screen position is fixed the instant `workoutDraft` is
+            // known — which `openStore` establishes synchronously, before
+            // recovery (`loadReadinessIfPermitted`) or insights (the
+            // `.task(id: store == nil)` load) have even started. Those two
+            // arrive later and only ever add or remove rows *below* this one,
+            // so Resume never shifts once it has appeared.
             if let workoutDraft {
                 Button {
                     resumeWorkout(workoutDraft, from: store)
@@ -493,6 +431,89 @@ struct ContentView: View {
                                               : "Double tap to review this workout.")
                     .disabled(store == nil)
                 }
+            }
+
+            // Compact secondary section (#215): everything here is optional —
+            // a one-time setup nudge, a findings summary, a weekly guard rail,
+            // a look back at what the last session changed — and none of it
+            // is the reason someone opened the app mid-session. Keeping the
+            // whole group below Resume/the day picker means every row here
+            // can appear or disappear (recovery answered, insights landing,
+            // a digest going stale) without moving a single pixel above it.
+            VStack(spacing: 10) {
+                if !completionSummary.isEmpty || !completionRecords.isEmpty {
+                    Button { showingCompletionSummary = true } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle")
+                                .foregroundStyle(.tint)
+                            Text("Review what’s next")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.tint)
+                        }
+                        .foregroundStyle(.primary)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("home.completion-summary")
+                    .accessibilityHint("Shows the targets saved after your last workout.")
+                }
+
+                if healthNeedsPermission {
+                    healthCard
+                }
+
+                if let digest, !digest.isEmpty {
+                    Button { showingDigest = true } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles").foregroundStyle(.tint)
+                            Text("\(digest.bullets.count) thing\(digest.bullets.count == 1 ? "" : "s") to look at")
+                                .font(.subheadline.weight(.medium))
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.tint)
+                        }
+                        // Same correction as the recovery card above: tinted words
+                        // on a tint wash fail contrast, so the words go primary and
+                        // the tint stays on the icons, where it decorates rather
+                        // than carries meaning (#114).
+                        .foregroundStyle(.primary)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 14)
+                        .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // The volume guard is worth nothing behind a tap nobody takes, so
+                // the headline finding stays reachable from the first screen.
+                //
+                // Shown whether or not anything is starved, which it was not
+                // before: the toolbar button was the only route when the week
+                // looked fine, and #112 removed it. A finding worth surfacing
+                // loudly is still worth reaching quietly.
+                // Height reserved from first paint, not claimed when the insights
+                // land (#115) — still true here even though this row no longer
+                // sits above the day buttons: reserving 0pt until `volume`
+                // arrives would let this whole secondary section jump height
+                // out from under whatever a thumb is already reaching for
+                // below it. Do not make this conditional again.
+                Group {
+                    if let volume {
+                        volumeRow(volume)
+                    }
+                }
+                // 44 rather than 22, matching the row's own minimum. The
+                // reservation still does its #115 job — the space is claimed at
+                // first paint so nothing below it moves — but reserving less
+                // than the control needs made the outer frame the real hit
+                // area, which is how a full-width row ended up 18pt tall.
+                .frame(height: 44)
             }
 
             Spacer()
