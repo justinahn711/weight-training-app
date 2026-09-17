@@ -324,6 +324,14 @@ private struct DayCell: View {
                 .font(.footnote.weight(day == nil ? .regular : .semibold))
                 .foregroundStyle(day == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
             if let day {
+                // Deliberately fixed rather than Dynamic Type-aware (a
+                // platform audit's lowest-priority finding): this sits
+                // inside a fixed 44pt grid cell shared by a whole week's row,
+                // and letting it grow risks clipping or breaking that row's
+                // height at a larger reading size. It is decorative besides
+                // — the cell's own accessibility label already states the
+                // day kind in full, so nothing is lost if this letter stays
+                // small.
                 Text(initial(for: day))
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white.opacity(0.85))
