@@ -141,8 +141,21 @@ final class SessionViewModel {
     /// `isWarmup: true` — only `Extra warmup` sends this — skips that check
     /// entirely and always logs the values on screen as an unplanned
     /// warmup, ramp or no ramp, exactly as it did before this change.
+    /// Whether the standing values describe a set that can honestly be
+    /// written.
+    ///
+    /// A cold-start lift on unmeasured equipment opens at `Load.zero`, and a
+    /// single tap used to write "0 lb × 10" into history — where it then
+    /// feeds targets, volume and records. Zero is a number, not an absence,
+    /// so "unknown means silent" requires refusing it rather than logging
+    /// it. Bodyweight lifts are the one place a zero added load is real.
+    var canLogSet: Bool {
+        guard let current else { return false }
+        return pendingLoad > .zero || current.exercise.equipment == .bodyweight
+    }
+
     func logSet(isWarmup: Bool = false) {
-        guard let current else { return }
+        guard let current, canLogSet else { return }
         if !isWarmup, isOnActiveWarmupRung, let rung = nextWarmupRung {
             logWarmup(rung)
             return
@@ -193,6 +206,9 @@ final class SessionViewModel {
             session.log(record)
             recentlyLoggedSet = record
             liveLogActionID = UUID()
+            // Logging on the lift the session moved to is the "next action"
+            // the moved-on notice waits for; it has done its job.
+            autoAdvancedFrom = nil
             // Judged against previous days, not earlier today: feeling out
             // a new lift across three sets is one session, not three
             // records. The digest's weekly view keeps the engine's own
@@ -315,10 +331,6 @@ final class SessionViewModel {
     func undoAutoAdvance() {
         guard let from = autoAdvancedFrom else { return }
         select(exerciseID: from.id)
-    }
-
-    func dismissAutoAdvanceNotice() {
-        autoAdvancedFrom = nil
     }
 
     private func performPendingAdvance() {

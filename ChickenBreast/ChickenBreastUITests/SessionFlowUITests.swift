@@ -42,6 +42,14 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
         let logSet = app.buttons["Log Set"]
         XCTAssertTrue(logSet.waitForExistence(timeout: 5), "Log Set must be reachable by name")
+        // A cold-start lift opens with no weight set, and Log Set refuses a
+        // zero load rather than writing "0 lb" into history.
+        if !logSet.isEnabled {
+            let heavier = app.buttons["session.weight.increment"]
+            XCTAssertTrue(heavier.waitForExistence(timeout: 5))
+            heavier.tap()
+        }
+        XCTAssertTrue(logSet.isEnabled, "Log Set should be available once a weight is set")
         logSet.tap()
 
         let undo = app.buttons["Undo"]
@@ -54,12 +62,12 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
     /// above a full-width Next exercise / Finish workout row (#177). #207
     /// folded navigation back into a single row to give the set rows more
     /// of the screen (#205): Back now sits at the row's leading edge, Next
-    /// (or Finish) at the trailing edge, with Extra warmup and two flexible
+    /// (or Finish) at the trailing edge, with the More menu and two flexible
     /// spacers between them. This test used to check that Back sat entirely
     /// above Next; that invariant no longer holds by construction now that
     /// they share a row, so it's replaced with the horizontal equivalent —
     /// opposite ends of the row, with a third control's width of empty space
-    /// and Extra warmup actually between them, so a thumb sliding from one
+    /// and the More menu actually between them, so a thumb sliding from one
     /// has to cross both before it could land on the other.
     func testBackAndNextExerciseAreSeparated() throws {
         let app = launch()
@@ -69,7 +77,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let next = app.buttons["session.exercise.next"]
         let back = app.buttons["session.exercise.previous"]
         let finish = app.buttons["session.finish.footer"]
-        let warmup = app.buttons["session.log-warmup"]
+        let warmup = app.buttons["session.more"]
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
@@ -97,14 +105,14 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
         // Same row now, opposite ends: Back leads, Next trails, and Extra
         // warmup sits physically in between both of them — a thumb sliding
-        // from Back to Next has to cross Extra warmup's frame to get there.
+        // from Back to Next has to cross the More menu's frame to get there.
         XCTAssertLessThanOrEqual(
             back.frame.maxX, warmup.frame.minX,
-            "Back should sit entirely left of Extra warmup"
+            "Previous lift should sit entirely left of More"
         )
         XCTAssertLessThanOrEqual(
             warmup.frame.maxX, next.frame.minX,
-            "Extra warmup should sit entirely left of Next exercise"
+            "More should sit entirely left of Next exercise"
         )
     }
 
@@ -119,7 +127,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
         let next = app.buttons["session.exercise.next"]
         let finish = app.buttons["session.finish.footer"]
-        let warmup = app.buttons["session.log-warmup"]
+        let warmup = app.buttons["session.more"]
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
@@ -146,11 +154,11 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         XCTAssertTrue(warmup.waitForExistence(timeout: 5))
         XCTAssertLessThanOrEqual(
             back.frame.maxX, warmup.frame.minX,
-            "Back should sit entirely left of Extra warmup"
+            "Previous lift should sit entirely left of More"
         )
         XCTAssertLessThanOrEqual(
             warmup.frame.maxX, finish.frame.minX,
-            "Extra warmup should sit entirely left of the footer's Finish workout"
+            "More should sit entirely left of the footer's Finish workout"
         )
     }
 
@@ -173,11 +181,14 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let repsValue = app.buttons["session.reps.value"]
         let repsPlus = app.buttons["session.reps.increment"]
         let rpeMinus = app.buttons["session.rpe.decrement"]
-        let rpeValue = app.buttons["session.rpe.value"]
+        let rpeValue = app.descendants(matching: .any)["session.rpe.value"]
         let rpePlus = app.buttons["session.rpe.increment"]
 
         // No disclosure to open first — every control exists immediately.
-        for control in [repsMinus, repsValue, repsPlus, rpeMinus, rpeValue, rpePlus] {
+        // The RPE value is plain text now, not a control, so it only has to
+        // exist; the tap-target floor applies to what can be tapped.
+        XCTAssertTrue(rpeValue.waitForExistence(timeout: 5))
+        for control in [repsMinus, repsValue, repsPlus, rpeMinus, rpePlus] {
             XCTAssertTrue(control.waitForExistence(timeout: 5))
             XCTAssertGreaterThanOrEqual(control.frame.width, 44)
             XCTAssertGreaterThanOrEqual(control.frame.height, 44)
@@ -201,7 +212,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         let app = launch(arguments: [
             "-UIPreferredContentSizeCategoryName",
-            "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+            "UICTContentSizeCategoryAccessibilityXXXL",
         ])
         try openPushDay(app)
         startSessionIfPreviewed(app)
@@ -260,7 +271,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let next = app.buttons["session.exercise.next"]
         let back = app.buttons["session.exercise.previous"]
         let finish = app.buttons["session.finish.footer"]
-        let warmup = app.buttons["session.log-warmup"]
+        let warmup = app.buttons["session.more"]
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
@@ -291,11 +302,11 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         // horizontal now rather than row-based.
         XCTAssertLessThanOrEqual(
             back.frame.maxX, warmup.frame.minX,
-            "Back should sit entirely left of Extra warmup"
+            "Previous lift should sit entirely left of More"
         )
         XCTAssertLessThanOrEqual(
             warmup.frame.maxX, next.frame.minX,
-            "Extra warmup should sit entirely left of Next exercise"
+            "More should sit entirely left of Next exercise"
         )
     }
 

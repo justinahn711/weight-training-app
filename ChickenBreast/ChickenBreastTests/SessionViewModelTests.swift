@@ -193,6 +193,15 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertNil(vm.autoAdvancedFrom)
     }
 
+    func test_movedOnNotice_staysUntilTheFirstSetOnTheNewLift() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        vm.restDidComplete()
+        XCTAssertEqual(vm.autoAdvancedFrom?.exercise.name, "First")
+        vm.logSet()
+        XCTAssertNil(vm.autoAdvancedFrom, "logging on the new lift is the action the notice waits for")
+    }
+
     func test_restDidComplete_doesNothingWhenNothingIsArmed() throws {
         let vm = try autoAdvanceViewModel(lastSets: 2)
         vm.logSet()
@@ -214,6 +223,50 @@ final class SessionViewModelTests: XCTestCase {
         vm.advance()
         XCTAssertNil(vm.pendingAdvance)
         XCTAssertNil(vm.autoAdvancedFrom, "a move the lifter made needs no way back offered")
+    }
+
+    // MARK: - Zero load is not a set (critique: unknown means silent)
+
+    private func coldStartViewModel(equipment: Equipment) throws -> SessionViewModel {
+        let lift = Exercise(
+            name: "Cold \(equipment.rawValue)",
+            muscles: [.primary(.chest)],
+            equipment: equipment,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        return try makeViewModel(sessionExercises: [SessionExercise(
+            exercise: lift,
+            prescription: Prescription(load: nil, reps: 10, rpe: .eight)
+        )])
+    }
+
+    func test_canLogSet_falseForAColdStartDumbbellAtZero() throws {
+        let vm = try coldStartViewModel(equipment: .dumbbell)
+        XCTAssertEqual(vm.pendingLoad, .zero, "sanity: a cold-start dumbbell opens at zero")
+        XCTAssertFalse(vm.canLogSet)
+    }
+
+    func test_logSet_atZeroOnLoadedEquipment_writesNothing() throws {
+        let vm = try coldStartViewModel(equipment: .machineStack)
+        vm.logSet()
+        vm.logSet(isWarmup: true)
+        XCTAssertTrue(vm.session.current?.loggedSets.isEmpty ?? false,
+                      "a tap on a zero load must not write 0 lb into history")
+        XCTAssertNil(vm.recentlyLoggedSet)
+    }
+
+    func test_canLogSet_trueOnceAWeightIsSet() throws {
+        let vm = try coldStartViewModel(equipment: .dumbbell)
+        vm.pendingLoad = Load(20)
+        XCTAssertTrue(vm.canLogSet)
+        vm.logSet()
+        XCTAssertEqual(vm.session.current?.loggedSets.count, 1)
+    }
+
+    func test_canLogSet_trueForBodyweightAtZeroAddedLoad() throws {
+        let vm = try coldStartViewModel(equipment: .bodyweight)
+        vm.pendingLoad = .zero
+        XCTAssertTrue(vm.canLogSet, "zero added load is a real bodyweight set")
     }
 
     // MARK: - Records at log time
