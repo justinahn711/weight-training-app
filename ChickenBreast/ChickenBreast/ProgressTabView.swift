@@ -25,7 +25,13 @@ struct ProgressTabView: View {
         Group {
             if hasAnything {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    // Lazy at the top level and again inside `liftsSection`
+                    // (task: platform audit, performance) — the four cards
+                    // here are fixed, but the lift list below scales with
+                    // the exercise library, which an eager `VStack` would
+                    // build in full on first render regardless of how much
+                    // of it is ever scrolled to.
+                    LazyVStack(alignment: .leading, spacing: 20) {
                         if let summary {
                             WeeklyRingsCard(summary: summary, consistency: consistency)
                         }
@@ -49,7 +55,7 @@ struct ProgressTabView: View {
     }
 
     private var liftsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        LazyVStack(alignment: .leading, spacing: 12) {
             ForEach(groups, id: \.title) { group in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(group.title)
@@ -57,7 +63,7 @@ struct ProgressTabView: View {
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
                         .padding(.horizontal, 4)
-                    VStack(spacing: 0) {
+                    LazyVStack(spacing: 0) {
                         ForEach(group.trends) { trend in
                             NavigationLink {
                                 TrendDetailView(trend: trend)
