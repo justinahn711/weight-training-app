@@ -1317,7 +1317,7 @@ private struct SetRow: View {
             if isRecord {
                 Text("PR")
                     .font(.caption.weight(.heavy))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(Theme.recordText)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Theme.record, in: Capsule())
@@ -1713,6 +1713,7 @@ private struct RestBanner: View {
     /// What the buzz did, once it has done it. See `RestAlertReport`.
     @State private var report: RestAlertReport?
 
+
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
             let done = rest.isComplete(at: context.date)
@@ -1733,6 +1734,16 @@ private struct RestBanner: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
+                    // Fixed rather than `@ScaledMetric` (a platform audit's
+                    // P3, tried and reverted): scaling this relative to
+                    // `.largeTitle` measured 22pt taller even at the
+                    // system's own default category, which pushed the
+                    // action bar over the #205 340pt ceiling before any
+                    // Dynamic Type setting was touched. `minimumScaleFactor`
+                    // below already keeps this from clipping when the
+                    // surrounding text grows; growing it too costs more
+                    // than the audit's own "polish, low real-world impact"
+                    // rating for this finding was worth chasing further.
                     Text(rest.displayTime(at: context.date))
                         .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(done ? Theme.done : Color.primary)

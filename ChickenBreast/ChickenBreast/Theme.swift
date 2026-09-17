@@ -23,6 +23,14 @@ enum Theme {
     /// mid-session can only mean one thing.
     static let record = Color(red: 1.0, green: 0.8, blue: 0.24)
 
+    /// Text set on `record`. Fixed black rather than a semantic label color:
+    /// `record` is itself a fixed brand color, not a system one, so there is
+    /// no adaptive counterpart to derive a matching text color from — and
+    /// black clears contrast against this particular gold by a wide margin.
+    /// Named here rather than left as a bare `.black` at the call site, so
+    /// it reads as a decision, not an oversight.
+    static let recordText = Color.black
+
     /// A set logged, a rest complete: the thing you were doing is done.
     static let done = Color.green
 
