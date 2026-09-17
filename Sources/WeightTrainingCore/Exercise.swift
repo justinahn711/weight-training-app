@@ -124,7 +124,11 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
         muscles.filter { $0.role == .primary }.map(\.muscle)
     }
 
-    /// Volume credit one hard set of this exercise gives a muscle.
+    /// Muscle-credit volume one hard set of this exercise gives a muscle: 1.0
+    /// for a primary mover, 0.5 for a secondary one, 0 if it isn't trained at
+    /// all. This is weighted on purpose — it's what the volume guard runs on
+    /// — so it is never the right number for a literal "how many sets did I
+    /// do" headline (#214); see `VolumeReport.hardSetCount` for that.
     public func volumeContribution(to muscle: Muscle) -> Double {
         muscles.first { $0.muscle == muscle }?.role.volumeWeight ?? 0
     }

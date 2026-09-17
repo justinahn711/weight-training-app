@@ -18,7 +18,7 @@ struct ProgressTabView: View {
     let consistency: WeeklyConsistency
 
     private var hasAnything: Bool {
-        !trends.isEmpty || weekly.contains { $0.total > 0 }
+        !trends.isEmpty || weekly.contains { $0.hardSetCount > 0 }
     }
 
     var body: some View {
@@ -130,8 +130,18 @@ private struct WeeklyRingsCard: View {
     let summary: WeeklySummary
     let consistency: WeeklyConsistency
 
+    /// The one window name every ring below answers for (#214). Sourced from
+    /// the summary itself rather than hard-coded, so this label can never say
+    /// something the rings' own math doesn't back up.
+    private var windowLabel: String { "Last \(summary.windowDays) days" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            Text(windowLabel)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
             HStack(alignment: .center, spacing: 20) {
                 ActivityRings(rings: [
                     .init(progress: summary.sessionProgress, color: RingPalette.sessions),
@@ -144,6 +154,9 @@ private struct WeeklyRingsCard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     legend(RingPalette.sessions, "Sessions",
                            "\(summary.sessions) of \(summary.sessionTarget)")
+                    // Literal, not muscle-credited: one logged hard set reads
+                    // as one here (#214). `MuscleVolume.sets`, reachable from
+                    // the muscle detail screen, is the weighted number.
                     legend(RingPalette.sets, "Hard sets", setsLine,
                            note: summary.usualHardSets == nil ? "usual after a week" : nil)
                     legend(RingPalette.muscles, "Muscles fed",
@@ -160,7 +173,7 @@ private struct WeeklyRingsCard: View {
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "This week: \(summary.sessions) of \(summary.sessionTarget) sessions, "
+            "\(windowLabel): \(summary.sessions) of \(summary.sessionTarget) sessions, "
             + "\(setsLine) hard sets, \(summary.musclesOnTarget) of \(summary.muscleCount) muscles fed. "
             + streakLine
         )
@@ -187,7 +200,7 @@ private struct WeeklyRingsCard: View {
     }
 
     private var setsLine: String {
-        let sets = Self.count(summary.hardSets)
+        let sets = "\(summary.hardSets)"
         guard let usual = summary.usualHardSets else { return sets }
         return "\(sets) of usual \(Self.count(usual))"
     }
@@ -247,8 +260,20 @@ private struct VolumeChartCard: View {
 
     private var calendar: Calendar { .current }
 
+    /// Whether the "All" chip is selected, so every value on the card is a
+    /// literal count of hard sets logged that week — no muscle can double-
+    /// count a set here, because none is singled out (#214).
+    private var isLiteral: Bool { region == nil }
+
+    /// Literal hard-set counts with "All" selected; muscle-credit volume in
+    /// one region otherwise. The two are never mixed on one bar — picking a
+    /// region is what turns "count" into "credit", because a set that trains
+    /// two regions has no honest literal total to give just one of them.
     private var points: [(week: Date, sets: Double)] {
-        weekly.map { ($0.weekStart, $0.sets(in: region)) }
+        weekly.map { point in
+            let sets = isLiteral ? Double(point.hardSetCount) : point.muscleCredit(in: region)
+            return (point.weekStart, sets)
+        }
     }
 
     /// The mean of completed weeks with something in them. The current week
@@ -266,10 +291,14 @@ private struct VolumeChartCard: View {
         }
     }
 
+    private var title: String {
+        isLiteral ? "Hard sets per week" : "\(region!.displayName) volume per week"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Hard sets per week")
+                Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
@@ -280,6 +309,15 @@ private struct VolumeChartCard: View {
                     Text(headlineCaption)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                }
+                // A region total is muscle-credit volume, not a literal set
+                // count — a bench press can count toward both chest and
+                // arms. Said here so filtering never makes a weighted number
+                // look like it was counted on fingers (#214).
+                if !isLiteral {
+                    Text("Secondary muscle work counts as half a set")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -320,7 +358,11 @@ private struct VolumeChartCard: View {
                 .opacity(point.week == points.last?.week ? 0.45 : 1)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .accessibilityLabel(point.week.formatted(.dateTime.month(.abbreviated).day()))
-                .accessibilityValue("\(Self.count(point.sets)) hard sets")
+                .accessibilityValue(
+                    isLiteral
+                        ? "\(Self.count(point.sets)) hard sets"
+                        : "\(Self.count(point.sets)) credited sets"
+                )
             }
 
             if let average {

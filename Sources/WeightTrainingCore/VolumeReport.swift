@@ -71,10 +71,22 @@ public struct VolumeReport: Hashable, Sendable {
     public let from: Date
     public let to: Date
 
-    public init(muscles: [MuscleVolume], from: Date, to: Date) {
+    /// Literal count of hard sets logged in `from...to` — every set counted
+    /// once, independent of which or how many muscles it trained.
+    ///
+    /// `MuscleVolume.sets` is muscle-credit volume: a compound lift adds a
+    /// full set to its primary mover and a half set to each secondary one, so
+    /// summing it double-counts a single logged set on purpose (that's what
+    /// makes the starved/on-target guard work). This field is the other
+    /// number — the one a lifter would get by counting on their fingers — so
+    /// a headline built from it never needs the word "credited" (#214).
+    public let hardSetCount: Int
+
+    public init(muscles: [MuscleVolume], from: Date, to: Date, hardSetCount: Int = 0) {
         self.muscles = muscles
         self.from = from
         self.to = to
+        self.hardSetCount = hardSetCount
     }
 
     public var starved: [MuscleVolume] { muscles.filter { $0.standing == .starved } }
@@ -98,7 +110,12 @@ public struct VolumeReport: Hashable, Sendable {
         let byID = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
 
         var totals: [Muscle: Double] = [:]
+        var hardSetCount = 0
         for set in history where set.isHardSet && set.performedAt >= from && set.performedAt <= now {
+            // Counted here, before the exercise lookup below: a literal hard
+            // set is a fact about what was logged, not about whether its
+            // muscle tags could be resolved (#214).
+            hardSetCount += 1
             guard let exercise = byID[set.exerciseID] else { continue }
             for involvement in exercise.muscles {
                 totals[involvement.muscle, default: 0] += involvement.role.volumeWeight
@@ -116,6 +133,6 @@ public struct VolumeReport: Hashable, Sendable {
             )
         }
 
-        return VolumeReport(muscles: muscles, from: from, to: now)
+        return VolumeReport(muscles: muscles, from: from, to: now, hardSetCount: hardSetCount)
     }
 }
