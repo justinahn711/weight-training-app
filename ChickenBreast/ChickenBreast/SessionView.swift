@@ -144,6 +144,8 @@ struct SessionView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             model.reconcileLiveActivityActions()
+            // Coming back to a clock that ran out while the app was away.
+            withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.expireRestIfNeeded() }
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -404,7 +406,8 @@ struct SessionView: View {
             RestBanner(
                 rest: rest,
                 onSkip: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.skipRest() } },
-                onComplete: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.restDidComplete() } }
+                onComplete: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.restDidComplete() } },
+                onExpire: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.expireRestIfNeeded() } }
             )
             .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
         }
@@ -1821,6 +1824,8 @@ private struct RestBanner: View {
     /// end of a rest from here. Fires immediately for a rest that was
     /// already over when the banner appeared (a reconciled relaunch).
     var onComplete: () -> Void = {}
+    /// Fired once the count-up reaches `RestTimer.maximumOverrun`.
+    var onExpire: () -> Void = {}
 
     @AppStorage(RestAlertSettings.timingKey) private var showsTiming = RestAlertSettings.timingDefault
 
@@ -1905,9 +1910,14 @@ private struct RestBanner: View {
         // every rest, set-anchored or not, and still cancels when a set is
         // undone or the rest is skipped — the view goes away with it either way.
         .task(id: rest) {
+            if rest.hasExpired(at: Date()) {
+                onExpire()
+                return
+            }
             let deadline = rest.endsAt
             guard deadline.timeIntervalSinceNow > 0 else {
                 onComplete()
+                await waitForExpiry()
                 return
             }
 
@@ -1965,6 +1975,7 @@ private struct RestBanner: View {
             let lateness = Date().timeIntervalSince(deadline)
             guard lateness < 10 else {
                 report = RestAlertReport(lateness: lateness, call: nil, held: true)
+                await waitForExpiry()
                 return
             }
 
@@ -1980,7 +1991,23 @@ private struct RestBanner: View {
                 call: ContinuousClock.now - began,
                 held: false
             )
+
+            await waitForExpiry()
         }
+    }
+
+    /// Sleeps until the clock has counted ten minutes past its target, then
+    /// hands back to the model, which stops it. Halved sleeps for the same
+    /// reason the countdown above uses them: a single long sleep drifts.
+    private func waitForExpiry() async {
+        while true {
+            let remaining = rest.expiresAt.timeIntervalSinceNow
+            guard remaining > 0 else { break }
+            let step = remaining > 1 ? remaining / 2 : remaining
+            try? await Task.sleep(for: .seconds(step), tolerance: .zero)
+            guard !Task.isCancelled else { return }
+        }
+        onExpire()
     }
 }
 

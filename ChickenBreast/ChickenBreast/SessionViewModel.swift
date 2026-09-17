@@ -312,6 +312,18 @@ final class SessionViewModel {
         publishActivity()
     }
 
+    /// Stops a clock that has counted `RestTimer.maximumOverrun` past its
+    /// target. The set stays logged and the session doesn't move; only the
+    /// clock and its lock-screen face give up, because ten minutes over is a
+    /// phone on a bench rather than a rest anybody is taking. The check-in
+    /// notification scheduled alongside the rest is what asks about it.
+    func expireRestIfNeeded(now: Date = Date()) {
+        guard let rest, rest.hasExpired(at: now) else { return }
+        self.rest = nil
+        RestNotification.cancel()
+        publishActivity()
+    }
+
     /// Called by the rest banner's clock when the countdown reaches zero.
     /// Moves on if a move was armed for the lift still on screen.
     func restDidComplete() {

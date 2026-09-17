@@ -225,6 +225,30 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertNil(vm.autoAdvancedFrom, "a move the lifter made needs no way back offered")
     }
 
+    // MARK: - The rest clock gives up ten minutes past target
+
+    func test_expireRestIfNeeded_clearsAClockTenMinutesPastTarget() throws {
+        let vm = try makeViewModel()
+        vm.pendingLoad = Load(135)
+        vm.setPendingReps(5)
+        vm.logSet()
+        let rest = try XCTUnwrap(vm.rest, "logging a working set starts a rest")
+
+        vm.expireRestIfNeeded(now: rest.endsAt.addingTimeInterval(599))
+        XCTAssertNotNil(vm.rest, "still inside the overrun the clock keeps counting")
+
+        vm.expireRestIfNeeded(now: rest.expiresAt)
+        XCTAssertNil(vm.rest)
+        XCTAssertNotNil(vm.recentlyLoggedSet, "the set stays logged; only the clock gives up")
+        XCTAssertEqual(vm.current?.loggedSets.count, 1)
+    }
+
+    func test_expireRestIfNeeded_doesNothingWithoutARest() throws {
+        let vm = try makeViewModel()
+        vm.expireRestIfNeeded(now: Date().addingTimeInterval(100_000))
+        XCTAssertNil(vm.rest)
+    }
+
     // MARK: - Zero load is not a set (critique: unknown means silent)
 
     private func coldStartViewModel(equipment: Equipment) throws -> SessionViewModel {

@@ -50,6 +50,23 @@ public struct RestTimer: Hashable, Sendable {
         now >= endsAt
     }
 
+    /// How long the count-up runs past the target before the clock gives up.
+    ///
+    /// Rest running long is information (see `overrun`), but a clock counting
+    /// into a second hour is not: it means the phone was put down, not that
+    /// anyone is resting. Ten minutes is past any real rest and short enough
+    /// that a forgotten session stops claiming to be one.
+    public static let maximumOverrun: TimeInterval = 600
+
+    /// When the clock stops counting and the rest is treated as abandoned.
+    public var expiresAt: Date {
+        endsAt.addingTimeInterval(RestTimer.maximumOverrun)
+    }
+
+    public func hasExpired(at now: Date) -> Bool {
+        now >= expiresAt
+    }
+
     /// `2:30`, or `+0:45` once the target has passed.
     public func displayTime(at now: Date) -> String {
         let complete = isComplete(at: now)
