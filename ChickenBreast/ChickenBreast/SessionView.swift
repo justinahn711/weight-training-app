@@ -267,6 +267,7 @@ struct SessionView: View {
     /// status changes move into the document so logging controls never jump.
     private func stackedLayout(_ exercise: SessionExercise, height: CGFloat, isCompact: Bool) -> some View {
         VStack(spacing: 0) {
+            restBar
             contextScroll(exercise, isCompact: isCompact, includesStatus: isCompact)
             if !isCompact {
                 statusBanners
@@ -295,6 +296,13 @@ struct SessionView: View {
     /// competing vertically. Rest, voice, and undo live on the left; their
     /// transitions cannot move any control on the right.
     private func landscapeLayout(_ exercise: SessionExercise, size: CGSize) -> some View {
+        VStack(spacing: 0) {
+            restBar
+            landscapeColumns(exercise, size: size)
+        }
+    }
+
+    private func landscapeColumns(_ exercise: SessionExercise, size: CGSize) -> some View {
         HStack(spacing: 0) {
             contextScroll(exercise, isCompact: true, includesStatus: true)
                 .frame(width: min(size.width * 0.48, max(280, size.width * 0.42)))
@@ -361,6 +369,28 @@ struct SessionView: View {
         }
     }
 
+    /// The rest clock, pinned under the navigation bar rather than sitting in
+    /// the banner stack above the action bar.
+    ///
+    /// It is glanced at, not operated: one look says how long is left, and the
+    /// only control on it is Skip. Pinning it keeps it in the same place
+    /// whatever else is on screen, and hands the middle of the screen back to
+    /// the set rows — the space #205 was trying to reclaim. It is the in-app
+    /// twin of the Dynamic Island's compact clock, which iOS hides while this
+    /// app is in the foreground.
+    @ViewBuilder
+    private var restBar: some View {
+        if let rest = model.rest {
+            RestBanner(
+                rest: rest,
+                onSkip: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.skipRest() } },
+                onComplete: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.restDidComplete() } },
+                onExpire: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.expireRestIfNeeded() } }
+            )
+            .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
+        }
+    }
+
     @ViewBuilder
     private var statusBanners: some View {
         // `heard` and `rest` are independent optionals on the model — a rest
@@ -399,15 +429,6 @@ struct SessionView: View {
             AutoAdvancedBanner(
                 from: from,
                 onBack: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoAutoAdvance() } }
-            )
-            .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
-        }
-        if let rest = model.rest {
-            RestBanner(
-                rest: rest,
-                onSkip: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.skipRest() } },
-                onComplete: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.restDidComplete() } },
-                onExpire: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.expireRestIfNeeded() } }
             )
             .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
         }
@@ -1836,21 +1857,21 @@ private struct RestBanner: View {
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
             let done = rest.isComplete(at: context.date)
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 ZStack {
                     Circle()
-                        .stroke(.quaternary, lineWidth: 6)
+                        .stroke(.quaternary, lineWidth: 3)
                     Circle()
                         .trim(from: 0, to: rest.progress(at: context.date))
                         .stroke(done ? Theme.done : Color.accentColor,
-                                style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                                style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
-                .frame(width: 44, height: 44)
+                .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 0) {
                     Text(done ? "Rest complete" : "Resting")
-                        .font(.caption.weight(.semibold))
+                        .font(.caption2.weight(.semibold))
                         // At accessibility sizes this hyphenated to "REST-".
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
@@ -1867,7 +1888,7 @@ private struct RestBanner: View {
                     // than the audit's own "polish, low real-world impact"
                     // rating for this finding was worth chasing further.
                     Text(rest.displayTime(at: context.date))
-                        .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                        .font(.title2.weight(.bold).monospacedDigit())
                         .foregroundStyle(done ? Theme.done : Color.primary)
                         .contentTransition(.numericText())
 
@@ -1887,11 +1908,11 @@ private struct RestBanner: View {
                     .font(.body.weight(.semibold))
                     .buttonStyle(.bordered)
                     .tint(Theme.quietTint)
-                    .controlSize(.large)
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(.fill.tertiary)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.bar)
         }
         // Waits for the clock rather than watching the view.
         //
