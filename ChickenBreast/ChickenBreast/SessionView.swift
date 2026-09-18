@@ -1713,6 +1713,13 @@ private struct RestBanner: View {
     /// What the buzz did, once it has done it. See `RestAlertReport`.
     @State private var report: RestAlertReport?
 
+    /// Continuous, not circular — the corner Apple's own system surfaces use
+    /// (widgets, the Dynamic Island, a Live Activity). A `RoundedRectangle`'s
+    /// default corner reads as a UIKit card from a decade ago sitting next to
+    /// them; `.continuous` is the one-word difference.
+    private var cardShape: some Shape {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+    }
 
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
@@ -1730,10 +1737,17 @@ private struct RestBanner: View {
                 .frame(width: 44, height: 44)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(done ? "Rest complete" : "Resting")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
+                    // The same `timer` glyph `StartRestControl` shows for the
+                    // empty state, so the two states of one slot read as one
+                    // control rather than two unrelated pieces of UI.
+                    Label {
+                        Text(done ? "Rest complete" : "Resting")
+                            .textCase(.uppercase)
+                    } icon: {
+                        Image(systemName: done ? "checkmark.circle.fill" : "timer")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                     // Fixed rather than `@ScaledMetric` (a platform audit's
                     // P3, tried and reverted): scaling this relative to
                     // `.largeTitle` measured 22pt taller even at the
@@ -1763,8 +1777,25 @@ private struct RestBanner: View {
                     .buttonStyle(.bordered)
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(.fill.tertiary)
+            .padding(.vertical, 14)
+            // `.ultraThinMaterial`, not a flat fill: a running timer is
+            // exactly the transient, glanceable surface Apple's own material
+            // vocabulary is for (a widget, a Live Activity, a notification).
+            // This SDK only ships Liquid Glass as `.glass`/`.glassProminent`
+            // button styles, not a general background modifier — checked
+            // against the installed SwiftUI.swiftinterface rather than
+            // assumed, since guessing a symbol that doesn't exist here would
+            // have failed to build, not silently degraded.
+            .background(.ultraThinMaterial, in: cardShape)
+            .clipShape(cardShape)
+            // Floating, not edge-to-edge: the one thing that read as "not a
+            // native card" before anything else changed. In regular portrait
+            // this sat flush with both screen edges while every other piece
+            // of content on the screen kept a 20pt margin — the flat run of
+            // colour from bezel to bezel was the single biggest tell that it
+            // was a status bar bolted on rather than a card belonging to the
+            // rest of the screen.
+            .padding(.horizontal, 20)
         }
         // Waits for the clock rather than watching the view.
         //
