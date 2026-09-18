@@ -348,10 +348,13 @@ final class SessionViewModel {
     private func performPendingAdvance() {
         guard let next = pendingAdvance else { return }
         let from = current
-        // A completed rest has nothing left to say on the next lift; a live
-        // one (skip) has already been dismissed by its caller.
-        rest = nil
-        RestNotification.cancel()
+        // The clock is deliberately left running. It measures time since the
+        // last set, not time owed to one lift, so moving on doesn't end it —
+        // it keeps counting up on the new lift, on screen and in the Dynamic
+        // Island, until the next set replaces it, Skip ends it, or
+        // `expireRestIfNeeded` gives up at ten minutes past target. A caller
+        // that means "I'm done resting" (Skip, and the Next-up card's Go)
+        // clears it before calling this.
         select(exerciseID: next.id)
         // `select` cleared it via `didChangeCurrentExercise`; the notice is
         // set after, so it survives into the new exercise on purpose.

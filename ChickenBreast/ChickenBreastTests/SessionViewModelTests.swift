@@ -184,7 +184,7 @@ final class SessionViewModelTests: XCTestCase {
         vm.restDidComplete()
         XCTAssertEqual(vm.current?.exercise.name, "Second")
         XCTAssertNil(vm.pendingAdvance)
-        XCTAssertNil(vm.rest, "a finished rest has nothing to say on the next lift")
+        XCTAssertNotNil(vm.rest, "the clock measures time since the last set, so the move doesn't end it")
         XCTAssertEqual(vm.autoAdvancedFrom?.exercise.name, "First")
         XCTAssertNil(vm.recentlyLoggedSet, "the undo offer belongs to the lift just left (#169)")
 
@@ -200,6 +200,27 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.autoAdvancedFrom?.exercise.name, "First")
         vm.logSet()
         XCTAssertNil(vm.autoAdvancedFrom, "logging on the new lift is the action the notice waits for")
+    }
+
+    func test_restDidComplete_keepsTheSameClockRunningOnTheNewLift() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        let before = try XCTUnwrap(vm.rest)
+        vm.restDidComplete()
+        XCTAssertEqual(vm.rest?.startedAt, before.startedAt, "same clock, not a fresh one")
+        XCTAssertEqual(vm.rest?.setID, before.setID, "still anchored to the set that started it")
+
+        // And the next set on the new lift replaces it.
+        vm.logSet()
+        XCTAssertNotEqual(vm.rest?.startedAt, before.startedAt)
+    }
+
+    func test_skipRest_whileArmed_endsTheClockBecauseSkipMeansRested() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        vm.skipRest()
+        XCTAssertEqual(vm.current?.exercise.name, "Second")
+        XCTAssertNil(vm.rest, "Skip and Go both mean \"I'm rested\", unlike the clock simply running out")
     }
 
     func test_restDidComplete_doesNothingWhenNothingIsArmed() throws {
