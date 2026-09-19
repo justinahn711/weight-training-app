@@ -144,7 +144,7 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 Image(systemName: starved ? "exclamationmark.triangle.fill" : "chart.bar")
                     .foregroundStyle(starved ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
-                Text(starved ? starvedSummary(volume) : "Volume this week")
+                Text(starved ? starvedSummary(volume) : "Muscle sets this week")
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if !starved {

@@ -234,7 +234,7 @@ struct SettingsView: View {
                 }
             } label: {
                 LabeledContent(
-                    "Muscle volume",
+                    "Weekly set targets",
                     value: gym.volumeBudgets.filter { !$0.isDefault }.isEmpty
                         ? "Defaults"
                         : "Customized"
@@ -459,14 +459,14 @@ private struct MuscleVolumeBudgetEditor: View {
                     .padding(.vertical, 4)
                 }
             } footer: {
-                Text("These are planning bands, not safety limits. Completed and accepted remaining sets both constrain a proposed set increase.")
+                Text("Targets use set credits over the last 7 days. A qualifying primary set counts as 1 and secondary work counts as 0.5. Warmups and reported RPE below 7 do not count; sets without RPE still count. These are planning bands, not safety limits.")
             }
 
             Section {
                 Button("Restore defaults") { budgets = MuscleSetBudget.defaults }
             }
         }
-        .navigationTitle("Muscle volume")
+        .navigationTitle("Weekly set targets")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {

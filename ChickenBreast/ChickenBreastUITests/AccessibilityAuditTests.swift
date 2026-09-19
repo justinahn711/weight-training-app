@@ -300,14 +300,14 @@ final class AccessibilityAuditTests: XCTestCase {
         XCTAssertTrue(volume.exists && volume.isHittable)
         volume.tap()
 
-        XCTAssertTrue(app.navigationBars["Muscle volume"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Weekly set targets"].waitForExistence(timeout: 5))
         let minimum = app.steppers["settings.volume.chest.minimum"]
         XCTAssertTrue(minimum.waitForExistence(timeout: 5) && minimum.isHittable)
         XCTAssertTrue(app.steppers["settings.volume.chest.maximum"].isHittable)
         XCTAssertTrue(app.buttons["settings.volume.save"].isHittable)
 
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Muscle volume budgets"
+        screenshot.name = "Weekly set targets"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }

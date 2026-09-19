@@ -50,7 +50,7 @@ struct VolumeView: View {
                 }
             }
         }
-        .navigationTitle("Last 7 days")
+        .navigationTitle("Muscle sets")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -72,7 +72,7 @@ private struct MuscleRow: View {
                 Text(volume.muscle.displayName)
                     .font(.body.weight(.medium))
                 Spacer()
-                Text(volume.displayLine)
+                Text("\(volume.displayLine) set credits")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
