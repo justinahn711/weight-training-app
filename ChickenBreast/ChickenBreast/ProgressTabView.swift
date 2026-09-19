@@ -121,14 +121,19 @@ private extension E1RMTrend {
 /// beside the rust accent, because orange sat next to it read as the same
 /// ring twice — and would to anyone with red–green colour vision.
 private enum RingPalette {
-    static let sessions = Color.accentColor
-    static let sets = Color.teal
-    static let muscles = Color.indigo
+    // The app's category colours, not the accent: a ring says which measure
+    // this is, the same job a day kind does on the calendar. Spending the
+    // action colour on one of them made the sessions ring look tappable.
+    static let sessions = Theme.categories[0]
+    static let sets = Theme.categories[1]
+    static let muscles = Theme.categories[2]
 }
 
 private struct WeeklyRingsCard: View {
     let summary: WeeklySummary
     let consistency: WeeklyConsistency
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// The one window name every ring below answers for (#214). Sourced from
     /// the summary itself rather than hard-coded, so this label can never say
@@ -142,7 +147,13 @@ private struct WeeklyRingsCard: View {
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
 
-            HStack(alignment: .center, spacing: 20) {
+            // The legend moves under the rings at accessibility sizes: beside
+            // them it had about half the width, and "Sessions" broke into
+            // "Ses-sions".
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+                : AnyLayout(HStackLayout(alignment: .center, spacing: 20))
+            layout {
                 ActivityRings(rings: [
                     .init(progress: summary.sessionProgress, color: RingPalette.sessions),
                     .init(progress: summary.setProgress ?? 0, color: RingPalette.sets),
@@ -353,7 +364,10 @@ private struct VolumeChartCard: View {
                     y: .value("Sets", point.sets),
                     width: .ratio(0.6)
                 )
-                .foregroundStyle(Color.accentColor)
+                // The colour the Hard sets ring already uses, because this
+                // chart is that same measure over time. The accent stays on
+                // things that can be tapped.
+                .foregroundStyle(RingPalette.sets)
                 // The week in progress is a partial bar, and reads as one.
                 .opacity(point.week == points.last?.week ? 0.45 : 1)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -490,10 +504,12 @@ private struct ConsistencyCard: View {
     private func fill(_ level: TrainingIntensity) -> AnyShapeStyle {
         switch level {
         case .none: return AnyShapeStyle(.fill.tertiary)
-        case .light: return AnyShapeStyle(Color.accentColor.opacity(0.3))
-        case .moderate: return AnyShapeStyle(Color.accentColor.opacity(0.55))
-        case .heavy: return AnyShapeStyle(Color.accentColor.opacity(0.8))
-        case .full: return AnyShapeStyle(Color.accentColor)
+        // One hue, light to dark — a sequential ramp for a magnitude, in the
+        // same colour as the sets chart above it, since both count sets.
+        case .light: return AnyShapeStyle(RingPalette.sets.opacity(0.32))
+        case .moderate: return AnyShapeStyle(RingPalette.sets.opacity(0.58))
+        case .heavy: return AnyShapeStyle(RingPalette.sets.opacity(0.8))
+        case .full: return AnyShapeStyle(RingPalette.sets)
         }
     }
 }
@@ -523,7 +539,7 @@ private struct RegionFilterRow: View {
         } label: {
             Text(title)
                 .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .foregroundStyle(isSelected ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.primary))
                 .padding(.horizontal, 12)
                 .frame(minHeight: 36)
                 .background(

@@ -139,12 +139,20 @@ struct HistoryView: View {
 private struct WeeklyStreakCard: View {
     let consistency: WeeklyConsistency
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack(spacing: 12) {
+        // Side by side while the words fit beside a 32pt glyph; stacked once
+        // they don't. At accessibility sizes the headline wrapped across the
+        // icon and sat on top of it.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
             Image(systemName: "calendar.badge.checkmark")
                 .font(.title2)
-                .foregroundStyle(.tint)
-                .frame(width: 32)
+                .foregroundStyle(.secondary)
+                .frame(width: 32, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -153,7 +161,7 @@ private struct WeeklyStreakCard: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
@@ -322,7 +330,14 @@ private struct DayCell: View {
         VStack(spacing: 2) {
             Text("\(Calendar.current.component(.day, from: date))")
                 .font(.footnote.weight(day == nil ? .regular : .semibold))
-                .foregroundStyle(day == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+                // The cell is a fixed 44pt square in a seven-column grid, so
+                // at accessibility sizes the digits have to shrink rather
+                // than overflow it.
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                // Dark on the fill, not white: white measured 2.97:1 on the
+                // teal, and these are 13pt digits.
+                .foregroundStyle(day == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.onCategory))
             if let day {
                 // Deliberately fixed rather than Dynamic Type-aware (a
                 // platform audit's lowest-priority finding): this sits
@@ -334,7 +349,7 @@ private struct DayCell: View {
                 // small.
                 Text(initial(for: day))
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(Theme.onCategory.opacity(0.8))
             }
         }
         .frame(maxWidth: .infinity)
@@ -359,9 +374,14 @@ private struct DayCell: View {
 
     private func tint(for day: TrainingDay) -> Color {
         switch day.kind {
-        case .push:  return .blue
-        case .pull:  return .green
-        case .legs:  return .orange
+        // Theme's own three category colours, so a day kind means the same
+        // kind of thing as a Progress ring does (#categorical, not status):
+        // the old trio borrowed `.green` from "done" and `.orange` from the
+        // action colour, so a Tuesday read as a finished set and a Friday as
+        // something to tap.
+        case .push:  return Theme.categories[0]
+        case .pull:  return Theme.categories[1]
+        case .legs:  return Theme.categories[2]
         case nil:    return .gray
         // `DayKind` stopped being a closed push/pull/legs enum in #136 so a
         // split could name upper/lower, full body, and custom days, and a
@@ -376,9 +396,11 @@ private struct DayCell: View {
 private struct Legend: View {
     var body: some View {
         HStack(spacing: 14) {
-            item(.blue, "Push")
-            item(.green, "Pull")
-            item(.orange, "Legs")
+            // The same three the squares use; a legend drifting from the
+            // thing it explains is worse than no legend.
+            item(Theme.categories[0], "Push")
+            item(Theme.categories[1], "Pull")
+            item(Theme.categories[2], "Legs")
             Spacer()
         }
         .font(.caption2)
