@@ -905,11 +905,18 @@ struct SessionView: View {
             } label: {
                 // The values on the button, so confirming them is the same
                 // glance as tapping: one look says "185 × 8, yes" and one tap
-                // logs it. `Log Set` stays the accessible name (the UI tests
-                // and VoiceOver both find it by that), the numbers are its
-                // value.
+                // logs it. The accessible NAME stays the literal string
+                // "Log Set" regardless of category — `SessionFlowUITests`
+                // and VoiceOver both find this control by that exact label,
+                // and changing it would break the lookup rather than the
+                // meaning. The visible headline and the accessibility VALUE
+                // are free to say more, and #211 is that they were not: while
+                // the form sits on an active warmup rung this button was
+                // going to log a warmup, silently, with no rest and no
+                // progression credit, and said "Log Set" right up to the tap
+                // — the exact confusion behind "why didn't rest start."
                 VStack(spacing: 0) {
-                    Text("Log Set")
+                    Text(model.isOnActiveWarmupRung ? "Log Warmup" : "Log Set")
                         .font(isCompact ? .title3.bold() : .title2.bold())
                     Text(logSetSummary)
                         .font(.subheadline.weight(.semibold).monospacedDigit())
@@ -920,10 +927,24 @@ struct SessionView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: isCompact ? 56 : 62)
             }
+            // Prominent either way — a warmup rung is still the thing to tap
+            // next, not a lesser action — but tinted down from the accent
+            // color while on one, so the difference registers on the glance
+            // before the label is even read. This is the same restraint
+            // Theme.swift asks of every colour choice: not a new hue, a
+            // reduction in the same one, and it only ever appears while the
+            // category is actually in question.
             .buttonStyle(.borderedProminent)
+            .tint(model.isOnActiveWarmupRung ? Color.secondary : Color.accentColor)
             .buttonBorderShape(.roundedRectangle(radius: 16))
             .accessibilityLabel("Log Set")
-            .accessibilityValue(logSetSummary)
+            // States the category VoiceOver-side, per #211's own criterion
+            // that the visible button and the accessibility value agree —
+            // the accessible NAME is intentionally NOT where that lives; see
+            // the comment above.
+            .accessibilityValue(
+                model.isOnActiveWarmupRung ? "Warmup, \(logSetSummary)" : logSetSummary
+            )
             .accessibilityIdentifier("session.log-set")
 
             // One row instead of two (#207). `Next exercise` used to be a
