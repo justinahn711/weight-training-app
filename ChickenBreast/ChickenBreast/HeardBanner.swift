@@ -30,7 +30,9 @@ struct HeardBanner: View {
             HStack(spacing: 12) {
                 Image(systemName: "waveform")
                     .font(.headline)
-                    .foregroundStyle(.tint)
+                    // Neutral: the accent belongs to the action being taken,
+                    // and this banner is reporting what was heard.
+                    .foregroundStyle(.secondary)
                     // Decorative — the values it sits beside already carry the
                     // meaning; a screen reader gains nothing from "waveform,
                     // image" ahead of them.
@@ -79,7 +81,7 @@ struct HeardBanner: View {
             ForEach(heard.rejections, id: \.self) { rejection in
                 Label(rejection, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.attention)
             }
 
             if heard.wasSnapped {

@@ -133,6 +133,8 @@ private struct WeeklyRingsCard: View {
     let summary: WeeklySummary
     let consistency: WeeklyConsistency
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     /// The one window name every ring below answers for (#214). Sourced from
     /// the summary itself rather than hard-coded, so this label can never say
     /// something the rings' own math doesn't back up.
@@ -145,7 +147,13 @@ private struct WeeklyRingsCard: View {
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
 
-            HStack(alignment: .center, spacing: 20) {
+            // The legend moves under the rings at accessibility sizes: beside
+            // them it had about half the width, and "Sessions" broke into
+            // "Ses-sions".
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+                : AnyLayout(HStackLayout(alignment: .center, spacing: 20))
+            layout {
                 ActivityRings(rings: [
                     .init(progress: summary.sessionProgress, color: RingPalette.sessions),
                     .init(progress: summary.setProgress ?? 0, color: RingPalette.sets),
@@ -531,7 +539,7 @@ private struct RegionFilterRow: View {
         } label: {
             Text(title)
                 .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .foregroundStyle(isSelected ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.primary))
                 .padding(.horizontal, 12)
                 .frame(minHeight: 36)
                 .background(

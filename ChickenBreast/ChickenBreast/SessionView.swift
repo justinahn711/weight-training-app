@@ -2513,7 +2513,7 @@ struct ChoiceRow<Value: Hashable>: View {
                             } label: {
                                 Text(label(value))
                                     .font(.title3.weight(selected ? .bold : .medium).monospacedDigit())
-                                    .foregroundStyle(selected ? Color.white : Color.primary)
+                                    .foregroundStyle(selected ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.primary))
                                     .frame(minWidth: 54, minHeight: 48)
                                     .background(
                                         RoundedRectangle(cornerRadius: 12)

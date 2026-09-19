@@ -198,7 +198,7 @@ struct TrendDetailView: View {
                 .annotation(position: .top, spacing: 6) {
                     Text("PR")
                         .font(.caption2.weight(.heavy))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(Theme.recordText)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(Theme.record, in: Capsule())

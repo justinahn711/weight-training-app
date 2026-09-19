@@ -685,7 +685,7 @@ private struct CustomDayEditorSheet: View {
                 } footer: {
                     if !trimmedName.isEmpty && existingNames.contains(trimmedName) {
                         Text("Another day is already named \(trimmedName).")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Theme.attention)
                     }
                 }
 

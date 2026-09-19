@@ -139,12 +139,20 @@ struct HistoryView: View {
 private struct WeeklyStreakCard: View {
     let consistency: WeeklyConsistency
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack(spacing: 12) {
+        // Side by side while the words fit beside a 32pt glyph; stacked once
+        // they don't. At accessibility sizes the headline wrapped across the
+        // icon and sat on top of it.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
             Image(systemName: "calendar.badge.checkmark")
                 .font(.title2)
                 .foregroundStyle(.secondary)
-                .frame(width: 32)
+                .frame(width: 32, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -153,7 +161,7 @@ private struct WeeklyStreakCard: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
@@ -322,6 +330,11 @@ private struct DayCell: View {
         VStack(spacing: 2) {
             Text("\(Calendar.current.component(.day, from: date))")
                 .font(.footnote.weight(day == nil ? .regular : .semibold))
+                // The cell is a fixed 44pt square in a seven-column grid, so
+                // at accessibility sizes the digits have to shrink rather
+                // than overflow it.
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
                 // Dark on the fill, not white: white measured 2.97:1 on the
                 // teal, and these are 13pt digits.
                 .foregroundStyle(day == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.onCategory))
