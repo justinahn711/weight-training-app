@@ -161,12 +161,33 @@ extension TrainingStore {
     public func volumeReport(
         days: Int = VolumeReport.windowDays,
         now: Date = Date(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        excludingWorkoutID: UUID? = nil
     ) throws -> VolumeReport {
-        VolumeReport.trailing(
+        let history = try allSets()
+        let exercises = try exercises()
+        let config = try gymConfig()
+        let from = calendar.date(byAdding: .day, value: -days, to: now) ?? now
+        let planned = try exerciseSessions().compactMap { session -> PlannedExerciseWork? in
+            guard session.completedAt == nil,
+                  session.workoutID != excludingWorkoutID,
+                  session.startedAt >= from,
+                  session.startedAt <= now,
+                  let plan = session.plan else { return nil }
+            let completed = history.filter {
+                $0.workoutID == session.workoutID && $0.exerciseID == session.exerciseID && !$0.isWarmup
+            }.count
+            let remaining = max(0, plan.sets.count - completed)
+            return remaining == 0 ? nil : PlannedExerciseWork(
+                exerciseID: session.exerciseID, remainingSets: remaining
+            )
+        }
+        return VolumeReport.trailing(
             days: days,
-            history: try allSets(),
-            exercises: try exercises(),
+            history: history,
+            exercises: exercises,
+            budgets: config.volumeBudgets,
+            plannedWork: planned,
             now: now,
             calendar: calendar
         )

@@ -19,12 +19,6 @@ import WeightTrainingCore
 struct VolumeView: View {
     let report: VolumeReport
 
-    private var ordered: [MuscleVolume] {
-        report.starved.sorted { $0.sets < $1.sets }
-            + report.muscles.filter { $0.standing == .onTarget }
-            + report.overreaching
-    }
-
     var body: some View {
         List {
             if !report.starved.isEmpty {
@@ -82,6 +76,21 @@ private struct MuscleRow: View {
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            Text(volume.detailLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(volume.effortLine)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            HStack(spacing: 12) {
+                Label(count(volume.exerciseCount, singular: "exercise"), systemImage: "dumbbell")
+                Label(count(volume.exposureFrequency, singular: "session"), systemImage: "calendar")
+                if volume.plannedSets > 0 {
+                    Text("Projected \(formatted(volume.projectedSets))")
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
             // A bar rather than a number alone: the question is "how far off",
             // and that reads faster as a length than as arithmetic.
             GeometryReader { proxy in
@@ -95,6 +104,16 @@ private struct MuscleRow: View {
             .frame(height: 6)
         }
         .padding(.vertical, 4)
+    }
+
+    private func formatted(_ value: Double) -> String {
+        value == value.rounded()
+            ? String(format: "%.0f", value)
+            : String(format: "%.1f", value)
+    }
+
+    private func count(_ value: Int, singular: String) -> String {
+        "\(value) \(value == 1 ? singular : singular + "s")"
     }
 }
 

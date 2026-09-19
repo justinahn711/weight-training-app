@@ -175,10 +175,15 @@ extension TrainingStore {
 
     public func recommendation(for exercise: Exercise, excluding workoutID: UUID? = nil,
                                now: Date = Date()) throws -> ExerciseRecommendation {
-        RecommendationEngine.recommend(
+        let progression = RecommendationEngine.recommend(
             exercise: exercise, plan: try latestExercisePlan(for: exercise.id, excluding: workoutID),
             history: try exerciseExposures(for: exercise.id, excluding: workoutID),
             policy: exercise.recommendationPolicy, now: now)
+        return VolumeAllocationEngine.applyingWeeklyVolume(
+            to: progression,
+            exercise: exercise,
+            report: try volumeReport(now: now, excludingWorkoutID: workoutID)
+        )
     }
 
     /// Internal for archive merge and deduplication; callers own the transaction.

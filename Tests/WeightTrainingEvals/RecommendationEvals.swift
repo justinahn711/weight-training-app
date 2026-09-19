@@ -103,4 +103,44 @@ final class RecommendationEvals: XCTestCase {
             }
         }
     }
+
+    func testVolumeIncreaseRespectsOverlappingMuscleBudgets() {
+        let exercise = ExerciseLibrary.all.first { $0.name == "Incline DB Press" }!
+        let target = PlannedWorkingSet(load: 50, reps: 12, rpe: .eight)
+        let base = ExerciseRecommendation(
+            exerciseID: exercise.id,
+            basedOnPlanID: UUID(),
+            generatedAt: Date(timeIntervalSince1970: 1_760_011_200),
+            action: .hold,
+            sets: Array(repeating: target, count: 3),
+            reason: .loadStepTooLarge,
+            evidence: .consistent,
+            supportingExposureIDs: [UUID(), UUID()],
+            ruleVersion: "eval"
+        )
+        func report(triceps: Double) -> VolumeReport {
+            VolumeReport(
+                muscles: Muscle.allCases.map { muscle in
+                    MuscleVolume(
+                        muscle: muscle,
+                        sets: muscle == .triceps ? triceps : 0,
+                        target: muscle.weeklySetTarget
+                    )
+                },
+                from: Date(timeIntervalSince1970: 1_759_406_400),
+                to: Date(timeIntervalSince1970: 1_760_011_200)
+            )
+        }
+
+        let room = VolumeAllocationEngine.applyingWeeklyVolume(
+            to: base, exercise: exercise, report: report(triceps: 15)
+        )
+        XCTAssertEqual(room.action, .addSet)
+        XCTAssertEqual(room.sets.count, 4)
+
+        let full = VolumeAllocationEngine.applyingWeeklyVolume(
+            to: base, exercise: exercise, report: report(triceps: 16)
+        )
+        XCTAssertEqual(full, base, "A full secondary budget must block the chest set")
+    }
 }

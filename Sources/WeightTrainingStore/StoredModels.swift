@@ -352,6 +352,8 @@ public final class StoredGymConfig {
     /// Distinct training days needed for one consistent week (#65).
     /// A default keeps the CloudKit schema compatible with existing rows.
     public var weeklySessionTarget: Int = 3
+    /// JSON `[MuscleSetBudget]`. Empty rows predate personalized volume bands.
+    public var volumeBudgetsData: Data = Data()
 
     /// When this was last written, used to settle a sync conflict.
     public var updatedAt: Date = Date()
@@ -363,6 +365,7 @@ public final class StoredGymConfig {
         self.barPounds = config.barWeight.pounds
         self.trainingSplitData = encoded(config.trainingSplit)
         self.weeklySessionTarget = config.weeklySessionTarget
+        self.volumeBudgetsData = encoded(config.volumeBudgets)
         self.updatedAt = updatedAt
     }
 
@@ -372,6 +375,7 @@ public final class StoredGymConfig {
         barPounds = config.barWeight.pounds
         trainingSplitData = encoded(config.trainingSplit)
         weeklySessionTarget = config.weeklySessionTarget
+        volumeBudgetsData = encoded(config.volumeBudgets)
         updatedAt = date
     }
 
@@ -390,7 +394,10 @@ public final class StoredGymConfig {
                 trainingSplit: trainingSplitData.isEmpty
                     ? nil
                     : try decoded(TrainingSplit?.self, from: trainingSplitData),
-                weeklySessionTarget: weeklySessionTarget
+                weeklySessionTarget: weeklySessionTarget,
+                volumeBudgets: volumeBudgetsData.isEmpty
+                    ? nil
+                    : try decoded([MuscleSetBudget].self, from: volumeBudgetsData)
             )
         } catch {
             throw StoreError.corruptRecord(entity: "GymConfig", id: id, underlying: error)

@@ -155,6 +155,31 @@ final class GymConfigTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(GymConfig.self, from: data).weeklySessionTarget, 4)
     }
 
+    func testPersonalizedVolumeBudgetsSurviveARoundTrip() throws {
+        var gym = GymConfig.standard
+        gym.volumeBudgets = gym.volumeBudgets.map {
+            $0.muscle == .chest
+                ? MuscleSetBudget(muscle: .chest, minimum: 6, maximum: 12)
+                : $0
+        }
+
+        let data = try JSONEncoder().encode(gym)
+        let decoded = try JSONDecoder().decode(GymConfig.self, from: data)
+
+        XCTAssertEqual(decoded.volumeTarget(for: .chest), 6...12)
+        XCTAssertEqual(decoded.volumeBudgets.count, Muscle.allCases.count)
+    }
+
+    func testLegacyConfigGetsDefaultVolumeBudgets() throws {
+        let json = """
+        {"unit":"pounds","availablePlates":[45,25,10,5,2.5],
+         "barWeight":{"pounds":45}}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(GymConfig.self, from: json)
+
+        XCTAssertEqual(decoded.volumeBudgets, MuscleSetBudget.defaults)
+    }
+
     func testLegacyConfigDefaultsToThreeTrainingDays() throws {
         let json = """
         {"unit":"pounds","availablePlates":[45,25,10,5,2.5],

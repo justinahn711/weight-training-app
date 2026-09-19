@@ -33,6 +33,11 @@ final class RecommendationPersistenceTests: XCTestCase {
         })
     }
 
+    private func ceilingPlan(_ exercise: Exercise) -> ExercisePlan {
+        ExercisePlan(exercise: exercise, sets: Array(repeating:
+            PlannedWorkingSet(load: 50, reps: 12, rpe: .eight), count: 3))
+    }
+
     private func complete(
         plan: ExercisePlan, workoutID: UUID, start: Date, rpe: RPE = .seven
     ) throws -> [SetRecord] {
@@ -86,6 +91,54 @@ final class RecommendationPersistenceTests: XCTestCase {
         )
         XCTAssertEqual(recommendation.action, .addReps)
         XCTAssertEqual(recommendation.sets.map(\.reps), [10, 10, 10])
+    }
+
+    func testWeeklyVolumeAddsOneSetWhenTheLoadStepIsTooLarge() throws {
+        let exercise = Exercise(
+            name: "Volume Press", muscles: [.primary(.chest), .secondary(.triceps)],
+            equipment: .dumbbell,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        try store.upsert(exercise)
+        let proposed = ceilingPlan(exercise)
+
+        for day in [0, 2] {
+            let start = epoch.addingTimeInterval(Double(day) * 86_400)
+            let workout = UUID()
+            let accepted = try store.acceptExercisePlan(
+                proposed, workoutID: workout, startedAt: start, now: start
+            )
+            _ = try complete(plan: accepted, workoutID: workout, start: start)
+        }
+
+        let recommendation = try store.recommendation(
+            for: exercise, now: epoch.addingTimeInterval(2 * 86_400 + 2_000)
+        )
+        XCTAssertEqual(recommendation.action, .addSet)
+        XCTAssertEqual(recommendation.sets.count, 4)
+        XCTAssertEqual(recommendation.reason, .weeklyVolumeBelowBudget(muscles: [.chest]))
+    }
+
+    func testVolumeReportProjectsOnlyRemainingAcceptedWork() throws {
+        let exercise = try lift()
+        let workout = UUID()
+        _ = try store.acceptExercisePlan(
+            plan(exercise), workoutID: workout, startedAt: epoch, now: epoch
+        )
+        _ = try store.logWorkoutSet(
+            SetRecord(exerciseID: exercise.id, load: 100, reps: 10,
+                      rpe: .seven, performedAt: epoch.addingTimeInterval(60)),
+            workoutID: workout, startedAt: epoch, effortReported: true
+        )
+
+        let included = try store.volumeReport(now: epoch.addingTimeInterval(120))
+        let excluded = try store.volumeReport(
+            now: epoch.addingTimeInterval(120), excludingWorkoutID: workout
+        )
+        XCTAssertEqual(included.muscles.first { $0.muscle == .chest }?.sets, 1)
+        XCTAssertEqual(included.muscles.first { $0.muscle == .chest }?.plannedSets, 2)
+        XCTAssertEqual(excluded.muscles.first { $0.muscle == .chest }?.sets, 1)
+        XCTAssertEqual(excluded.muscles.first { $0.muscle == .chest }?.plannedSets, 0)
     }
 
     func testCorrectionAndDeletionRecomputeEvidence() throws {

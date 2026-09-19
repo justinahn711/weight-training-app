@@ -42,6 +42,10 @@ public struct GymConfig: Hashable, Codable, Sendable {
     /// very different realistic frequencies.
     public var weeklySessionTarget: Int
 
+    /// Explicit weekly volume bands. Defaults are starting points and every
+    /// muscle can be adjusted independently in Settings.
+    public var volumeBudgets: [MuscleSetBudget]
+
     /// The selected training rotation. `nil` means setup hasn't happened yet —
     /// distinct from having chosen push/pull/legs — so a fresh install can
     /// still ask once (#136); `effectiveTrainingSplit` is what every reader
@@ -77,13 +81,15 @@ public struct GymConfig: Hashable, Codable, Sendable {
         availablePlates: [Double]? = nil,
         barWeight: Load? = nil,
         trainingSplit: TrainingSplit? = nil,
-        weeklySessionTarget: Int = 3
+        weeklySessionTarget: Int = 3,
+        volumeBudgets: [MuscleSetBudget]? = nil
     ) {
         self.unit = unit
         self.availablePlates = availablePlates ?? unit.standardPlates
         self.barWeight = barWeight ?? unit.standardBar
         self.trainingSplit = trainingSplit
         self.weeklySessionTarget = min(max(weeklySessionTarget, 1), 7)
+        self.volumeBudgets = Self.normalizedBudgets(volumeBudgets ?? MuscleSetBudget.defaults)
     }
 
     /// Rows written before this landed describe a pound gym, because that is
@@ -107,6 +113,21 @@ public struct GymConfig: Hashable, Codable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .weeklySessionTarget) ?? 3,
             1
         ), 7)
+        self.volumeBudgets = Self.normalizedBudgets(
+            try container.decodeIfPresent([MuscleSetBudget].self, forKey: .volumeBudgets)
+                ?? MuscleSetBudget.defaults
+        )
+    }
+
+    public func volumeTarget(for muscle: Muscle) -> ClosedRange<Int> {
+        volumeBudgets.first { $0.muscle == muscle }?.target ?? muscle.weeklySetTarget
+    }
+
+    private static func normalizedBudgets(_ budgets: [MuscleSetBudget]) -> [MuscleSetBudget] {
+        let byMuscle = Dictionary(budgets.map { ($0.muscle, $0) }, uniquingKeysWith: { _, latest in latest })
+        return Muscle.allCases.map { muscle in
+            byMuscle[muscle] ?? MuscleSetBudget(muscle: muscle, target: muscle.weeklySetTarget)
+        }
     }
 
     /// The split to actually train from: what's chosen, or push/pull/legs

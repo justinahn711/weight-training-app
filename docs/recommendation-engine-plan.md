@@ -1,7 +1,7 @@
 # Progressive overload recommendation engine
 
-Status: phases 1–2 implemented on `feat/recommendation-engine`; weekly set allocation,
-optional tonnage blocks, and adaptive whole-program deloads remain planned.
+Status: phases 1–3 implemented on `feat/recommendation-engine`; optional tonnage
+blocks and adaptive whole-program deloads remain planned.
 
 Provisional audience: healthy adult recreational lifters seeking muscle growth with steady strength gains. Goal, experience, available equipment, exercise priorities, and training frequency are explicit configuration. Strength and general fitness can use different exercise prescriptions without replacing the decision pipeline.
 
@@ -186,7 +186,10 @@ actual logs + accepted plans + exercise/profile configuration
 
 1. Add plan/completion metadata, exposure matching, and missing-effort handling. Preserve old logs and first-session behavior.
 2. Implement hold/add-rep/add-load behavior with repeated-easy gates, achievable load checks, and one shared decision path for session suggestions.
-3. Add personalized muscle budgets and guarded weekly set allocation.
+3. Add personalized muscle budgets and guarded weekly set allocation. **Implemented:**
+   adjustable per-muscle bands, direct/secondary and known/unknown effort reporting,
+   accepted remaining-work projection, and a one-set increase only when ordinary
+   rep/load progression is unavailable and every involved muscle remains in budget.
 4. Add optional training blocks, baseline comparisons, and scheduled/adaptive deload coordination.
 5. Replay historical scenarios in shadow mode before showing the new engine's suggestions. Then collect acceptance, overrides, achieved reps, RPE overshoot, and workout completion. Acceptance alone does not establish quality.
 

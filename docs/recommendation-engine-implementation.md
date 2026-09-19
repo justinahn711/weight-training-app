@@ -2,7 +2,7 @@
 
 This work begins the [recommendation engine plan](recommendation-engine-plan.md) in an isolated worktree on `feat/recommendation-engine`, based on the locally available `origin/main` commit `43f4714`.
 
-## Current milestone: accepted plans, live logging, and persisted evidence
+## Current milestone: weekly muscle-volume allocation
 
 Implemented in `WeightTrainingCore`:
 
@@ -47,14 +47,31 @@ adopted an accepted plan. Planned exercises use the new engine for next-workout
 targets, while the in-session path retains only a conservative downward response
 to explicitly reported high effort.
 
+The trailing volume report now separates completed working sets, known hard
+sets, unknown-effort sets, direct and secondary credit, distinct exercises,
+session frequency, and remaining sets from accepted active plans. Per-muscle
+weekly bands are stored with the synced gym configuration and can be edited in
+Settings under **Muscle volume**. Existing configuration rows decode to the
+default bands.
+
+Once ordinary repeated-easy progression reaches the top of the rep range and
+the next achievable weight is unavailable or exceeds the load-increase limit,
+the weekly allocator may suggest one additional set. It requires consistent
+evidence, keeps the exercise below eight planned sets, requires a primary muscle
+to remain below its weekly minimum, and rejects the increase if any primary or
+secondary muscle would exceed its personalized maximum. Completed and accepted
+remaining work both count. The recommendation stays advisory and is persisted
+only if the lifter accepts it.
+
 The remaining sequence is:
 
 1. Add an explicit early-completion reason UI for time, fatigue, and pain. The
    store and domain values already support these states; Finish currently marks
    exact plan-count completion and leaves other outcomes unknown.
-2. Extend muscle-volume reporting with reported/unknown effort, distinct exercise
-   counts, personalized budgets, and remaining planned work. Add weekly set
-   allocation only after these inputs exist.
+2. Derive optional starting bands from two to three complete, explicitly
+   tolerated weeks once completion and recovery inputs can support that inference.
+   Until then, the app uses editable defaults rather than treating past volume as
+   automatically tolerated.
 3. Add optional tonnage/block targets and scheduled/adaptive deload coordination.
    The current core respects an accepted deload but does not create a whole-program
    schedule or infer fatigue from wearable scores.
@@ -93,16 +110,17 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
 
 Physical-device validation remains required for the integrated workout flow.
 
-Validation for the integrated milestone on 2026-09-18:
+Validation for the weekly-volume milestone on 2026-09-18:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including persistence and sync conflicts (710 tests) | PASS |
-| Repository scenario script, including new recommendation replays | PASS |
+| Swift domain/store suite, including persistence and sync conflicts (723 tests) | PASS |
+| Repository scenario script, including overlapping muscle budgets (12 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |
-| Focused iPhone UI: plan review/acceptance and explicit RPE selection | PASS |
-| Physical device | NOT RUN |
+| Focused iPhone UI: muscle-volume settings navigation and controls | PASS |
+| Signed iPhone build and install over existing app data | PASS |
+| Physical-device hands-on volume and recommendation review | PENDING |
 
 Build products used a separate temporary derived-data directory. A remote fetch
 encountered the pre-existing malformed ref `refs/remotes/origin/fix/session-presentation 2`;

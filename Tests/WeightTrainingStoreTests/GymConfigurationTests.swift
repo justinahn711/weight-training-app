@@ -25,13 +25,20 @@ final class GymConfigurationTests: XCTestCase {
     }
 
     func testTheGymSurvivesBeingWritten() throws {
-        try store.saveGymConfig(GymConfig(unit: .kilograms, weeklySessionTarget: 4))
+        var gym = GymConfig(unit: .kilograms, weeklySessionTarget: 4)
+        gym.volumeBudgets = gym.volumeBudgets.map {
+            $0.muscle == .chest
+                ? MuscleSetBudget(muscle: .chest, minimum: 6, maximum: 12)
+                : $0
+        }
+        try store.saveGymConfig(gym)
         let read = try store.gymConfig()
 
         XCTAssertEqual(read.unit, .kilograms)
         XCTAssertEqual(read.availablePlates, [25, 20, 15, 10, 5, 2.5, 1.25])
         XCTAssertEqual(read.barWeight.value(in: .kilograms), 20, accuracy: 0.0001)
         XCTAssertEqual(read.weeklySessionTarget, 4)
+        XCTAssertEqual(read.volumeTarget(for: .chest), 6...12)
     }
 
     /// #73's done-when, from the other end: switching the rack reaches the

@@ -225,6 +225,22 @@ struct SettingsView: View {
                 )
             }
             .accessibilityIdentifier("settings.weeklySessionTarget")
+
+            NavigationLink {
+                MuscleVolumeBudgetEditor(budgets: gym.volumeBudgets) { budgets in
+                    var updated = GymSettings.shared.config
+                    updated.volumeBudgets = budgets
+                    commit(updated)
+                }
+            } label: {
+                LabeledContent(
+                    "Muscle volume",
+                    value: gym.volumeBudgets.filter { !$0.isDefault }.isEmpty
+                        ? "Defaults"
+                        : "Customized"
+                )
+            }
+            .accessibilityIdentifier("settings.muscleVolume")
         } header: {
             Text("Training")
         } footer: {
@@ -358,7 +374,8 @@ struct SettingsView: View {
                 commit(GymConfig(
                     unit: unit,
                     trainingSplit: gym.trainingSplit,
-                    weeklySessionTarget: gym.weeklySessionTarget
+                    weeklySessionTarget: gym.weeklySessionTarget,
+                    volumeBudgets: gym.volumeBudgets
                 ))
             }
         )
@@ -406,6 +423,90 @@ struct SettingsView: View {
         // follower, so no gym save can change which lifts are exceptions — the
         // recount was provably a no-op, and it cost a second full fetch and
         // decode of the library on the main actor for every plate toggle.
+    }
+}
+
+// MARK: - Weekly muscle-volume budgets
+
+private struct MuscleVolumeBudgetEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var budgets: [MuscleSetBudget]
+    let onSave: ([MuscleSetBudget]) -> Void
+
+    init(budgets: [MuscleSetBudget], onSave: @escaping ([MuscleSetBudget]) -> Void) {
+        _budgets = State(initialValue: budgets)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(Muscle.allCases, id: \.self) { muscle in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(muscle.displayName)
+                            .font(.body.weight(.medium))
+                        VStack(spacing: 4) {
+                            Stepper(value: minimumBinding(for: muscle), in: 0...maximum(for: muscle)) {
+                                LabeledContent("Minimum", value: "\(minimum(for: muscle))")
+                            }
+                            .accessibilityIdentifier("settings.volume.\(muscle.rawValue).minimum")
+                            Stepper(value: maximumBinding(for: muscle), in: minimum(for: muscle)...40) {
+                                LabeledContent("Maximum", value: "\(maximum(for: muscle))")
+                            }
+                            .accessibilityIdentifier("settings.volume.\(muscle.rawValue).maximum")
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            } footer: {
+                Text("These are planning bands, not safety limits. Completed and accepted remaining sets both constrain a proposed set increase.")
+            }
+
+            Section {
+                Button("Restore defaults") { budgets = MuscleSetBudget.defaults }
+            }
+        }
+        .navigationTitle("Muscle volume")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onSave(budgets)
+                    dismiss()
+                }
+                .accessibilityIdentifier("settings.volume.save")
+            }
+        }
+    }
+
+    private func budget(for muscle: Muscle) -> MuscleSetBudget {
+        budgets.first { $0.muscle == muscle }
+            ?? MuscleSetBudget(muscle: muscle, target: muscle.weeklySetTarget)
+    }
+
+    private func minimum(for muscle: Muscle) -> Int { budget(for: muscle).minimum }
+    private func maximum(for muscle: Muscle) -> Int { budget(for: muscle).maximum }
+
+    private func replace(_ muscle: Muscle, minimum: Int? = nil, maximum: Int? = nil) {
+        let current = budget(for: muscle)
+        let updated = MuscleSetBudget(
+            muscle: muscle,
+            minimum: minimum ?? current.minimum,
+            maximum: maximum ?? current.maximum
+        )
+        if let index = budgets.firstIndex(where: { $0.muscle == muscle }) {
+            budgets[index] = updated
+        } else {
+            budgets.append(updated)
+        }
+    }
+
+    private func minimumBinding(for muscle: Muscle) -> Binding<Int> {
+        Binding(get: { minimum(for: muscle) }, set: { replace(muscle, minimum: $0) })
+    }
+
+    private func maximumBinding(for muscle: Muscle) -> Binding<Int> {
+        Binding(get: { maximum(for: muscle) }, set: { replace(muscle, maximum: $0) })
     }
 }
 

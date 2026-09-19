@@ -284,6 +284,34 @@ final class AccessibilityAuditTests: XCTestCase {
         }
     }
 
+    func testMuscleVolumeBudgetsAreReachable() throws {
+        let app = launch()
+        XCTAssertTrue(try reachTrainScreen(app))
+
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable)
+        settings.tap()
+
+        let list = app.collectionViews.firstMatch
+        let volume = app.descendants(matching: .any)["settings.muscleVolume"]
+        for _ in 0..<4 where !volume.exists || !volume.isHittable {
+            list.swipeUp()
+        }
+        XCTAssertTrue(volume.exists && volume.isHittable)
+        volume.tap()
+
+        XCTAssertTrue(app.navigationBars["Muscle volume"].waitForExistence(timeout: 5))
+        let minimum = app.steppers["settings.volume.chest.minimum"]
+        XCTAssertTrue(minimum.waitForExistence(timeout: 5) && minimum.isHittable)
+        XCTAssertTrue(app.steppers["settings.volume.chest.maximum"].isHittable)
+        XCTAssertTrue(app.buttons["settings.volume.save"].isHittable)
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Muscle volume budgets"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     /// Answers first-launch setup when it covers Train, then waits for a day
     /// or resumable workout that can actually receive a tap.
     @discardableResult

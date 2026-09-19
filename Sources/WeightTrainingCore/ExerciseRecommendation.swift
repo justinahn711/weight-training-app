@@ -47,7 +47,7 @@ public struct RecommendationContext: Hashable, Sendable {
 
 public struct ExerciseRecommendation: Hashable, Sendable {
     public enum Action: String, Sendable {
-        case establish, hold, addReps, addLoad, reduce, deload, stop
+        case establish, hold, addReps, addLoad, addSet, reduce, deload, stop
     }
 
     public enum Evidence: String, Sendable {
@@ -70,6 +70,7 @@ public struct ExerciseRecommendation: Hashable, Sendable {
         case confirmEasyWorkouts(completed: Int, required: Int)
         case addedRep(set: Int)
         case addedLoad
+        case weeklyVolumeBelowBudget(muscles: [Muscle])
         case loadStepTooLarge
         case noHeavierLoad
         case repeatedMisses
@@ -112,6 +113,9 @@ public struct ExerciseRecommendation: Hashable, Sendable {
             return "\(completed) of \(required) consecutive easy workouts — repeat it"
         case .addedRep(let set): return "Repeated easy workouts — add one rep to set \(set)"
         case .addedLoad: return "Repeated easy workouts at the rep ceiling — add weight and reset reps"
+        case .weeklyVolumeBelowBudget(let muscles):
+            let names = muscles.map(\.displayName).joined(separator: " and ")
+            return "\(names) remain below your weekly target — add one set"
         case .loadStepTooLarge: return "The next available weight is too large a jump — hold steady"
         case .noHeavierLoad: return "No heavier achievable load is configured — hold steady"
         case .repeatedMisses: return "Repeated comparable misses — reduce weight and rebuild"
