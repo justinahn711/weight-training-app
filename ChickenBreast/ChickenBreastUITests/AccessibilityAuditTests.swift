@@ -243,9 +243,32 @@ final class AccessibilityAuditTests: XCTestCase {
                 "partial-finish confirmation should rise from the bottom, not float near the top"
             )
         }
-        XCTAssertTrue(app.buttons["finish.confirmation.finish"].isHittable)
+        let time = app.buttons["finish.reason.time"]
+        XCTAssertTrue(time.waitForExistence(timeout: 5) && time.isHittable)
+
+        if requiresBottomPosition {
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Early finish reasons"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+
+        let pain = app.buttons["finish.reason.pain"]
+        for _ in 0..<3 where !pain.exists || !pain.isHittable {
+            sheet.swipeUp()
+        }
+        XCTAssertTrue(pain.exists && pain.isHittable)
+
+        let unknown = app.buttons["finish.reason.unknown"]
+        for _ in 0..<2 where !unknown.exists || !unknown.isHittable {
+            sheet.swipeUp()
+        }
+        XCTAssertTrue(unknown.exists && unknown.isHittable)
 
         let keepTraining = app.buttons["finish.confirmation.cancel"]
+        for _ in 0..<2 where !keepTraining.exists || !keepTraining.isHittable {
+            sheet.swipeUp()
+        }
         XCTAssertTrue(keepTraining.isHittable)
         keepTraining.tap()
         XCTAssertFalse(sheet.waitForExistence(timeout: 1))

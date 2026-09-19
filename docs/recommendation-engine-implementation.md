@@ -63,16 +63,21 @@ secondary muscle would exceed its personalized maximum. Completed and accepted
 remaining work both count. The recommendation stays advisory and is persisted
 only if the lifter accepts it.
 
+Finishing a workout with unstarted exercises or an accepted plan that still has
+sets remaining now asks for a lightweight completion reason. Time and fatigue
+apply to every accepted plan left incomplete. Pain applies only to the exercise
+currently on screen and pauses that movement's progression; it does not taint
+unrelated exercises. Completed plans remain completed, and finishing after all
+planned work remains a single tap. The reason sheet remains reachable in
+portrait, landscape, and accessibility text sizes.
+
 The remaining sequence is:
 
-1. Add an explicit early-completion reason UI for time, fatigue, and pain. The
-   store and domain values already support these states; Finish currently marks
-   exact plan-count completion and leaves other outcomes unknown.
-2. Derive optional starting bands from two to three complete, explicitly
+1. Derive optional starting bands from two to three complete, explicitly
    tolerated weeks once completion and recovery inputs can support that inference.
    Until then, the app uses editable defaults rather than treating past volume as
    automatically tolerated.
-3. Add optional tonnage/block targets and scheduled/adaptive deload coordination.
+2. Add optional tonnage/block targets and scheduled/adaptive deload coordination.
    The current core respects an accepted deload but does not create a whole-program
    schedule or infer fatigue from wearable scores.
 
@@ -110,15 +115,15 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
 
 Physical-device validation remains required for the integrated workout flow.
 
-Validation for the weekly-volume milestone on 2026-09-18:
+Validation through the early-completion milestone on 2026-09-19:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including persistence and sync conflicts (723 tests) | PASS |
+| Swift domain/store suite, including completion-reason persistence and sync conflicts (726 tests) | PASS |
 | Repository scenario script, including overlapping muscle budgets (12 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |
-| Focused iPhone UI: muscle-volume settings navigation and controls | PASS |
+| Focused iPhone UI: muscle-volume settings plus early-finish reasons in portrait/landscape and accessibility text | PASS |
 | Signed iPhone build and install over existing app data | PASS |
 | Physical-device hands-on volume and recommendation review | PENDING |
 

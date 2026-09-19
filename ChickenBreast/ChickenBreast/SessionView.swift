@@ -21,7 +21,7 @@ struct SessionView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State var model: SessionViewModel
-    let onFinish: () -> Void
+    let onFinish: (ExerciseExposure.Completion?) -> Void
     /// The lift the swap sheet was opened for, rather than a bare flag (#120).
     ///
     /// Same reason as `configuring`: the sheet is decided over seconds, the mic
@@ -62,9 +62,10 @@ struct SessionView: View {
             // iPhone, so use a real bottom sheet instead (#158).
             .sheet(isPresented: $showingPartialFinishConfirmation) {
                 PartialFinishSheet(
-                    onFinish: {
+                    exerciseName: model.current?.exercise.name,
+                    onFinish: { completion in
                         showingPartialFinishConfirmation = false
-                        onFinish()
+                        onFinish(completion)
                     },
                     onKeepTraining: {
                         showingPartialFinishConfirmation = false
@@ -200,7 +201,7 @@ struct SessionView: View {
                 systemImage: "figure.strengthtraining.traditional",
                 description: Text("This day has no exercises in the library yet.")
             )
-            Button("Finish workout", action: onFinish)
+            Button("Finish workout") { onFinish(nil) }
                 .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -888,40 +889,65 @@ struct SessionView: View {
     /// are untouched gets one deliberate checkpoint because it advances the
     /// training state and cannot be mistaken for ordinary exercise navigation.
     private func requestFinish() {
-        if model.session.startedCount < model.session.exercises.count {
+        if model.needsEarlyFinishReason {
             showingPartialFinishConfirmation = true
         } else {
-            onFinish()
+            onFinish(nil)
         }
     }
 }
 
 private struct PartialFinishSheet: View {
-    let onFinish: () -> Void
+    let exerciseName: String?
+    let onFinish: (ExerciseExposure.Completion) -> Void
     let onKeepTraining: () -> Void
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                Image(systemName: "checkmark.circle")
+                Image(systemName: "questionmark.circle")
                     .font(.largeTitle)
                     .foregroundStyle(.tint)
                     .accessibilityHidden(true)
 
                 VStack(spacing: 8) {
-                    Text("Finish this workout?")
+                    Text("Why are you finishing early?")
                         .font(.title2.bold())
-                    Text("Your logged sets stay saved. Unstarted exercises will be skipped.")
+                    Text("Your logged sets stay saved. This helps the next recommendation interpret any unfinished set plans.")
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
 
-                Button(action: onFinish) {
-                    Text("Finish workout")
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                VStack(spacing: 10) {
+                    reasonButton(
+                        "Ran out of time",
+                        detail: "Keeps the unfinished work from counting as a failed target.",
+                        systemImage: "clock",
+                        completion: .shortenedForTime,
+                        identifier: "finish.reason.time"
+                    )
+                    reasonButton(
+                        "Too fatigued",
+                        detail: "Records that fatigue ended the planned work.",
+                        systemImage: "battery.25percent",
+                        completion: .stoppedForFatigue,
+                        identifier: "finish.reason.fatigue"
+                    )
+                    reasonButton(
+                        "Pain or discomfort",
+                        detail: painDetail,
+                        systemImage: "cross.case",
+                        completion: .stoppedForPain,
+                        identifier: "finish.reason.pain"
+                    )
+                    reasonButton(
+                        "Another reason",
+                        detail: "Finishes without assigning a cause.",
+                        systemImage: "ellipsis",
+                        completion: .unknown,
+                        identifier: "finish.reason.unknown"
+                    )
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("finish.confirmation.finish")
 
                 Button(action: onKeepTraining) {
                     Text("Keep training")
@@ -938,6 +964,43 @@ private struct PartialFinishSheet: View {
         .accessibilityIdentifier("finish.confirmation.sheet")
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    private var painDetail: String {
+        if let exerciseName { return "Pauses progression for \(exerciseName)." }
+        return "Pauses progression for the current exercise."
+    }
+
+    private func reasonButton(
+        _ title: String,
+        detail: String,
+        systemImage: String,
+        completion: ExerciseExposure.Completion,
+        identifier: String
+    ) -> some View {
+        Button { onFinish(completion) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .frame(width: 24)
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.body.weight(.semibold))
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
     }
 }
 

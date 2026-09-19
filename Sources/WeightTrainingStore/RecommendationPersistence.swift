@@ -137,14 +137,49 @@ extension TrainingStore {
     }
 
     /// Finalize every exercise in this workout, including lifts swapped out
-    /// after they were logged. Repeated Finish does not move the timestamp.
-    public func finishExerciseSessions(workoutID: UUID, at date: Date = Date()) throws {
+    /// after they were logged. An early finish reason applies only to accepted
+    /// plans that still have work remaining. Pain is movement-specific, so it
+    /// applies only to the focused exercise and can create an intent when that
+    /// movement had not yet logged a set. Repeated Finish does not move the
+    /// timestamp.
+    public func finishExerciseSessions(
+        workoutID: UUID,
+        at date: Date = Date(),
+        earlyCompletion: ExerciseExposure.Completion? = nil,
+        focusedExerciseID: UUID? = nil,
+        workoutStartedAt: Date? = nil
+    ) throws {
         let logs = try allSets().filter { $0.workoutID == workoutID && !$0.isWarmup }
         do {
-            for var intent in try exerciseSessions() where intent.workoutID == workoutID && intent.completedAt == nil {
+            var intents = try exerciseSessions().filter {
+                $0.workoutID == workoutID && $0.completedAt == nil
+            }
+            if earlyCompletion == .stoppedForPain,
+               let focusedExerciseID,
+               !intents.contains(where: { $0.exerciseID == focusedExerciseID }) {
+                intents.append(RecordedExerciseSession(
+                    workoutID: workoutID,
+                    exerciseID: focusedExerciseID,
+                    startedAt: workoutStartedAt ?? date,
+                    updatedAt: date
+                ))
+            }
+
+            for var intent in intents {
                 let working = logs.filter { $0.exerciseID == intent.exerciseID }
-                if intent.completion == .unknown, let plan = intent.plan, working.count == plan.sets.count {
-                    intent.completion = .completed
+                let remainingAcceptedWork = intent.plan.map { working.count < $0.sets.count } ?? false
+                if earlyCompletion == .stoppedForPain,
+                   intent.exerciseID == focusedExerciseID {
+                    intent.completion = .stoppedForPain
+                } else if intent.completion == .unknown {
+                    if remainingAcceptedWork,
+                       let earlyCompletion,
+                       earlyCompletion != .completed,
+                       earlyCompletion != .stoppedForPain {
+                        intent.completion = earlyCompletion
+                    } else if let plan = intent.plan, working.count == plan.sets.count {
+                        intent.completion = .completed
+                    }
                 }
                 intent.completedAt = max(date, working.map(\.performedAt).max() ?? date)
                 intent.updatedAt = intent.completedAt!

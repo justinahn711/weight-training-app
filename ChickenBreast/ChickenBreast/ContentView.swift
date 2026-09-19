@@ -633,8 +633,8 @@ struct ContentView: View {
         }
     }
 
-    private func finishActiveSession() {
-        guard let activeSession, activeSession.finish() else { return }
+    private func finishActiveSession(_ earlyCompletion: ExerciseExposure.Completion? = nil) {
+        guard let activeSession, activeSession.finish(earlyCompletion: earlyCompletion) else { return }
         workoutDraft = nil
         route = nil
     }

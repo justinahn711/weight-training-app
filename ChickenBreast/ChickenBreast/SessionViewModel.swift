@@ -472,10 +472,20 @@ final class SessionViewModel {
 
     // MARK: - Finishing
 
+    /// A reason is useful when accepted work remains or when part of the day's
+    /// exercise roster was skipped. Fully completed plans keep Finish one tap.
+    var needsEarlyFinishReason: Bool {
+        session.startedCount < session.exercises.count
+            || session.exercises.contains { exercise in
+                guard let plan = exercise.acceptedPlan else { return false }
+                return exercise.workingSets.count < plan.sets.count
+            }
+    }
+
     /// Finishes this workout exactly once. Navigation and disappearance are
     /// deliberately not finishing signals; only the visible Finish action is.
     @discardableResult
-    func finish() -> Bool {
+    func finish(earlyCompletion: ExerciseExposure.Completion? = nil) -> Bool {
         guard !hasFinished else { return true }
         do {
             // Pull in sets logged from the lock-screen intent while this view
@@ -483,7 +493,12 @@ final class SessionViewModel {
             session = try store.resumeSession(
                 WorkoutDraft(session: session, id: draftID)
             )
-            try store.finishExerciseSessions(workoutID: draftID)
+            try store.finishExerciseSessions(
+                workoutID: draftID,
+                earlyCompletion: earlyCompletion,
+                focusedExerciseID: earlyCompletion == .stoppedForPain ? session.current?.id : nil,
+                workoutStartedAt: session.startedAt
+            )
             let applied = try store.applyProgression(for: session, now: session.startedAt)
             for entry in applied {
                 loadedStates[entry.exercise.id] = entry.result.state
