@@ -79,6 +79,8 @@ public struct ExerciseRecommendation: Hashable, Sendable {
         case poorRecovery
         case acceptedDeload
         case resumeAfterDeload
+        case scheduledDeload(week: Int)
+        case programFatigue
         case pain
     }
 
@@ -124,6 +126,8 @@ public struct ExerciseRecommendation: Hashable, Sendable {
         case .poorRecovery: return "Recovery was reported as poor — hold progression"
         case .acceptedDeload: return "Follow the accepted deload prescription"
         case .resumeAfterDeload: return "Resume a sustainable prescription and collect fresh workouts"
+        case .scheduledDeload(let week): return "Recovery week \(week) — use fewer sets at a lower effort target"
+        case .programFatigue: return "Repeated fatigue across multiple exercises — consider a recovery week"
         case .pain: return "Pain was reported — stop this movement and pause progression"
         }
     }

@@ -43,6 +43,14 @@ extension TrainingStore {
         try exerciseSessions().last { $0.exerciseID == exerciseID && $0.workoutID != workoutID && $0.plan != nil }?.plan
     }
 
+    public func latestNonDeloadExercisePlan(
+        for exerciseID: UUID, excluding workoutID: UUID? = nil
+    ) throws -> ExercisePlan? {
+        try exerciseSessions().last {
+            $0.exerciseID == exerciseID && $0.workoutID != workoutID && $0.plan?.isDeload == false
+        }?.plan
+    }
+
     /// Accept before the first working set. Repeating an unchanged prescription
     /// preserves its revision ID; any accepted edit creates a fresh segment.
     @discardableResult
@@ -208,16 +216,62 @@ extension TrainingStore {
         }
     }
 
+    public func allExerciseExposures(excluding workoutID: UUID? = nil) throws -> [ExerciseExposure] {
+        try exercises().flatMap {
+            try exerciseExposures(for: $0.id, excluding: workoutID)
+        }
+    }
+
+    /// Optional starting bands derived from the last two or three fully
+    /// completed, explicitly tolerated calendar weeks. Nothing is saved until
+    /// the lifter reviews and accepts the suggestion in Settings.
+    public func volumeBudgetSuggestion(
+        now: Date = Date(), calendar: Calendar = .current
+    ) throws -> VolumeBudgetSuggestion? {
+        let exercises = try exercises()
+        let exposures = try allExerciseExposures()
+        return VolumeBudgetSuggestionEngine.suggest(
+            history: exposures, exercises: exercises, now: now, calendar: calendar
+        )
+    }
+
+    public func trainingBlockStatus(
+        for config: TrainingBlockConfig? = nil,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> TrainingBlockStatus? {
+        let resolved: TrainingBlockConfig?
+        if let config {
+            resolved = config
+        } else {
+            resolved = try gymConfig().trainingBlock
+        }
+        guard let resolved else { return nil }
+        return TrainingBlockEngine.status(
+            config: resolved, history: try allExerciseExposures(), now: now, calendar: calendar
+        )
+    }
+
     public func recommendation(for exercise: Exercise, excluding workoutID: UUID? = nil,
                                now: Date = Date()) throws -> ExerciseRecommendation {
+        let plan = try latestExercisePlan(for: exercise.id, excluding: workoutID)
         let progression = RecommendationEngine.recommend(
-            exercise: exercise, plan: try latestExercisePlan(for: exercise.id, excluding: workoutID),
+            exercise: exercise, plan: plan,
             history: try exerciseExposures(for: exercise.id, excluding: workoutID),
             policy: exercise.recommendationPolicy, now: now)
-        return VolumeAllocationEngine.applyingWeeklyVolume(
+        let allocated = VolumeAllocationEngine.applyingWeeklyVolume(
             to: progression,
             exercise: exercise,
             report: try volumeReport(now: now, excludingWorkoutID: workoutID)
+        )
+        guard let plan, let block = try gymConfig().trainingBlock else { return allocated }
+        let history = try allExerciseExposures(excluding: workoutID)
+        return TrainingBlockEngine.applyingDeload(
+            to: allocated,
+            plan: plan,
+            phase: TrainingBlockEngine.phase(for: block, now: now),
+            adaptiveDeload: TrainingBlockEngine.adaptiveDeloadNeeded(history: history, now: now),
+            resumePlan: try latestNonDeloadExercisePlan(for: exercise.id, excluding: workoutID)
         )
     }
 

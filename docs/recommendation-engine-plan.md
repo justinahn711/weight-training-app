@@ -191,8 +191,8 @@ actual logs + accepted plans + exercise/profile configuration
    adjustable per-muscle bands, direct/secondary and known/unknown effort reporting,
    accepted remaining-work projection, and a one-set increase only when ordinary
    rep/load progression is unavailable and every involved muscle remains in budget.
-4. Add optional training blocks, baseline comparisons, and scheduled/adaptive deload coordination.
-5. Replay historical scenarios in shadow mode before showing the new engine's suggestions. Then collect acceptance, overrides, achieved reps, RPE overshoot, and workout completion. Acceptance alone does not establish quality.
+4. Add optional training blocks, baseline comparisons, and scheduled/adaptive deload coordination. **Implemented:** synced opt-in schedule, derived comparable-week baseline, build/recovery tonnage targets, reviewable scheduled and multi-exercise adaptive deloads, and explicit post-deload resumption.
+5. Replay historical scenarios in shadow mode before showing the new engine's suggestions. **Started:** deterministic multi-week replays now cover the block schedule and false-fatigue guards. Physical-device comparison with real history and collection of acceptance, overrides, achieved reps, RPE overshoot, and workout completion remain. Acceptance alone does not establish quality.
 
 Required evaluation scenarios: two easy exposures; a single unusually good workout; a hard final set hidden by a low average RPE; partial completion for time versus fatigue; absent RPE; warmup-only history; changed machine or ROM; mixed loads; plate minimums; coarse dumbbell steps; kg/lb conversion; overlapping muscle budgets; an unfinished week; missed sessions; a long break; deload entry/exit; duplicates/imports; corrected/deleted logs; and sessions across midnight.
 

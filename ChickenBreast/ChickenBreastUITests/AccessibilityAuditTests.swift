@@ -335,6 +335,46 @@ final class AccessibilityAuditTests: XCTestCase {
         add(screenshot)
     }
 
+    func testTrainingBlockSettingsAreReachableAndReviewable() throws {
+        let app = launch()
+        XCTAssertTrue(try reachTrainScreen(app))
+
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable)
+        settings.tap()
+
+        let list = app.collectionViews.firstMatch
+        let block = app.descendants(matching: .any)["settings.trainingBlock"]
+        for _ in 0..<4 where !block.exists || !block.isHittable {
+            list.swipeUp()
+        }
+        XCTAssertTrue(block.exists && block.isHittable)
+        block.tap()
+
+        XCTAssertTrue(app.navigationBars["Training block"].waitForExistence(timeout: 5))
+        let enabled = app.switches["settings.trainingBlock.enabled"]
+        XCTAssertTrue(enabled.waitForExistence(timeout: 5) && enabled.isHittable)
+        let switchValue = (enabled.value as? String)?.lowercased() ?? ""
+        if !["1", "on", "true"].contains(switchValue) {
+            enabled.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.trainingBlock.startedAt"]
+                .waitForExistence(timeout: 5)
+        )
+        let buildTarget = app.descendants(matching: .any)["settings.trainingBlock.buildTarget"]
+        for _ in 0..<3 where !buildTarget.exists {
+            app.collectionViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(buildTarget.exists)
+        XCTAssertTrue(app.buttons["settings.trainingBlock.save"].isHittable)
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Training block"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     /// Answers first-launch setup when it covers Train, then waits for a day
     /// or resumable workout that can actually receive a tap.
     @discardableResult

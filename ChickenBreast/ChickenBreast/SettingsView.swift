@@ -227,7 +227,10 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings.weeklySessionTarget")
 
             NavigationLink {
-                MuscleVolumeBudgetEditor(budgets: gym.volumeBudgets) { budgets in
+                MuscleVolumeBudgetEditor(
+                    budgets: gym.volumeBudgets,
+                    suggestion: try? store?.volumeBudgetSuggestion()
+                ) { budgets in
                     var updated = GymSettings.shared.config
                     updated.volumeBudgets = budgets
                     commit(updated)
@@ -241,10 +244,36 @@ struct SettingsView: View {
                 )
             }
             .accessibilityIdentifier("settings.muscleVolume")
+
+            NavigationLink {
+                if let store {
+                    let draft = gym.trainingBlock ?? TrainingBlockConfig()
+                    TrainingBlockEditor(
+                        config: gym.trainingBlock,
+                        status: try? store.trainingBlockStatus(for: draft),
+                        unit: gym.unit
+                    ) { block in
+                        var updated = GymSettings.shared.config
+                        updated.trainingBlock = block
+                        commit(updated)
+                    }
+                }
+            } label: {
+                LabeledContent("Training block", value: trainingBlockLabel)
+            }
+            .accessibilityIdentifier("settings.trainingBlock")
         } header: {
             Text("Training")
         } footer: {
             Text("Changing the split restarts your rotation at day one. Changing the weekly goal recalculates your streak from training history. Nothing you've logged is changed.")
+        }
+    }
+
+    private var trainingBlockLabel: String {
+        guard let block = gym.trainingBlock else { return "Off" }
+        switch TrainingBlockEngine.phase(for: block) {
+        case .accumulation(let week): return "Build week \(week)"
+        case .deload: return "Recovery week"
         }
     }
 
@@ -431,15 +460,43 @@ struct SettingsView: View {
 private struct MuscleVolumeBudgetEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var budgets: [MuscleSetBudget]
+    let suggestion: VolumeBudgetSuggestion?
     let onSave: ([MuscleSetBudget]) -> Void
 
-    init(budgets: [MuscleSetBudget], onSave: @escaping ([MuscleSetBudget]) -> Void) {
+    init(
+        budgets: [MuscleSetBudget],
+        suggestion: VolumeBudgetSuggestion?,
+        onSave: @escaping ([MuscleSetBudget]) -> Void
+    ) {
         _budgets = State(initialValue: budgets)
+        self.suggestion = suggestion
         self.onSave = onSave
     }
 
     var body: some View {
         List {
+            if let suggestion {
+                Section {
+                    Button("Use suggested bands") {
+                        for budget in suggestion.budgets {
+                            replace(budget.muscle, minimum: budget.minimum, maximum: budget.maximum)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.volume.useSuggestion")
+                } header: {
+                    Text("From your history")
+                } footer: {
+                    Text("Based on \(suggestion.weeksAnalyzed) complete weeks performed as planned at or below target effort. Review the values below, then Save to apply them.")
+                }
+            } else {
+                Section {
+                    Text("Complete two weeks of planned workouts and report RPE for every working set to unlock a personal starting suggestion.")
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("From your history")
+                }
+            }
+
             Section {
                 ForEach(Muscle.allCases, id: \.self) { muscle in
                     VStack(alignment: .leading, spacing: 8) {
@@ -507,6 +564,140 @@ private struct MuscleVolumeBudgetEditor: View {
 
     private func maximumBinding(for muscle: Muscle) -> Binding<Int> {
         Binding(get: { maximum(for: muscle) }, set: { replace(muscle, maximum: $0) })
+    }
+}
+
+// MARK: - Optional training block
+
+private struct TrainingBlockEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var enabled: Bool
+    @State private var startedAt: Date
+    @State private var accumulationWeeks: Int
+    @State private var monthlyIncrease: Double
+    @State private var deloadFraction: Double
+
+    let status: TrainingBlockStatus?
+    let unit: MassUnit
+    let onSave: (TrainingBlockConfig?) -> Void
+
+    init(
+        config: TrainingBlockConfig?,
+        status: TrainingBlockStatus?,
+        unit: MassUnit,
+        onSave: @escaping (TrainingBlockConfig?) -> Void
+    ) {
+        let draft = config ?? TrainingBlockConfig()
+        _enabled = State(initialValue: config != nil)
+        _startedAt = State(initialValue: draft.startedAt)
+        _accumulationWeeks = State(initialValue: draft.accumulationWeeks)
+        _monthlyIncrease = State(initialValue: draft.monthlyIncrease)
+        _deloadFraction = State(initialValue: draft.deloadTonnageFraction)
+        self.status = status
+        self.unit = unit
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Use a training block", isOn: $enabled)
+                    .accessibilityIdentifier("settings.trainingBlock.enabled")
+            } footer: {
+                Text("A block coordinates weekly volume and a recovery week. Exercise recommendations remain proposals that you review before using.")
+            }
+
+            if enabled {
+                Section("Schedule") {
+                    DatePicker("Starts", selection: $startedAt, displayedComponents: .date)
+                        .accessibilityIdentifier("settings.trainingBlock.startedAt")
+                    Stepper(value: $accumulationWeeks, in: 2...6) {
+                        LabeledContent("Build weeks", value: "\(accumulationWeeks)")
+                    }
+                    .accessibilityIdentifier("settings.trainingBlock.buildWeeks")
+                }
+
+                Section {
+                    Picker("Build target", selection: $monthlyIncrease) {
+                        Text("5% above baseline").tag(0.05)
+                        Text("7.5% above baseline").tag(0.075)
+                        Text("10% above baseline").tag(0.10)
+                    }
+                    .accessibilityIdentifier("settings.trainingBlock.buildTarget")
+                    Picker("Recovery target", selection: $deloadFraction) {
+                        Text("70% of baseline").tag(0.70)
+                        Text("75% of baseline").tag(0.75)
+                        Text("80% of baseline").tag(0.80)
+                    }
+                    .accessibilityIdentifier("settings.trainingBlock.recoveryTarget")
+                } header: {
+                    Text("Tonnage targets")
+                } footer: {
+                    Text("Tonnage is weight × reps across working sets. The baseline is the median of two or three consecutive, comparable weeks completed as planned with reported RPE.")
+                }
+
+                Section("Current status") {
+                    LabeledContent("Phase", value: phaseLabel)
+                    if let status, let baseline = status.baselineTonnage {
+                        LabeledContent("Baseline", value: tonnage(baseline))
+                        LabeledContent("This week", value: tonnage(status.currentTonnage))
+                        LabeledContent("Target", value: tonnage(target(from: baseline)))
+                    } else {
+                        Text("A tonnage target appears after two comparable, fully completed weeks. The calendar phase can still guide a recovery week meanwhile.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Training block")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    let block = enabled ? TrainingBlockConfig(
+                        startedAt: startedAt,
+                        accumulationWeeks: accumulationWeeks,
+                        monthlyIncrease: monthlyIncrease,
+                        deloadTonnageFraction: deloadFraction
+                    ) : nil
+                    onSave(block)
+                    dismiss()
+                }
+                .accessibilityIdentifier("settings.trainingBlock.save")
+            }
+        }
+    }
+
+    private var phaseLabel: String {
+        let config = TrainingBlockConfig(
+            startedAt: startedAt,
+            accumulationWeeks: accumulationWeeks,
+            monthlyIncrease: monthlyIncrease,
+            deloadTonnageFraction: deloadFraction
+        )
+        switch TrainingBlockEngine.phase(for: config) {
+        case .accumulation(let week): return "Build week \(week) of \(accumulationWeeks)"
+        case .deload: return "Recovery week"
+        }
+    }
+
+    private func tonnage(_ poundsReps: Double) -> String {
+        let value = unit.value(fromPounds: poundsReps)
+        return "\(Int(value.rounded()).formatted()) \(unit.symbol)-reps"
+    }
+
+    private func target(from baseline: Double) -> Double {
+        let config = TrainingBlockConfig(
+            startedAt: startedAt,
+            accumulationWeeks: accumulationWeeks,
+            monthlyIncrease: monthlyIncrease,
+            deloadTonnageFraction: deloadFraction
+        )
+        switch TrainingBlockEngine.phase(for: config) {
+        case .accumulation: return baseline * (1 + monthlyIncrease)
+        case .deload: return baseline * deloadFraction
+        }
     }
 }
 

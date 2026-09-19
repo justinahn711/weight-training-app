@@ -354,6 +354,8 @@ public final class StoredGymConfig {
     public var weeklySessionTarget: Int = 3
     /// JSON `[MuscleSetBudget]`. Empty rows predate personalized volume bands.
     public var volumeBudgetsData: Data = Data()
+    /// JSON `TrainingBlockConfig?`. Empty means the optional feature is off.
+    public var trainingBlockData: Data = Data()
 
     /// When this was last written, used to settle a sync conflict.
     public var updatedAt: Date = Date()
@@ -366,6 +368,7 @@ public final class StoredGymConfig {
         self.trainingSplitData = encoded(config.trainingSplit)
         self.weeklySessionTarget = config.weeklySessionTarget
         self.volumeBudgetsData = encoded(config.volumeBudgets)
+        self.trainingBlockData = encoded(config.trainingBlock)
         self.updatedAt = updatedAt
     }
 
@@ -376,6 +379,7 @@ public final class StoredGymConfig {
         trainingSplitData = encoded(config.trainingSplit)
         weeklySessionTarget = config.weeklySessionTarget
         volumeBudgetsData = encoded(config.volumeBudgets)
+        trainingBlockData = encoded(config.trainingBlock)
         updatedAt = date
     }
 
@@ -397,7 +401,10 @@ public final class StoredGymConfig {
                 weeklySessionTarget: weeklySessionTarget,
                 volumeBudgets: volumeBudgetsData.isEmpty
                     ? nil
-                    : try decoded([MuscleSetBudget].self, from: volumeBudgetsData)
+                    : try decoded([MuscleSetBudget].self, from: volumeBudgetsData),
+                trainingBlock: trainingBlockData.isEmpty
+                    ? nil
+                    : try decoded(TrainingBlockConfig?.self, from: trainingBlockData)
             )
         } catch {
             throw StoreError.corruptRecord(entity: "GymConfig", id: id, underlying: error)

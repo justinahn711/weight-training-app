@@ -119,6 +119,43 @@ final class RecommendationPersistenceTests: XCTestCase {
         XCTAssertEqual(recommendation.reason, .weeklyVolumeBelowBudget(muscles: [.chest]))
     }
 
+    func testScheduledRecoveryWeekProducesAnAcceptableDeloadPlan() throws {
+        let exercise = try lift()
+        let workout = UUID()
+        let accepted = try store.acceptExercisePlan(
+            plan(exercise), workoutID: workout, startedAt: epoch, now: epoch
+        )
+        _ = try complete(plan: accepted, workoutID: workout, start: epoch)
+
+        var config = try store.gymConfig()
+        config.trainingBlock = TrainingBlockConfig(
+            startedAt: epoch.addingTimeInterval(-3 * 7 * 86_400), accumulationWeeks: 3
+        )
+        try store.saveGymConfig(config)
+        let nextDate = epoch.addingTimeInterval(2_000)
+        let recommendation = try store.recommendation(for: exercise, now: nextDate)
+        XCTAssertEqual(recommendation.action, .deload)
+        XCTAssertEqual(recommendation.reason, .scheduledDeload(week: 4))
+        XCTAssertEqual(recommendation.sets.count, 2)
+
+        let nextWorkout = UUID()
+        let proposed = ExercisePlan(
+            exercise: exercise, sets: recommendation.sets,
+            restSeconds: Int(exercise.restTarget), isDeload: true
+        )
+        let saved = try store.acceptExercisePlan(
+            proposed, workoutID: nextWorkout, startedAt: nextDate, now: nextDate
+        )
+        XCTAssertTrue(saved.isDeload)
+
+        let resumed = try store.recommendation(
+            for: exercise, now: nextDate.addingTimeInterval(7 * 86_400)
+        )
+        XCTAssertEqual(resumed.action, .hold)
+        XCTAssertEqual(resumed.reason, .resumeAfterDeload)
+        XCTAssertEqual(resumed.sets, accepted.sets)
+    }
+
     func testVolumeReportProjectsOnlyRemainingAcceptedWork() throws {
         let exercise = try lift()
         let workout = UUID()

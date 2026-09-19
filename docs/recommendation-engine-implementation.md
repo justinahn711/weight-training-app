@@ -2,7 +2,7 @@
 
 This work begins the [recommendation engine plan](recommendation-engine-plan.md) in an isolated worktree on `feat/recommendation-engine`, based on the locally available `origin/main` commit `43f4714`.
 
-## Current milestone: weekly muscle-volume allocation
+## Current milestone: personalized volume and training blocks
 
 Implemented in `WeightTrainingCore`:
 
@@ -71,15 +71,25 @@ unrelated exercises. Completed plans remain completed, and finishing after all
 planned work remains a single tap. The reason sheet remains reachable in
 portrait, landscape, and accessibility text sizes.
 
-The remaining sequence is:
+Settings now offers optional starting set bands after two or three consecutive
+calendar weeks were completed as planned, with every working-set RPE reported at
+or below its target. A blank, incomplete, time-limited, painful, fatiguing, or
+unscored week prevents the inference. The suggestion changes only the editor's
+draft; the lifter must still press Save.
 
-1. Derive optional starting bands from two to three complete, explicitly
-   tolerated weeks once completion and recovery inputs can support that inference.
-   Until then, the app uses editable defaults rather than treating past volume as
-   automatically tolerated.
-2. Add optional tonnage/block targets and scheduled/adaptive deload coordination.
-   The current core respects an accepted deload but does not create a whole-program
-   schedule or infer fatigue from wearable scores.
+An optional synced training block derives its phase from the chosen start date.
+It uses two or three consecutive, comparable tolerated weeks to calculate median
+baseline tonnage, then shows a configurable 5–10% build target and 70–80%
+recovery target. The recovery week proposes roughly one-third fewer working sets
+at RPE 7. An adaptive recovery proposal requires repeated fatigue across at least
+two exercises; time pressure, pain, wearable data, or one struggling movement do
+not become whole-program fatigue. A recovery proposal must be accepted, and the
+next build week offers the last non-deload plan again so the reduced plan does
+not become permanent.
+
+The next evaluation step is physical-device review with real history, followed
+by shadow comparison of recommendations and user overrides before tuning any
+thresholds.
 
 ## Calling convention
 
@@ -100,7 +110,12 @@ Supply a stable `now` for replays. Construct a new `ExercisePlan` only when the 
 
 The new unit coverage includes repeated-easy gates, hardest-set effort, planned completion, missing/provenance-unknown effort, equipment rounding, kg loads, stale history, rest/technique changes, duplicate and corrected logs, explicit session identity, deload boundaries, and local load resets.
 
-The new replay scenarios feed recommendations back into subsequent workouts. They cover steady progression, an effort-limited plateau, alternating missing effort, and repeated misses followed by rebuilding. These simulations verify behavior; they do not establish physiological effectiveness.
+The replay scenarios feed recommendations back into subsequent workouts. They
+cover steady progression, an effort-limited plateau, alternating missing effort,
+repeated misses followed by rebuilding, twelve calendar weeks of scheduled
+recovery, deload boundaries, and time pressure that must not be misclassified as
+program fatigue. These simulations verify behavior; they do not establish
+physiological effectiveness.
 
 Run the repository ladder from this worktree:
 
@@ -115,15 +130,15 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
 
 Physical-device validation remains required for the integrated workout flow.
 
-Validation through the early-completion milestone on 2026-09-19:
+Validation through the training-block milestone on 2026-09-19:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including completion-reason persistence and sync conflicts (726 tests) | PASS |
-| Repository scenario script, including overlapping muscle budgets (12 scenarios) | PASS |
+| Swift domain/store suite, including personalized bands, block persistence, baseline derivation, deload entry/exit, and sync constraints (742 tests) | PASS |
+| Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |
-| Focused iPhone UI: muscle-volume settings plus early-finish reasons in portrait/landscape and accessibility text | PASS |
+| Focused iPhone UI through the early-completion milestone | PASS |
 | Signed iPhone build and install over existing app data | PASS |
 | Physical-device hands-on volume and recommendation review | PENDING |
 

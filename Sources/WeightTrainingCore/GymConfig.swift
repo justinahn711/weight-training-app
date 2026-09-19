@@ -46,6 +46,10 @@ public struct GymConfig: Hashable, Codable, Sendable {
     /// muscle can be adjusted independently in Settings.
     public var volumeBudgets: [MuscleSetBudget]
 
+    /// An explicitly enabled accumulation/deload cycle. Nil keeps ordinary
+    /// exercise progression independent of a calendar block.
+    public var trainingBlock: TrainingBlockConfig?
+
     /// The selected training rotation. `nil` means setup hasn't happened yet —
     /// distinct from having chosen push/pull/legs — so a fresh install can
     /// still ask once (#136); `effectiveTrainingSplit` is what every reader
@@ -82,7 +86,8 @@ public struct GymConfig: Hashable, Codable, Sendable {
         barWeight: Load? = nil,
         trainingSplit: TrainingSplit? = nil,
         weeklySessionTarget: Int = 3,
-        volumeBudgets: [MuscleSetBudget]? = nil
+        volumeBudgets: [MuscleSetBudget]? = nil,
+        trainingBlock: TrainingBlockConfig? = nil
     ) {
         self.unit = unit
         self.availablePlates = availablePlates ?? unit.standardPlates
@@ -90,6 +95,7 @@ public struct GymConfig: Hashable, Codable, Sendable {
         self.trainingSplit = trainingSplit
         self.weeklySessionTarget = min(max(weeklySessionTarget, 1), 7)
         self.volumeBudgets = Self.normalizedBudgets(volumeBudgets ?? MuscleSetBudget.defaults)
+        self.trainingBlock = trainingBlock
     }
 
     /// Rows written before this landed describe a pound gym, because that is
@@ -117,6 +123,7 @@ public struct GymConfig: Hashable, Codable, Sendable {
             try container.decodeIfPresent([MuscleSetBudget].self, forKey: .volumeBudgets)
                 ?? MuscleSetBudget.defaults
         )
+        self.trainingBlock = try container.decodeIfPresent(TrainingBlockConfig.self, forKey: .trainingBlock)
     }
 
     public func volumeTarget(for muscle: Muscle) -> ClosedRange<Int> {

@@ -870,7 +870,8 @@ final class SessionViewModel {
         if let active = current.acceptedPlan { return active }
         if let suggestion = current.recommendation, !suggestion.sets.isEmpty {
             return ExercisePlan(exercise: current.exercise, sets: suggestion.sets,
-                                restSeconds: Int(current.exercise.restTarget))
+                                restSeconds: Int(current.exercise.restTarget),
+                                isDeload: suggestion.action == .deload)
         }
         let count = max(1, min(8, current.lastPerformance?.sets.count ?? 3))
         let range = current.exercise.recommendationPolicy.repRange
