@@ -8,9 +8,23 @@ public struct CyclePosition: Hashable, Sendable {
     /// When each day was last trained. Absent for a day never done.
     public let lastPerformed: [DayKind: Date]
 
-    public init(next: DayKind, lastPerformed: [DayKind: Date]) {
+    /// What the lifter calls a day, when they have renamed it (#136).
+    ///
+    /// Only carries entries for days whose template name differs from the
+    /// built-in one, so `summary` keeps its existing wording for anybody who
+    /// never opened the split editor. A name nobody chose is not worth
+    /// carrying — and the dashboard was already showing chosen names on the
+    /// Resume button while this sentence said "Push".
+    public let dayNames: [DayKind: String]
+
+    public init(
+        next: DayKind,
+        lastPerformed: [DayKind: Date],
+        dayNames: [DayKind: String] = [:]
+    ) {
         self.next = next
         self.lastPerformed = lastPerformed
+        self.dayNames = dayNames
     }
 
     /// Whole days since a given day was last trained.
@@ -30,14 +44,22 @@ public struct CyclePosition: Hashable, Sendable {
     /// means something — but they never *decide* anything. The next day comes
     /// from cycle position alone.
     public func summary(now: Date = Date(), calendar: Calendar = .current) -> String {
-        let name = next.rawValue
+        // A chosen day name is said exactly as it was typed, in both halves
+        // of the sentence. `.capitalized` is a lossy read of a name someone
+        // wrote — "arms and abs" comes back "Arms And Abs" — and the Resume
+        // button directly below this line shows the unmodified name, so the
+        // derived reading made one screen call one day two things. A built-in
+        // day carries no chosen name and keeps the capitalised/lowercase pair
+        // it has always used.
+        let heading = dayNames[next] ?? next.rawValue.capitalized
+        let repeated = dayNames[next] ?? next.rawValue
         guard let days = daysSince(next, now: now, calendar: calendar) else {
-            return "Next: \(name.capitalized) — first time"
+            return "Next: \(heading) — first time"
         }
         switch days {
-        case 0:  return "Next: \(name.capitalized) — last \(name) was today"
-        case 1:  return "Next: \(name.capitalized) — last \(name) was yesterday"
-        default: return "Next: \(name.capitalized) — last \(name) was \(days) days ago"
+        case 0:  return "Next: \(heading) — last \(repeated) was today"
+        case 1:  return "Next: \(heading) — last \(repeated) was yesterday"
+        default: return "Next: \(heading) — last \(repeated) was \(days) days ago"
         }
     }
 }
@@ -118,6 +140,13 @@ public enum CycleEngine {
             templates: templates,
             calendar: calendar
         )
+        // The names come from the same templates that decide the order, so a
+        // split edited in Settings renames this sentence without a second
+        // source of truth.
+        let names = templates.reduce(into: [DayKind: String]()) { names, template in
+            guard template.name != template.kind.rawValue.capitalized else { return }
+            names[template.kind] = template.name
+        }
 
         var lastPerformed: [DayKind: Date] = [:]
         for session in sessions {
@@ -128,7 +157,8 @@ public enum CycleEngine {
         // A fresh install — or a split with no sessions logged since it
         // started — begins at the top of its own rotation.
         guard let latest = sessions.last else {
-            return CyclePosition(next: templates.first?.kind ?? .push, lastPerformed: [:])
+            return CyclePosition(next: templates.first?.kind ?? .push, lastPerformed: [:],
+                                 dayNames: names)
         }
 
         // Steps through the split's own ordered days rather than `DayKind`'s
@@ -137,10 +167,11 @@ public enum CycleEngine {
         // here: it came from classifying against this same `templates` array.
         guard !templates.isEmpty,
               let index = templates.firstIndex(where: { $0.kind == latest.kind }) else {
-            return CyclePosition(next: templates.first?.kind ?? .push, lastPerformed: lastPerformed)
+            return CyclePosition(next: templates.first?.kind ?? .push, lastPerformed: lastPerformed,
+                                 dayNames: names)
         }
         let next = templates[(index + 1) % templates.count].kind
-        return CyclePosition(next: next, lastPerformed: lastPerformed)
+        return CyclePosition(next: next, lastPerformed: lastPerformed, dayNames: names)
     }
 
     /// How many times a day has been trained, which is what drives which side
