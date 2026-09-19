@@ -156,8 +156,12 @@ struct ContentView: View {
         let starved = !volume.starved.isEmpty
         return Button { showingVolume = true } label: {
             HStack(spacing: 6) {
+                // `Theme.attention`, not the accent: a hole in the week is
+                // news, not the button to press, and the dashboard used one
+                // orange for both. The glyph and the sentence say the same
+                // thing, so it never rests on colour alone.
                 Image(systemName: starved ? "exclamationmark.triangle.fill" : "chart.bar")
-                    .foregroundStyle(starved ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
+                    .foregroundStyle(starved ? AnyShapeStyle(Theme.attention) : AnyShapeStyle(.secondary))
                 Text(starved ? starvedSummary(volume) : "Volume this week")
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -171,7 +175,7 @@ struct ContentView: View {
             // training problem — the case where being read matters most (#114).
             // The icon keeps the colour, so the row still reads as a warning at
             // a glance without the words depending on hue to be legible.
-            .foregroundStyle(starved ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
+            .foregroundStyle(starved ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             // 44pt, not the 18pt the text happened to be. The row spans the
             // screen so it never looked hard to hit, but a control sized by its
             // font is one a shaking hand or a thumb on a rack misses — the
@@ -307,7 +311,7 @@ struct ContentView: View {
             Task { await connectHealth() }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "heart.text.square").foregroundStyle(.tint)
+                Image(systemName: "heart.text.square").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Use recovery data")
                         .font(.subheadline.weight(.medium))
@@ -318,18 +322,16 @@ struct ContentView: View {
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(.secondary)
             }
-            // Tint on a 12% tint wash reads fine to me and fails WCAG — the
-            // title and the caption under it were both tint-coloured, and the
-            // caption is `.secondary` on top of that. This card is mine, from
-            // #110, and the audit caught it on its first run (#114). Primary
-            // for the words, tint kept for the icon and the chevron, where
-            // colour is decoration rather than the thing being read.
+            // Words stayed primary after #114 found tinted text on a tint
+            // wash failing contrast. The wash itself is gone now: an optional
+            // Health prompt wearing the action colour made it look as urgent
+            // as starting the workout. Neutral card, neutral glyphs.
             .foregroundStyle(.primary)
             .padding(.vertical, 10)
             .padding(.horizontal, 14)
-            .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -345,13 +347,13 @@ struct ContentView: View {
                 Button { showingCompletionSummary = true } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle")
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(Theme.done)
                         Text("Review what’s next")
                             .font(.subheadline.weight(.semibold))
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(.secondary)
                     }
                     .foregroundStyle(.primary)
                     .frame(minHeight: 44)
@@ -380,22 +382,21 @@ struct ContentView: View {
             if let digest, !digest.isEmpty {
                 Button { showingDigest = true } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "sparkles").foregroundStyle(.tint)
+                        Image(systemName: "sparkles").foregroundStyle(.secondary)
                         Text("\(digest.bullets.count) thing\(digest.bullets.count == 1 ? "" : "s") to look at")
                             .font(.subheadline.weight(.medium))
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(.secondary)
                     }
-                    // Same correction as the recovery card above: tinted words
-                    // on a tint wash fail contrast, so the words go primary and
-                    // the tint stays on the icons, where it decorates rather
-                    // than carries meaning (#114).
+                    // Same treatment as the recovery card above: primary
+                    // words since #114, and now a neutral surface, so the
+                    // accent stays with the day's one action.
                     .foregroundStyle(.primary)
                     .padding(.vertical, 10)
                     .padding(.horizontal, 14)
-                    .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                    .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

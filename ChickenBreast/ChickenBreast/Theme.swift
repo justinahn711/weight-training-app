@@ -51,6 +51,36 @@ enum Theme {
     /// A set logged, a rest complete: the thing you were doing is done.
     static let done = Color.green
 
+    /// Something is behind and worth a look — a muscle under its weekly band.
+    ///
+    /// Not the accent: "there is a hole in your week" and "this is the button
+    /// to press" are different messages, and the dashboard used one orange for
+    /// both. Never the only cue; every use pairs it with a glyph and a
+    /// sentence. Measures 7.0:1 on the app's background.
+    static let attention = Color(red: 1.0, green: 0.42, blue: 0.35)
+
+    /// The three colours that stand for *which kind of thing*, not for news:
+    /// day kinds on the History calendar, rings on Progress. Cool, because
+    /// every warm hue in this file already means something that just
+    /// happened — a record, a finished set, an action to take.
+    ///
+    /// Validated rather than eyeballed, against this app's dark surface
+    /// (`dataviz`'s checker): all three inside the dark lightness band, all
+    /// above 3:1 on the background, normal-vision separation ΔE 21. Their
+    /// worst colourblind pair (blue against magenta, ΔE 7.1 deutan) sits in
+    /// the band that is only legal beside a label — which is why both places
+    /// that use these keep their text labels, and the calendar keeps its
+    /// day-kind letter.
+    static let categories: [Color] = [
+        Color(red: 0.231, green: 0.510, blue: 0.965),
+        Color(red: 0.753, green: 0.290, blue: 0.847),
+        Color(red: 0.059, green: 0.663, blue: 0.549),
+    ]
+
+    /// Text on a `categories` fill. Dark for the same reason `recordText` is:
+    /// white measured 2.97:1 on the teal, failing a calendar's small digits.
+    static let onCategory = Color(red: 0.07, green: 0.06, blue: 0.05)
+
     /// The one spring for state that moves on screen — a banner arriving,
     /// an exercise changing, a card leaving. Bouncy enough to feel like a
     /// thing landed, short enough that the next tap never waits on it.

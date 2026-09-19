@@ -121,9 +121,12 @@ private extension E1RMTrend {
 /// beside the rust accent, because orange sat next to it read as the same
 /// ring twice — and would to anyone with red–green colour vision.
 private enum RingPalette {
-    static let sessions = Color.accentColor
-    static let sets = Color.teal
-    static let muscles = Color.indigo
+    // The app's category colours, not the accent: a ring says which measure
+    // this is, the same job a day kind does on the calendar. Spending the
+    // action colour on one of them made the sessions ring look tappable.
+    static let sessions = Theme.categories[0]
+    static let sets = Theme.categories[1]
+    static let muscles = Theme.categories[2]
 }
 
 private struct WeeklyRingsCard: View {
@@ -353,7 +356,10 @@ private struct VolumeChartCard: View {
                     y: .value("Sets", point.sets),
                     width: .ratio(0.6)
                 )
-                .foregroundStyle(Color.accentColor)
+                // The colour the Hard sets ring already uses, because this
+                // chart is that same measure over time. The accent stays on
+                // things that can be tapped.
+                .foregroundStyle(RingPalette.sets)
                 // The week in progress is a partial bar, and reads as one.
                 .opacity(point.week == points.last?.week ? 0.45 : 1)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -490,10 +496,12 @@ private struct ConsistencyCard: View {
     private func fill(_ level: TrainingIntensity) -> AnyShapeStyle {
         switch level {
         case .none: return AnyShapeStyle(.fill.tertiary)
-        case .light: return AnyShapeStyle(Color.accentColor.opacity(0.3))
-        case .moderate: return AnyShapeStyle(Color.accentColor.opacity(0.55))
-        case .heavy: return AnyShapeStyle(Color.accentColor.opacity(0.8))
-        case .full: return AnyShapeStyle(Color.accentColor)
+        // One hue, light to dark — a sequential ramp for a magnitude, in the
+        // same colour as the sets chart above it, since both count sets.
+        case .light: return AnyShapeStyle(RingPalette.sets.opacity(0.32))
+        case .moderate: return AnyShapeStyle(RingPalette.sets.opacity(0.58))
+        case .heavy: return AnyShapeStyle(RingPalette.sets.opacity(0.8))
+        case .full: return AnyShapeStyle(RingPalette.sets)
         }
     }
 }

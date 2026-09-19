@@ -143,7 +143,7 @@ private struct WeeklyStreakCard: View {
         HStack(spacing: 12) {
             Image(systemName: "calendar.badge.checkmark")
                 .font(.title2)
-                .foregroundStyle(.tint)
+                .foregroundStyle(.secondary)
                 .frame(width: 32)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -322,7 +322,9 @@ private struct DayCell: View {
         VStack(spacing: 2) {
             Text("\(Calendar.current.component(.day, from: date))")
                 .font(.footnote.weight(day == nil ? .regular : .semibold))
-                .foregroundStyle(day == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+                // Dark on the fill, not white: white measured 2.97:1 on the
+                // teal, and these are 13pt digits.
+                .foregroundStyle(day == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.onCategory))
             if let day {
                 // Deliberately fixed rather than Dynamic Type-aware (a
                 // platform audit's lowest-priority finding): this sits
@@ -334,7 +336,7 @@ private struct DayCell: View {
                 // small.
                 Text(initial(for: day))
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(Theme.onCategory.opacity(0.8))
             }
         }
         .frame(maxWidth: .infinity)
@@ -359,9 +361,14 @@ private struct DayCell: View {
 
     private func tint(for day: TrainingDay) -> Color {
         switch day.kind {
-        case .push:  return .blue
-        case .pull:  return .green
-        case .legs:  return .orange
+        // Theme's own three category colours, so a day kind means the same
+        // kind of thing as a Progress ring does (#categorical, not status):
+        // the old trio borrowed `.green` from "done" and `.orange` from the
+        // action colour, so a Tuesday read as a finished set and a Friday as
+        // something to tap.
+        case .push:  return Theme.categories[0]
+        case .pull:  return Theme.categories[1]
+        case .legs:  return Theme.categories[2]
         case nil:    return .gray
         // `DayKind` stopped being a closed push/pull/legs enum in #136 so a
         // split could name upper/lower, full body, and custom days, and a
@@ -376,9 +383,11 @@ private struct DayCell: View {
 private struct Legend: View {
     var body: some View {
         HStack(spacing: 14) {
-            item(.blue, "Push")
-            item(.green, "Pull")
-            item(.orange, "Legs")
+            // The same three the squares use; a legend drifting from the
+            // thing it explains is worse than no legend.
+            item(Theme.categories[0], "Push")
+            item(Theme.categories[1], "Pull")
+            item(Theme.categories[2], "Legs")
             Spacer()
         }
         .font(.caption2)
