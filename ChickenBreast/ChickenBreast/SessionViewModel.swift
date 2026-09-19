@@ -141,8 +141,21 @@ final class SessionViewModel {
     /// `isWarmup: true` — only `Extra warmup` sends this — skips that check
     /// entirely and always logs the values on screen as an unplanned
     /// warmup, ramp or no ramp, exactly as it did before this change.
+    /// Whether the standing values describe a set that can honestly be
+    /// written.
+    ///
+    /// A cold-start lift on unmeasured equipment opens at `Load.zero`, and a
+    /// single tap used to write "0 lb × 10" into history — where it then
+    /// feeds targets, volume and records. Zero is a number, not an absence,
+    /// so "unknown means silent" requires refusing it rather than logging
+    /// it. Bodyweight lifts are the one place a zero added load is real.
+    var canLogSet: Bool {
+        guard let current else { return false }
+        return pendingLoad > .zero || current.exercise.equipment == .bodyweight
+    }
+
     func logSet(isWarmup: Bool = false) {
-        guard let current else { return }
+        guard let current, canLogSet else { return }
         if !isWarmup, isOnActiveWarmupRung, let rung = nextWarmupRung {
             logWarmup(rung)
             return
@@ -193,6 +206,9 @@ final class SessionViewModel {
             session.log(record)
             recentlyLoggedSet = record
             liveLogActionID = UUID()
+            // Logging on the lift the session moved to is the "next action"
+            // the moved-on notice waits for; it has done its job.
+            autoAdvancedFrom = nil
             // Judged against previous days, not earlier today: feeling out
             // a new lift across three sets is one session, not three
             // records. The digest's weekly view keeps the engine's own
@@ -296,6 +312,18 @@ final class SessionViewModel {
         publishActivity()
     }
 
+    /// Stops a clock that has counted `RestTimer.maximumOverrun` past its
+    /// target. The set stays logged and the session doesn't move; only the
+    /// clock and its lock-screen face give up, because ten minutes over is a
+    /// phone on a bench rather than a rest anybody is taking. The check-in
+    /// notification scheduled alongside the rest is what asks about it.
+    func expireRestIfNeeded(now: Date = Date()) {
+        guard let rest, rest.hasExpired(at: now) else { return }
+        self.rest = nil
+        RestNotification.cancel()
+        publishActivity()
+    }
+
     /// Called by the rest banner's clock when the countdown reaches zero.
     /// Moves on if a move was armed for the lift still on screen.
     func restDidComplete() {
@@ -317,17 +345,16 @@ final class SessionViewModel {
         select(exerciseID: from.id)
     }
 
-    func dismissAutoAdvanceNotice() {
-        autoAdvancedFrom = nil
-    }
-
     private func performPendingAdvance() {
         guard let next = pendingAdvance else { return }
         let from = current
-        // A completed rest has nothing left to say on the next lift; a live
-        // one (skip) has already been dismissed by its caller.
-        rest = nil
-        RestNotification.cancel()
+        // The clock is deliberately left running. It measures time since the
+        // last set, not time owed to one lift, so moving on doesn't end it —
+        // it keeps counting up on the new lift, on screen and in the Dynamic
+        // Island, until the next set replaces it, Skip ends it, or
+        // `expireRestIfNeeded` gives up at ten minutes past target. A caller
+        // that means "I'm done resting" (Skip, and the Next-up card's Go)
+        // clears it before calling this.
         select(exerciseID: next.id)
         // `select` cleared it via `didChangeCurrentExercise`; the notice is
         // set after, so it survives into the new exercise on purpose.

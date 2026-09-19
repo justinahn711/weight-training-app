@@ -31,6 +31,23 @@ enum Theme {
     /// it reads as a decision, not an oversight.
     static let recordText = Color.black
 
+    /// Text on the accent fill (Log Set, the forward action's glyph).
+    ///
+    /// White on this orange measured 2.53:1 in a critique pass, failing
+    /// even the 3:1 large-text floor on the most-read button in the app.
+    /// Near-black on the same orange clears 7:1. Same reasoning as
+    /// `recordText`: a fixed brand fill has no adaptive counterpart to
+    /// derive its text from, so the pairing is named here once.
+    static let onAccent = Color(red: 0.07, green: 0.06, blue: 0.05)
+
+    /// Tint for secondary controls — Undo, Skip, Stay, Go back.
+    ///
+    /// Orange is reserved for the one action the screen exists for and the
+    /// rest ring. When it painted every button it stopped meaning anything
+    /// (a critique found it on eight controls at once); a neutral tint keeps
+    /// these legible without competing with Log Set.
+    static let quietTint = Color.primary
+
     /// A set logged, a rest complete: the thing you were doing is done.
     static let done = Color.green
 
@@ -62,5 +79,14 @@ enum Theme {
 
     static func quick(reduceMotion: Bool) -> Animation {
         reduceMotion ? reducedQuick : fullQuick
+    }
+
+    /// How a banner or disclosure arrives: sliding down from the edge it
+    /// belongs to, or — under Reduce Motion — simply fading in place. The
+    /// first Reduce Motion pass covered the springs but left these slides
+    /// hard-coded at five call sites; routing them through one function is
+    /// what keeps the next banner from repeating that.
+    static func edgeTransition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 }

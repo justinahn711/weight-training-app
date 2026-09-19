@@ -24,6 +24,11 @@ enum RestNotification {
     /// be running, and a set logged mid-rest supersedes the one before it.
     static let identifier = "rest-complete"
 
+    /// The check-in that fires when the clock has counted a full
+    /// `RestTimer.maximumOverrun` past the target: ten minutes over is more
+    /// likely a phone left on a bench than a rest.
+    static let idleIdentifier = "rest-idle-check"
+
     /// Schedules the alert for the end of this rest.
     ///
     /// - Parameter next: what's due when it fires, so a glance at the lock
@@ -68,6 +73,22 @@ enum RestNotification {
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: remaining, repeats: false)
         )
         try? await center.add(request)
+
+        // Scheduled with the rest itself, so the two always agree and one
+        // `cancel()` clears both.
+        let idle = UNMutableNotificationContent()
+        idle.title = "Still working out?"
+        idle.body = "Your rest has been running for ten minutes."
+        idle.sound = .default
+        let idleRequest = UNNotificationRequest(
+            identifier: idleIdentifier,
+            content: idle,
+            trigger: UNTimeIntervalNotificationTrigger(
+                timeInterval: max(1, rest.expiresAt.timeIntervalSinceNow),
+                repeats: false
+            )
+        )
+        try? await center.add(idleRequest)
     }
 
     /// Asks for notification access, serialised against every other prompt.
@@ -90,6 +111,6 @@ enum RestNotification {
     /// session left. A buzz for a set you took back is worse than no buzz.
     static func cancel() {
         UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [identifier])
+            .removePendingNotificationRequests(withIdentifiers: [identifier, idleIdentifier])
     }
 }

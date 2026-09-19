@@ -282,3 +282,44 @@ final class RestTargetTests: XCTestCase {
         XCTAssertEqual(byName["Hammer Curls"]?.restTarget, 90)
     }
 }
+
+/// The clock gives up ten minutes past the target: past that it is a phone on
+/// a bench, not a rest (the app pairs this with a "still working out?" check-in).
+final class RestExpiryTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_760_000_000)
+
+    private func timer(duration: TimeInterval = 180) -> RestTimer {
+        RestTimer(startedAt: start, duration: duration, setID: nil)
+    }
+
+    func testExpiresTenMinutesAfterTheTargetNotAfterTheStart() {
+        let rest = timer()
+        XCTAssertEqual(rest.expiresAt, rest.endsAt.addingTimeInterval(600))
+        XCTAssertEqual(RestTimer.maximumOverrun, 600)
+    }
+
+    func testNotExpiredWhileCountingDownOrShortlyOver() {
+        let rest = timer()
+        XCTAssertFalse(rest.hasExpired(at: start))
+        XCTAssertFalse(rest.hasExpired(at: rest.endsAt))
+        XCTAssertFalse(rest.hasExpired(at: rest.endsAt.addingTimeInterval(599)))
+    }
+
+    func testExpiredOnceTheOverrunReachesTheCap() {
+        let rest = timer()
+        XCTAssertTrue(rest.hasExpired(at: rest.endsAt.addingTimeInterval(600)))
+        XCTAssertTrue(rest.hasExpired(at: rest.endsAt.addingTimeInterval(3600)))
+    }
+
+    func testOverrunKeepsCountingUpToTheCap() {
+        let rest = timer()
+        XCTAssertEqual(rest.overrun(at: rest.endsAt.addingTimeInterval(90)), 90)
+        XCTAssertEqual(rest.displayTime(at: rest.endsAt.addingTimeInterval(90)), "+1:30")
+    }
+
+    func testAShortRestExpiresRelativeToItsOwnTarget() {
+        let short = timer(duration: 30)
+        XCTAssertFalse(short.hasExpired(at: start.addingTimeInterval(600)))
+        XCTAssertTrue(short.hasExpired(at: start.addingTimeInterval(630)))
+    }
+}

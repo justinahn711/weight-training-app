@@ -69,6 +69,20 @@ struct SessionView: View {
             // floor when the set ends. `.success` is the system's own "you
             // did the thing" pattern, distinct from the rest-over buzz.
             .sensoryFeedback(.success, trigger: model.recentRecord?.set.id) { _, new in new != nil }
+            // The haptic reaches a phone on the floor; neither it nor the
+            // gold banner reaches VoiceOver. Both moments that change what
+            // the lifter should believe — a record, and the screen moving to
+            // a different lift on its own — are announced, not just drawn.
+            .onChange(of: model.recentRecord?.set.id) { _, new in
+                guard new != nil, let record = model.recentRecord else { return }
+                AccessibilityNotification.Announcement(
+                    "Personal record, \(record.set.load.formatted(in: gym.unit)), \(record.set.reps) reps"
+                ).post()
+            }
+            .onChange(of: model.autoAdvancedFrom?.id) { _, new in
+                guard new != nil, let name = model.current?.exercise.name else { return }
+                AccessibilityNotification.Announcement("Moved on to \(name)").post()
+            }
             // The spring behind every banner arriving or leaving (task 3).
             // Keyed on the states that add or remove one, so a tick of the
             // rest clock never re-runs it.
@@ -101,6 +115,7 @@ struct SessionView: View {
                 } else {
                     stackedLayout(
                         exercise,
+                        height: geometry.size.height,
                         isCompact: geometry.size.height < 650 || dynamicTypeSize.isAccessibilitySize
                     )
                 }
@@ -129,6 +144,8 @@ struct SessionView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             model.reconcileLiveActivityActions()
+            // Coming back to a clock that ran out while the app was away.
+            withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.expireRestIfNeeded() }
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -138,7 +155,7 @@ struct SessionView: View {
                     }
                 } label: {
                     Image(systemName: voice.isListening ? "waveform.circle.fill" : "mic")
-                        .symbolEffect(.pulse, isActive: voice.isListening)
+                        .symbolEffect(.pulse, isActive: voice.isListening && !reduceMotion)
                 }
                 // Listening was conveyed by a filled glyph and a pulse, both
                 // invisible to a screen reader — so the one control whose whole
@@ -248,13 +265,29 @@ struct SessionView: View {
     /// Regular portrait keeps the familiar document-over-dock arrangement.
     /// Short portrait and accessibility text compact only the dock, while
     /// status changes move into the document so logging controls never jump.
-    private func stackedLayout(_ exercise: SessionExercise, isCompact: Bool) -> some View {
+    private func stackedLayout(_ exercise: SessionExercise, height: CGFloat, isCompact: Bool) -> some View {
         VStack(spacing: 0) {
+            restBar
             contextScroll(exercise, isCompact: isCompact, includesStatus: isCompact)
             if !isCompact {
                 statusBanners
             }
-            actionBar(exercise, isCompact: isCompact)
+            if dynamicTypeSize.isAccessibilitySize {
+                // At accessibility text sizes the bar's controls outgrow the
+                // space under the scroll view. A fixed bar then compresses
+                // them: Log Set's label spilled over "Finish workout" and
+                // covered it. Scrolling, as landscape already does, keeps
+                // every control whole and reachable (critique, adapt).
+                ScrollView {
+                    actionBar(exercise, isCompact: isCompact)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: height * 0.6)
+                .layoutPriority(1)
+                .background(.bar)
+            } else {
+                actionBar(exercise, isCompact: isCompact)
+            }
         }
     }
 
@@ -263,6 +296,13 @@ struct SessionView: View {
     /// competing vertically. Rest, voice, and undo live on the left; their
     /// transitions cannot move any control on the right.
     private func landscapeLayout(_ exercise: SessionExercise, size: CGSize) -> some View {
+        VStack(spacing: 0) {
+            restBar
+            landscapeColumns(exercise, size: size)
+        }
+    }
+
+    private func landscapeColumns(_ exercise: SessionExercise, size: CGSize) -> some View {
         HStack(spacing: 0) {
             contextScroll(exercise, isCompact: true, includesStatus: true)
                 .frame(width: min(size.width * 0.48, max(280, size.width * 0.42)))
@@ -329,6 +369,28 @@ struct SessionView: View {
         }
     }
 
+    /// The rest clock, pinned under the navigation bar rather than sitting in
+    /// the banner stack above the action bar.
+    ///
+    /// It is glanced at, not operated: one look says how long is left, and the
+    /// only control on it is Skip. Pinning it keeps it in the same place
+    /// whatever else is on screen, and hands the middle of the screen back to
+    /// the set rows — the space #205 was trying to reclaim. It is the in-app
+    /// twin of the Dynamic Island's compact clock, which iOS hides while this
+    /// app is in the foreground.
+    @ViewBuilder
+    private var restBar: some View {
+        if let rest = model.rest {
+            RestBanner(
+                rest: rest,
+                onSkip: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.skipRest() } },
+                onComplete: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.restDidComplete() } },
+                onExpire: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.expireRestIfNeeded() } }
+            )
+            .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
+        }
+    }
+
     @ViewBuilder
     private var statusBanners: some View {
         // `heard` and `rest` are independent optionals on the model — a rest
@@ -361,45 +423,27 @@ struct SessionView: View {
                 onStay: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.stayOnCurrentExercise() } },
                 onGo: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.skipRest() } }
             )
-            .transition(.opacity.combined(with: .move(edge: .top)))
+            .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
         }
         if let from = model.autoAdvancedFrom {
             AutoAdvancedBanner(
                 from: from,
-                onBack: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoAutoAdvance() } },
-                onExpire: { model.dismissAutoAdvanceNotice() }
+                onBack: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoAutoAdvance() } }
             )
-            .transition(.opacity.combined(with: .move(edge: .top)))
+            .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
         }
-        if let rest = model.rest {
-            RestBanner(
-                rest: rest,
-                onSkip: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.skipRest() } },
-                onComplete: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.restDidComplete() } }
-            )
-            .transition(.move(edge: .top).combined(with: .opacity))
-        } else {
-            // The other half of #173: a rest that was skipped, lost, or never
-            // started could only be replaced by logging a set that wasn't
-            // performed, or by speaking to the app — and voice needs a quiet
-            // room and a listening phone, which is exactly what's missing in
-            // the gym report that opened this issue. `RestBanner`'s own slot
-            // is the natural home for a rest control, but there's no banner to
-            // put a button on when nothing is running — so this sits in the
-            // same spot, styled low enough not to read as a status when there
-            // is nothing to report.
-            StartRestControl(onStart: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.startRest() } })
-                .transition(.opacity)
-        }
+        // No resident "Start Rest" row when nothing is running (#173's
+        // control, relocated): a manual rest is a once-a-session correction,
+        // so it lives in the action bar's More menu beside Extra warmup
+        // instead of spending a row on every set (critique, distill).
         if let record = model.recentlyLoggedSet {
             LoggedSetBanner(
                 record: record,
                 personalRecord: model.recentRecord?.set.id == record.id ? model.recentRecord : nil,
                 unit: gym.unit,
-                onUndo: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoRecentlyLoggedSet(id: record.id) } },
-                onExpire: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.dismissRecentSetUndo(id: record.id) } }
+                onUndo: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoRecentlyLoggedSet(id: record.id) } }
             )
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
         }
     }
 
@@ -412,7 +456,11 @@ struct SessionView: View {
                     isChoosingExercise = true
                 } label: {
                     HStack(spacing: 4) {
+                        // One line, shrinking before wrapping: at accessibility
+                        // sizes "1 of 6" broke onto three lines.
                         Text(model.progressLabel)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
                         Image(systemName: "chevron.down")
                             .font(.caption.weight(.semibold))
                     }
@@ -426,12 +474,16 @@ struct SessionView: View {
                 .accessibilityValue("\(model.progressLabel), \(exercise.exercise.name)")
                 .accessibilityHint("Shows every exercise in this workout")
                 .accessibilityIdentifier("session.exercise.choose")
-                if let slot = exercise.slot {
+                if dynamicTypeSize.isAccessibilitySize {
+                    // The slot caption can't fit beside the progress label and
+                    // Finish at these sizes; it only ever truncated to "Inclin…".
+                    EmptyView()
+                } else if let slot = exercise.slot {
                     // The slot is the job. Naming it makes a swap legible as a
                     // substitution rather than as abandoning the day's shape.
                     Text(slot.name)
                         .font(.subheadline)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else {
                     // No slot means this lift was added rather than planned —
@@ -440,22 +492,34 @@ struct SessionView: View {
                     // so the word means the same thing in both places.
                     Text("Added for today")
                         .font(.subheadline)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Button("Finish") {
-                    requestFinish()
+                // Only while the footer offers "Next exercise". On the last
+                // lift the footer's own "Finish workout" is the forward
+                // action, and two Finish controls on one screen read as two
+                // different things (critique, distill). Neutral rather than
+                // orange: ending early is available, not encouraged.
+                // Kept at accessibility text sizes, where the scrolling action
+                // bar can hold the footer's Finish out of view.
+                if !model.session.isOnLastExercise || dynamicTypeSize.isAccessibilitySize {
+                    Button {
+                        requestFinish()
+                    } label: {
+                        Text("Finish")
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    // contentShape makes the reserved 44pt height the real
+                    // tappable and audited region (#114).
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityLabel("Finish workout")
+                    .accessibilityIdentifier("session.finish.header")
                 }
-                .font(.subheadline.weight(.semibold))
-                // The frame alone grows the layout slot while the tappable and
-                // audited region stays the glyphs' own 18pt — which is what the
-                // system audit measured here (#114). contentShape is what makes
-                // the reserved height real.
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-                .accessibilityLabel("Finish workout")
-                .accessibilityIdentifier("session.finish.header")
             }
             Button {
                 swapping = exercise
@@ -468,7 +532,7 @@ struct SessionView: View {
                         .multilineTextAlignment(.leading)
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
             }
@@ -618,7 +682,66 @@ struct SessionView: View {
     /// screen wherever the route goes (#95) — a lift with no plate buttons has
     /// no other explanation here. Every other placement would have left this
     /// line where it was and added a *second* way into one sheet.
+    /// The full Target / Last time card earns its space before the first
+    /// set, when both lines inform the weight about to be chosen. After a
+    /// working set is logged, or on a first outing where both lines would
+    /// only say "nothing yet", it collapses to one line so the upper half of
+    /// the screen stops reading as a form (critique, distill).
+    @ViewBuilder
     private func context(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
+        let isFirstOuting = exercise.prescription.isColdStart && exercise.lastPerformance == nil
+        if isFirstOuting || !exercise.workingSets.isEmpty {
+            collapsedContext(exercise, isFirstOuting: isFirstOuting)
+        } else {
+            fullContext(exercise, isCompact: isCompact)
+        }
+    }
+
+    private func collapsedContext(_ exercise: SessionExercise, isFirstOuting: Bool) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isFirstOuting ? "First time on this lift" : collapsedLine(exercise))
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                if isFirstOuting {
+                    Text("Set a weight, then log it.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 8)
+            Button {
+                configuring = exercise.exercise
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Configure \(exercise.exercise.name)")
+            .accessibilityValue(configSummary(exercise))
+            .accessibilityHint("Corrects what the app assumes about this lift")
+            .accessibilityIdentifier("session.exercise.configure")
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 4)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func collapsedLine(_ exercise: SessionExercise) -> String {
+        var parts = ["Target \(exercise.prescription.displayLine(in: gym.unit))"]
+        if let last = exercise.lastPerformance {
+            parts.append("Last \(last.displayLine(in: gym.unit))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func fullContext(_ exercise: SessionExercise, isCompact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             // Sits directly under the lift's name, which is what it is about,
             // and is still the line you are reading at the moment you notice a
@@ -632,7 +755,7 @@ struct SessionView: View {
                     Spacer(minLength: 0)
                 }
                 .font(.caption)
-                .foregroundStyle(.tint)
+                .foregroundStyle(.secondary)
                 // A caption's glyphs are 14pt, and contentShape without a
                 // minimum shapes exactly that — so the route into every
                 // per-lift setting was a 14pt target, in a room, mid-set. The
@@ -709,7 +832,7 @@ struct SessionView: View {
             if exercise.loggedSets.isEmpty {
                 Text("No sets yet")
                     .font(.body)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .padding(.vertical, 6)
             } else {
                 ForEach(Array(exercise.loggedSets.enumerated()), id: \.element.id) { index, set in
@@ -776,7 +899,7 @@ struct SessionView: View {
             } else {
                 Text("No sets yet")
                     .font(.body)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .padding(.vertical, 6)
             }
         }
@@ -791,8 +914,8 @@ struct SessionView: View {
                     ForEach(model.suggestions) { suggestion in
                         SuggestionChip(
                             suggestion: suggestion,
-                            onAccept: { withAnimation(.snappy) { model.accept(suggestion) } },
-                            onDismiss: { withAnimation(.snappy) { model.dismiss(suggestion) } }
+                            onAccept: { withAnimation(Theme.quick(reduceMotion: reduceMotion)) { model.accept(suggestion) } },
+                            onDismiss: { withAnimation(Theme.quick(reduceMotion: reduceMotion)) { model.dismiss(suggestion) } }
                         )
                     }
                 }
@@ -823,8 +946,9 @@ struct SessionView: View {
                 // number it describes (#14).
                 plates: model.plateBreakdown?.displayLine,
                 isPlateDisclosureExpanded: isPlateRowExpanded,
+                isWeightUnset: !model.canLogSet,
                 onTogglePlates: model.plateOptions.isEmpty ? nil : {
-                    withAnimation(.snappy) {
+                    withAnimation(Theme.quick(reduceMotion: reduceMotion)) {
                         isPlateRowExpanded.toggle()
                     }
                 },
@@ -852,7 +976,7 @@ struct SessionView: View {
                     onRemove: { model.removePlate($0) },
                     onClear: { model.clearToBar() }
                 )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
             }
 
             // Reps and RPE, always visible, one tap per step.
@@ -900,32 +1024,33 @@ struct SessionView: View {
                 let failureBeforeLogging = model.failure
                 withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.logSet() }
                 if model.failure == failureBeforeLogging {
-                    withAnimation(.snappy) { isPlateRowExpanded = false }
+                    withAnimation(Theme.quick(reduceMotion: reduceMotion)) { isPlateRowExpanded = false }
                 }
             } label: {
                 // The values on the button, so confirming them is the same
                 // glance as tapping: one look says "185 × 8, yes" and one tap
-                // logs it. The accessible NAME stays the literal string
-                // "Log Set" regardless of category — `SessionFlowUITests`
-                // and VoiceOver both find this control by that exact label,
-                // and changing it would break the lookup rather than the
-                // meaning. The visible headline and the accessibility VALUE
-                // are free to say more, and #211 is that they were not: while
-                // the form sits on an active warmup rung this button was
-                // going to log a warmup, silently, with no rest and no
-                // progression credit, and said "Log Set" right up to the tap
-                // — the exact confusion behind "why didn't rest start."
+                // logs it. The accessible NAME stays the literal "Log Set"
+                // whatever the category — `SessionFlowUITests` and VoiceOver
+                // both find this control by that exact label (#211). The
+                // visible headline says which kind of set the tap will write,
+                // since on a warmup rung it silently logged a warmup.
+                //
+                // Near-black on the orange, not white: white measured 2.53:1
+                // (and 2.23:1 for the subtitle at 85% opacity), failing even
+                // large-text contrast on the most-read control in the app. On
+                // the warmup rung's dimmed tint that pairing inverts, so the
+                // label goes light there instead.
                 VStack(spacing: 0) {
-                    Text(model.isOnActiveWarmupRung ? "Log Warmup" : "Log Set")
+                    Text(logSetTitle)
                         .font(isCompact ? .title3.bold() : .title2.bold())
-                    Text(logSetSummary)
+                    Text(model.canLogSet ? logSetSummary : "Set a weight first")
                         .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .opacity(0.85)
                         .contentTransition(.numericText())
                         .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
                 }
+                .foregroundStyle(logSetForeground)
                 .frame(maxWidth: .infinity)
-                .frame(height: isCompact ? 56 : 62)
+                .frame(minHeight: isCompact ? 56 : 62)
             }
             // Prominent either way — a warmup rung is still the thing to tap
             // next, not a lesser action — but tinted down from the accent
@@ -937,108 +1062,38 @@ struct SessionView: View {
             .buttonStyle(.borderedProminent)
             .tint(model.isOnActiveWarmupRung ? Color.secondary : Color.accentColor)
             .buttonBorderShape(.roundedRectangle(radius: 16))
+            .disabled(!model.canLogSet)
             .accessibilityLabel("Log Set")
-            // States the category VoiceOver-side, per #211's own criterion
-            // that the visible button and the accessibility value agree —
-            // the accessible NAME is intentionally NOT where that lives; see
-            // the comment above.
-            .accessibilityValue(
-                model.isOnActiveWarmupRung ? "Warmup, \(logSetSummary)" : logSetSummary
-            )
+            .accessibilityValue(logSetAccessibilityValue)
             .accessibilityIdentifier("session.log-set")
 
-            // One row instead of two (#207). `Next exercise` used to be a
-            // full-width bordered row below this one, spending an entire row
-            // of vertical space on a control tapped once per exercise, on a
-            // screen where the set rows are already losing (#205). #177's
-            // brief was "Back and Next must not be mis-tappable," not "Next
-            // must be full width" — full width was one way to buy separation,
-            // not the only one. Here the separation comes from placement and
-            // hierarchy instead of area: Back sits at the row's leading edge
-            // in muted plain text, `Next exercise` / `Finish workout` sits at
-            // the trailing edge as the one bordered, tinted control on the
-            // row, and `Extra warmup` — used just as rarely, and paired with
-            // `Back` even before this change — sits between them. The two
-            // flexible spacers push Back and Next to opposite ends of the
-            // screen width and put a third control physically in the gap, so
-            // a thumb sliding from one has to cross both empty space and
-            // Extra warmup before it could land on the other — a wider
-            // margin than the previous same-row adjacency #177 was written
-            // to fix ever had, just built horizontally instead of by
-            // stacking rows.
-            HStack(spacing: 8) {
-                if model.session.currentIndex > 0 {
-                    Button {
-                        withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.goBack() }
-                    } label: {
-                        Label("Back", systemImage: "chevron.backward")
-                            .font(.subheadline)
+            // Previous lift, a More menu, and the one forward action.
+            //
+            // #207 put Back, Extra warmup and Next on one row with Extra
+            // warmup as physical separation between the two navigation
+            // controls. A critique counted 13 tappable targets in this bar
+            // against four real decisions, so the two once-a-session actions
+            // (a manual rest, #173, and an extra warmup, #157) now share one
+            // menu that keeps that same middle position — the separation
+            // #177 asked for survives, the clutter doesn't. "Previous lift"
+            // rather than "Back": the nav bar's back chevron leaves the
+            // session, and one word meant both.
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) {
+                    forwardAction
+                    HStack(spacing: 8) {
+                        previousLiftButton
+                        Spacer(minLength: 8)
+                        moreMenu
                     }
-                    .foregroundStyle(.secondary)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                    .accessibilityIdentifier("session.exercise.previous")
                 }
-
-                Spacer(minLength: 8)
-
-                // Renamed from a bare "Warmup" (#157). That word already
-                // named the ramp above — a suggested sequence generated from
-                // today's working load — so a second, unrelated control with
-                // the same name read as the same feature twice, and the one
-                // that suggests nothing was the one every lift showed. This
-                // button logs whatever is currently dialled in as a warmup
-                // set; it exists for an extra rep beyond the ramp, or for a
-                // lift the ramp doesn't offer one on at all, so its name says
-                // "in addition to" rather than "instead of".
-                //
-                // Deliberately does *not* collapse the plate row the way the
-                // working `Log Set` button does (#170). Ramping is a sequence
-                // of different weights built one after another; a lifter
-                // mid-ramp who is using the plate buttons to move from rung to
-                // rung would have the row slammed shut after every single one.
-                // A working set is a destination — the weight is settled once
-                // logged. A warmup set is a waypoint, and the controls that
-                // got you there are exactly what gets you to the next one.
-                Button("Extra warmup") { model.logSet(isWarmup: true) }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                    .accessibilityHint("Logs the current values as an extra warmup set")
-                    .accessibilityIdentifier("session.log-warmup")
-
-                Spacer(minLength: 8)
-
-                // The common action (#177): the one advancing the whole
-                // session, and still the one control on this row with a
-                // border and a tint, rather than full width. `Finish
-                // workout` takes the identical treatment on the last
-                // exercise, so the swap changes only the label and
-                // destination, never the hierarchy the lifter has learned to
-                // trust.
-                if !model.session.isOnLastExercise {
-                    Button {
-                        withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.advance() }
-                    } label: {
-                        Label("Next exercise", systemImage: "chevron.forward")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(minHeight: 44)
-                            .padding(.horizontal, 2)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.accentColor)
-                    .accessibilityIdentifier("session.exercise.next")
-                } else {
-                    Button(action: requestFinish) {
-                        Text("Finish workout")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(minHeight: 44)
-                            .padding(.horizontal, 2)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.accentColor)
-                    .accessibilityIdentifier("session.finish.footer")
+            } else {
+                HStack(spacing: 8) {
+                    previousLiftButton
+                    Spacer(minLength: 8)
+                    moreMenu
+                    Spacer(minLength: 8)
+                    forwardAction
                 }
             }
         }
@@ -1087,6 +1142,105 @@ struct SessionView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// "Log Warmup" while the button would log the next ramp rung: it used
+    /// to say "Log Set" while quietly writing a warmup (#206's behaviour,
+    /// now named on the control that does it).
+    private var logSetTitle: String {
+        model.isOnActiveWarmupRung ? "Log Warmup" : "Log Set"
+    }
+
+    @ViewBuilder
+    private var previousLiftButton: some View {
+        if model.session.currentIndex > 0 {
+            Button {
+                withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.goBack() }
+            } label: {
+                Label("Previous lift", systemImage: "chevron.backward")
+                    .font(.subheadline)
+            }
+            .foregroundStyle(.secondary)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            .accessibilityIdentifier("session.exercise.previous")
+        }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button {
+                withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.startRest() }
+            } label: {
+                Label("Start rest", systemImage: "timer")
+            }
+            .disabled(model.rest != nil)
+            .accessibilityIdentifier("session.more.startRest")
+
+            Button {
+                model.logSet(isWarmup: true)
+            } label: {
+                Label("Log extra warmup", systemImage: "flame")
+            }
+            .disabled(!model.canLogSet)
+            .accessibilityIdentifier("session.more.extraWarmup")
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .tint(Theme.quietTint)
+        .accessibilityLabel("More actions")
+        .accessibilityHint("Start a rest without logging, or log an extra warmup set")
+        .accessibilityIdentifier("session.more")
+    }
+
+    /// The one orange control besides Log Set: the way forward.
+    @ViewBuilder
+    private var forwardAction: some View {
+        if !model.session.isOnLastExercise {
+            Button {
+                withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.advance() }
+            } label: {
+                Label("Next exercise", systemImage: "chevron.forward")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 2)
+            }
+            .buttonStyle(.bordered)
+            .tint(.accentColor)
+            .accessibilityIdentifier("session.exercise.next")
+        } else {
+            Button(action: requestFinish) {
+                Text("Finish workout")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 2)
+            }
+            .buttonStyle(.bordered)
+            .tint(.accentColor)
+            .accessibilityIdentifier("session.finish.footer")
+        }
+    }
+
+    /// Near-black on the accent fill, light on the dimmed fill a warmup rung
+    /// uses (#211), muted when the button is refusing a zero load. A single
+    /// colour can't serve all three: `Theme.onAccent` on grey is as unreadable
+    /// as white on orange was.
+    private var logSetForeground: AnyShapeStyle {
+        guard model.canLogSet else { return AnyShapeStyle(.secondary) }
+        return model.isOnActiveWarmupRung
+            ? AnyShapeStyle(Color.white)
+            : AnyShapeStyle(Theme.onAccent)
+    }
+
+    /// Spoken as the button's value, never its name: the name stays "Log Set"
+    /// so VoiceOver and the UI tests keep finding it (#211).
+    private var logSetAccessibilityValue: String {
+        guard model.canLogSet else { return "Set a weight first" }
+        return model.isOnActiveWarmupRung ? "Warmup, \(logSetSummary)" : logSetSummary
+    }
+
     /// What one tap of `Log Set` will write, spelled on the button itself.
     private var logSetSummary: String {
         "\(model.pendingLoad.formatted(in: gym.unit)) × \(model.pendingReps)"
@@ -1109,11 +1263,16 @@ private struct PartialFinishSheet: View {
     let onKeepTraining: () -> Void
 
     var body: some View {
+        // The explanation scrolls; the two answers are pinned to the bottom.
+        // At accessibility text sizes the whole stack outgrew the medium
+        // detent and "Finish workout" sat below the fold, unreachable — a
+        // test that was meant to catch this had been launching at default
+        // size because its content-size argument was misspelled.
         ScrollView {
             VStack(spacing: 20) {
                 Image(systemName: "checkmark.circle")
                     .font(.largeTitle)
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
 
                 VStack(spacing: 8) {
@@ -1123,9 +1282,15 @@ private struct PartialFinishSheet: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 12) {
                 Button(action: onFinish) {
                     Text("Finish workout")
+                        .foregroundStyle(Theme.onAccent)
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(.borderedProminent)
@@ -1136,10 +1301,12 @@ private struct PartialFinishSheet: View {
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(.bordered)
+                .tint(Theme.quietTint)
                 .accessibilityIdentifier("finish.confirmation.cancel")
             }
-            .padding(24)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(.bar)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .accessibilityElement(children: .contain)
@@ -1152,7 +1319,8 @@ private struct PartialFinishSheet: View {
 /// A short, scoped recovery action for the set that was just written (#8).
 ///
 /// Naming the exact set answers "what will this remove?" before the tap. It
-/// expires because older corrections have a safer, explicit home in Today.
+/// stays until the next set replaces it or the lift changes; older
+/// corrections have a safer, explicit home in Today.
 private struct LoggedSetBanner: View {
     let record: SetRecord
     /// Set when this set set one (task 2): the banner turns gold, says
@@ -1161,7 +1329,6 @@ private struct LoggedSetBanner: View {
     var personalRecord: PersonalRecord? = nil
     let unit: MassUnit
     let onUndo: () -> Void
-    let onExpire: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1182,21 +1349,24 @@ private struct LoggedSetBanner: View {
             Button("Undo", action: onUndo)
                 .font(.body.weight(.semibold))
                 .buttonStyle(.bordered)
+                .tint(Theme.quietTint)
+                .controlSize(.large)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-        .background(personalRecord == nil ? AnyShapeStyle(.bar) : AnyShapeStyle(Theme.record.opacity(0.16)))
+        // `.fill.tertiary` rather than `.bar`: on `.bar` an ordinary logged
+        // set was indistinguishable from the action bar beneath it.
+        .background(personalRecord == nil ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(Theme.record.opacity(0.16)))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(title), "
             + "\(record.load.formatted(in: unit)), \(record.reps) reps"
         )
         .accessibilityAction(named: "Undo logged set", onUndo)
-        .task(id: record.id) {
-            try? await Task.sleep(for: .seconds(8))
-            guard !Task.isCancelled else { return }
-            onExpire()
-        }
+        // No expiry timer. It used to vanish after 8 seconds — shorter than
+        // the walk back from the rack, and too short to reach through
+        // VoiceOver's actions menu (WCAG 2.2.1). It now stays until the next
+        // set replaces it or the lift changes, both handled by the model.
     }
 
     private var title: String {
@@ -1223,7 +1393,7 @@ private struct NextUpCard: View {
         HStack(spacing: 12) {
             Image(systemName: "arrow.turn.down.right")
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(.tint)
+                .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(isResting ? "Next up when rest ends" : "Next up")
@@ -1240,12 +1410,15 @@ private struct NextUpCard: View {
             Button("Stay", action: onStay)
                 .font(.body.weight(.semibold))
                 .buttonStyle(.bordered)
+                .tint(Theme.quietTint)
+                .controlSize(.large)
                 .accessibilityHint("Keeps this lift on screen for another set")
                 .accessibilityIdentifier("session.nextUp.stay")
 
             Button(action: onGo) {
                 Image(systemName: "chevron.forward")
                     .font(.body.weight(.bold))
+                    .foregroundStyle(Theme.onAccent)
                     .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
@@ -1261,11 +1434,12 @@ private struct NextUpCard: View {
 }
 
 /// What the automatic move leaves behind: where you came from and the way
-/// back, for eight seconds — the same window `LoggedSetBanner` gives Undo.
+/// back. It stays until the first set on the new lift or another move — a
+/// timer here meant coming back from the rack to a different exercise with
+/// no trace of how it happened.
 private struct AutoAdvancedBanner: View {
     let from: SessionExercise
     let onBack: () -> Void
-    let onExpire: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1283,22 +1457,19 @@ private struct AutoAdvancedBanner: View {
 
             Spacer(minLength: 8)
 
-            Button("Back", action: onBack)
+            Button("Go back", action: onBack)
                 .font(.body.weight(.semibold))
                 .buttonStyle(.bordered)
+                .tint(Theme.quietTint)
+                .controlSize(.large)
                 .accessibilityIdentifier("session.autoAdvanced.back")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-        .background(.bar)
+        .background(.fill.tertiary)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Moved on, \(from.exercise.name) done")
         .accessibilityAction(named: "Back to \(from.exercise.name)", onBack)
-        .task(id: from.id) {
-            try? await Task.sleep(for: .seconds(8))
-            guard !Task.isCancelled else { return }
-            onExpire()
-        }
     }
 }
 
@@ -1566,7 +1737,9 @@ private struct SuggestionChip: View {
                 Image(systemName: "xmark")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
+                    // 44pt, not 28: the audit floor, on a control tapped
+                    // mid-set right beside the chip it would dismiss.
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1602,6 +1775,8 @@ private struct WarmupBlock: View {
     let onLog: (WarmupSet) -> Void
     let onClear: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Clear is a sibling of the disclosure button, not nested inside its
@@ -1610,7 +1785,7 @@ private struct WarmupBlock: View {
             // tap to clear" quietly toggle the block open instead.
             HStack(spacing: 8) {
                 Button {
-                    withAnimation(.snappy) { isExpanded.toggle() }
+                    withAnimation(Theme.quick(reduceMotion: reduceMotion)) { isExpanded.toggle() }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -1685,36 +1860,6 @@ private struct WarmupBlock: View {
     }
 }
 
-/// The manual half of #173: a button that starts a rest when nothing logged
-/// one, sitting exactly where `RestBanner` would once one is running.
-///
-/// Deliberately plain rather than another filled banner — this is on screen
-/// almost the entire time nobody is resting, and a control that looks like a
-/// status would read as one more thing to check on a screen that already has
-/// nothing to report.
-private struct StartRestControl: View {
-    let onStart: () -> Void
-
-    var body: some View {
-        Button(action: onStart) {
-            HStack(spacing: 8) {
-                Image(systemName: "timer")
-                Text("Start Rest")
-                    .font(.subheadline.weight(.medium))
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 20)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Start rest")
-        .accessibilityHint("Starts a rest timer for this exercise without logging a set")
-        .accessibilityIdentifier("session.rest.start")
-    }
-}
-
 /// The rest clock — the primary thing on screen while resting (#6).
 ///
 /// Driven by `TimelineView` off the system clock rather than by a `Timer`
@@ -1728,6 +1873,8 @@ private struct RestBanner: View {
     /// end of a rest from here. Fires immediately for a rest that was
     /// already over when the banner appeared (a reconciled relaunch).
     var onComplete: () -> Void = {}
+    /// Fired once the count-up reaches `RestTimer.maximumOverrun`.
+    var onExpire: () -> Void = {}
 
     @AppStorage(RestAlertSettings.timingKey) private var showsTiming = RestAlertSettings.timingDefault
 
@@ -1745,29 +1892,33 @@ private struct RestBanner: View {
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
             let done = rest.isComplete(at: context.date)
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 ZStack {
                     Circle()
-                        .stroke(.quaternary, lineWidth: 6)
+                        .stroke(.quaternary, lineWidth: 3)
                     Circle()
                         .trim(from: 0, to: rest.progress(at: context.date))
                         .stroke(done ? Theme.done : Color.accentColor,
-                                style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                                style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
-                .frame(width: 44, height: 44)
+                .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    // The same `timer` glyph `StartRestControl` shows for the
-                    // empty state, so the two states of one slot read as one
-                    // control rather than two unrelated pieces of UI.
+                    // The same `timer` glyph `StartRestControl` showed for
+                    // the empty state of this slot (#223), so the clock reads
+                    // as one control rather than a bar that appears from
+                    // nowhere.
                     Label {
                         Text(done ? "Rest complete" : "Resting")
                             .textCase(.uppercase)
                     } icon: {
                         Image(systemName: done ? "checkmark.circle.fill" : "timer")
                     }
-                    .font(.caption.weight(.semibold))
+                    .font(.caption2.weight(.semibold))
+                    // At accessibility sizes this hyphenated to "REST-".
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .foregroundStyle(.secondary)
                     // Fixed rather than `@ScaledMetric` (a platform audit's
                     // P3, tried and reverted): scaling this relative to
@@ -1780,7 +1931,7 @@ private struct RestBanner: View {
                     // than the audit's own "polish, low real-world impact"
                     // rating for this finding was worth chasing further.
                     Text(rest.displayTime(at: context.date))
-                        .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                        .font(.title2.weight(.bold).monospacedDigit())
                         .foregroundStyle(done ? Theme.done : Color.primary)
                         .contentTransition(.numericText())
 
@@ -1793,30 +1944,27 @@ private struct RestBanner: View {
 
                 Spacer()
 
-                Button("Skip", action: onSkip)
+                Button(action: onSkip) {
+                    // Never truncated: at accessibility sizes it showed "S".
+                    Text("Skip").lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                }
                     .font(.body.weight(.semibold))
                     .buttonStyle(.bordered)
+                    .tint(Theme.quietTint)
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            // `.ultraThinMaterial`, not a flat fill: a running timer is
-            // exactly the transient, glanceable surface Apple's own material
-            // vocabulary is for (a widget, a Live Activity, a notification).
-            // This SDK only ships Liquid Glass as `.glass`/`.glassProminent`
-            // button styles, not a general background modifier — checked
-            // against the installed SwiftUI.swiftinterface rather than
-            // assumed, since guessing a symbol that doesn't exist here would
-            // have failed to build, not silently degraded.
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // #223's card vocabulary — `.ultraThinMaterial` in a continuous
+            // corner, floating on a 20pt margin rather than running bezel to
+            // bezel — at the compact height this pinned position asks for.
+            // The material and the corner are what make it read as a native
+            // transient surface; the size is what keeps it a status line
+            // under the navigation bar instead of a panel mid-screen.
             .background(.ultraThinMaterial, in: cardShape)
             .clipShape(cardShape)
-            // Floating, not edge-to-edge: the one thing that read as "not a
-            // native card" before anything else changed. In regular portrait
-            // this sat flush with both screen edges while every other piece
-            // of content on the screen kept a 20pt margin — the flat run of
-            // colour from bezel to bezel was the single biggest tell that it
-            // was a status bar bolted on rather than a card belonging to the
-            // rest of the screen.
             .padding(.horizontal, 20)
+            .padding(.bottom, 4)
         }
         // Waits for the clock rather than watching the view.
         //
@@ -1835,9 +1983,14 @@ private struct RestBanner: View {
         // every rest, set-anchored or not, and still cancels when a set is
         // undone or the rest is skipped — the view goes away with it either way.
         .task(id: rest) {
+            if rest.hasExpired(at: Date()) {
+                onExpire()
+                return
+            }
             let deadline = rest.endsAt
             guard deadline.timeIntervalSinceNow > 0 else {
                 onComplete()
+                await waitForExpiry()
                 return
             }
 
@@ -1895,6 +2048,7 @@ private struct RestBanner: View {
             let lateness = Date().timeIntervalSince(deadline)
             guard lateness < 10 else {
                 report = RestAlertReport(lateness: lateness, call: nil, held: true)
+                await waitForExpiry()
                 return
             }
 
@@ -1910,7 +2064,23 @@ private struct RestBanner: View {
                 call: ContinuousClock.now - began,
                 held: false
             )
+
+            await waitForExpiry()
         }
+    }
+
+    /// Sleeps until the clock has counted ten minutes past its target, then
+    /// hands back to the model, which stops it. Halved sleeps for the same
+    /// reason the countdown above uses them: a single long sleep drifts.
+    private func waitForExpiry() async {
+        while true {
+            let remaining = rest.expiresAt.timeIntervalSinceNow
+            guard remaining > 0 else { break }
+            let step = remaining > 1 ? remaining / 2 : remaining
+            try? await Task.sleep(for: .seconds(step), tolerance: .zero)
+            guard !Task.isCancelled else { return }
+        }
+        onExpire()
     }
 }
 
@@ -2152,12 +2322,17 @@ private struct WeightStepper: View {
     let equipment: Equipment
     let plates: String?
     let isPlateDisclosureExpanded: Bool
+    /// True when no weight has been set on equipment where zero isn't a real
+    /// load. The readout shows a dash rather than a "0 lb" that reads as a
+    /// value (critique, harden).
+    var isWeightUnset = false
     let onTogglePlates: (() -> Void)?
     let onEnterWeight: (() -> Void)?
     let onDecrement: () -> Void
     let onIncrement: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var repeater = StepRepeater()
 
     var body: some View {
@@ -2175,7 +2350,7 @@ private struct WeightStepper: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Plate controls")
                 .accessibilityValue(
-                    "\(load.formatted(in: gym.unit)), \(plates ?? "not an exact plate build"), "
+                    "\(isWeightUnset ? "No weight set" : load.formatted(in: gym.unit)), \(plates ?? "not an exact plate build"), "
                     + (isPlateDisclosureExpanded ? "expanded" : "collapsed")
                 )
                 .accessibilityHint(
@@ -2190,7 +2365,7 @@ private struct WeightStepper: View {
                 .buttonStyle(.plain)
                 .disabled(onEnterWeight == nil)
                 .accessibilityLabel("Enter exact weight")
-                .accessibilityValue(load.formatted(in: gym.unit))
+                .accessibilityValue(isWeightUnset ? "No weight set" : load.formatted(in: gym.unit))
                 .accessibilityHint("Plus and minus remain the primary controls")
             }
             button("plus", caption: incrementCaption, label: incrementLabel, action: onIncrement)
@@ -2201,7 +2376,7 @@ private struct WeightStepper: View {
 
     private func plateReadout(detail: String?) -> some View {
         VStack(spacing: 1) {
-            Text(load.formatted(in: gym.unit))
+            Text(displayedLoad)
                 .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
@@ -2223,7 +2398,7 @@ private struct WeightStepper: View {
 
     private func readout(detail: String, showsEntry: Bool) -> some View {
         VStack(spacing: 0) {
-            Text(load.formatted(in: gym.unit))
+            Text(displayedLoad)
                 .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
@@ -2243,12 +2418,20 @@ private struct WeightStepper: View {
         }
     }
 
+    private var displayedLoad: String {
+        isWeightUnset ? "—" : load.formatted(in: gym.unit)
+    }
+
     private func button(_ symbol: String, caption: String?, label: String,
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 1) {
                 Image(systemName: symbol).font(.title.weight(.semibold))
-                if let caption { Text(caption).font(.caption2.weight(.semibold)) }
+                // Dropped at accessibility sizes, where "Previous"/"Next" only
+                // truncated to "Pr…"; the spoken label still says it.
+                if let caption, !dynamicTypeSize.isAccessibilitySize {
+                    Text(caption).font(.caption2.weight(.semibold))
+                }
             }
                 // Oversized on purpose: tapped with chalky hands, mid-set.
                 .frame(width: 72, height: 60)
@@ -2256,6 +2439,7 @@ private struct WeightStepper: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityIdentifier(symbol == "minus" ? "session.weight.decrement" : "session.weight.increment")
         // Held rather than tapped twenty-eight times (#77). Accelerates, so a
         // long move is quick and a short one is still controllable.
         .onLongPressGesture(minimumDuration: 0.4, pressing: { isPressing in
@@ -2298,10 +2482,9 @@ private struct WeightStepper: View {
 
 /// A horizontal row of tappable values, one tap to choose.
 ///
-/// Used for both reps and RPE. Scrollable rather than clipped, so an unusually
-/// good set doesn't have to be rounded to whatever fits on screen.
-/// Shared with the config sheet (#20), so a stack increment is picked from the
-/// same chip row the reps and RPE use — one control to learn, not three.
+/// Scrollable rather than clipped, so an unusual value doesn't have to be
+/// rounded to whatever fits on screen. Serves the exercise config sheet
+/// (#20); the session screen's reps and RPE moved to `InlineStepper`.
 struct ChoiceRow<Value: Hashable>: View {
     let caption: String
     let values: [Value]
@@ -2388,35 +2571,49 @@ private struct InlineStepper: View {
     @State private var repeater = StepRepeater()
 
     var body: some View {
+        // No vertical padding: the step buttons take the full 52pt row
+        // height themselves, so the tappable area grows from 44x44 to 52x52
+        // without the row getting any taller against the #205 ceiling.
         HStack(spacing: 0) {
             stepButton("minus", label: "Decrease \(caption)", identifierSuffix: "decrement", action: onDecrement)
-            valueButton
+            valueView
             stepButton("plus", label: "Increase \(caption)", identifierSuffix: "increment", action: onIncrement)
         }
-        .padding(.vertical, 4)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
     }
 
-    /// A `Button`, disabled when there's nothing to tap into, the same shape
-    /// `WeightStepper`'s own value readout uses when `onEnterWeight` is nil —
-    /// one idiom for "this number is also a button, sometimes."
-    private var valueButton: some View {
-        Button(action: onTapValue ?? {}) {
-            Text(valueText)
-                .font(.title3.weight(.semibold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .contentTransition(.numericText())
-                .animation(Theme.quick(reduceMotion: reduceMotion), value: valueText)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
+    private var valueLabel: some View {
+        Text(valueText)
+            .font(.title3.weight(.semibold).monospacedDigit())
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .contentTransition(.numericText())
+            .animation(Theme.quick(reduceMotion: reduceMotion), value: valueText)
+            .frame(maxWidth: .infinity, minHeight: 52)
+    }
+
+    /// A button only when there is something to tap into (reps' exact
+    /// entry sheet). RPE used to render as a *disabled* button, which the
+    /// system dims: it measured 4.29:1 beside reps' 12.18:1 and read as
+    /// unavailable while being the live value (critique, colorize).
+    @ViewBuilder
+    private var valueView: some View {
+        if let onTapValue {
+            Button(action: onTapValue) {
+                valueLabel.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Enter exact \(caption.lowercased())")
+            .accessibilityValue(accessibilityValue)
+            .accessibilityHint("Plus and minus remain the primary controls")
+            .accessibilityIdentifier("\(identifierPrefix).value")
+        } else {
+            valueLabel
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(caption)
+                .accessibilityValue(accessibilityValue)
+                .accessibilityIdentifier("\(identifierPrefix).value")
         }
-        .buttonStyle(.plain)
-        .disabled(onTapValue == nil)
-        .accessibilityLabel(onTapValue == nil ? caption : "Enter exact \(caption.lowercased())")
-        .accessibilityValue(accessibilityValue)
-        .accessibilityHint(onTapValue == nil ? "" : "Plus and minus remain the primary controls")
-        .accessibilityIdentifier("\(identifierPrefix).value")
     }
 
     private func stepButton(
@@ -2425,7 +2622,7 @@ private struct InlineStepper: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.body.weight(.semibold))
-                .frame(width: 44, height: 44)
+                .frame(width: 52, height: 52)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
