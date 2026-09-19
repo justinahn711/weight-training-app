@@ -101,21 +101,38 @@ extension TrainingStore {
         for exercise: Exercise,
         slot: Slot?,
         startedAt: Date,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        workoutID: UUID? = nil
     ) throws -> SessionExercise {
         let state = try progressState(forExercise: exercise.id)
         let history = try sets(forExercise: exercise.id)
-        let today = history.filter { calendar.isDate($0.performedAt, inSameDayAs: startedAt) }
-        let earlier = history.filter { !calendar.isDate($0.performedAt, inSameDayAs: startedAt) }
+        let today = history.filter {
+            if let workoutID { return $0.workoutID == workoutID || ($0.workoutID == nil && $0.performedAt >= startedAt) }
+            return $0.workoutID == nil && calendar.isDate($0.performedAt, inSameDayAs: startedAt)
+        }
+        let todayIDs = Set(today.map(\.id))
+        let earlier = history.filter { !todayIDs.contains($0.id) }
+        let accepted = try workoutID.flatMap { try exerciseSession(workoutID: $0, exerciseID: exercise.id)?.plan }
+        let prior = try latestExercisePlan(for: exercise.id, excluding: workoutID)
+        let plan = accepted ?? prior
+        let advice = try plan.map { _ in try recommendation(for: exercise, excluding: workoutID) }
+        let prescription: Prescription
+        if let target = plan?.sets.first, plan?.exercise == exercise {
+            prescription = Prescription(load: exercise.nearestAchievable(target.load), reps: target.reps, rpe: target.rpe)
+        } else {
+            prescription = Prescription(exercise: exercise, state: state)
+        }
 
         return SessionExercise(
             exercise: exercise,
             slot: slot,
-            prescription: Prescription(exercise: exercise, state: state),
+            prescription: prescription,
             // "Last time" means the previous session, so today's own sets are
             // excluded from it.
             lastPerformance: LastPerformance.mostRecent(in: earlier),
-            loggedSets: today
+            loggedSets: today,
+            acceptedPlan: accepted,
+            recommendation: advice
         )
     }
 
@@ -185,6 +202,12 @@ extension TrainingStore {
         var applied: [(exercise: Exercise, result: ProgressionResult)] = []
 
         for sessionExercise in session.exercises {
+            // An exercise that has adopted planned progression must not also
+            // run the legacy rule (which can increase after a single set).
+            let priorPlan = try latestExercisePlan(for: sessionExercise.id)
+            if sessionExercise.acceptedPlan != nil || priorPlan != nil {
+                continue
+            }
             let working = sessionExercise.workingSets
             guard !working.isEmpty else { continue }
 

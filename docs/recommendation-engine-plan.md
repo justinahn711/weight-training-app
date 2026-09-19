@@ -1,6 +1,7 @@
 # Progressive overload recommendation engine
 
-Status: proposed design; no application behavior changed.
+Status: phases 1–2 implemented on `feat/recommendation-engine`; weekly set allocation,
+optional tonnage blocks, and adaptive whole-program deloads remain planned.
 
 Provisional audience: healthy adult recreational lifters seeking muscle growth with steady strength gains. Goal, experience, available equipment, exercise priorities, and training frequency are explicit configuration. Strength and general fitness can use different exercise prescriptions without replacing the decision pipeline.
 

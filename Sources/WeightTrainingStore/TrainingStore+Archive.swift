@@ -20,7 +20,8 @@ extension TrainingStore {
             progressStates: try allProgressStates(),
             dayTemplates: try dayTemplates(),
             bodyweights: try bodyweights(),
-            gymConfig: try gymConfig()
+            gymConfig: try gymConfig(),
+            exerciseSessions: try exerciseSessions()
         )
     }
 
@@ -100,10 +101,39 @@ extension TrainingStore {
                 key: \SetRecord.id,
                 storedKey: \StoredSetLog.id,
                 make: StoredSetLog.init,
-                update: { $0.update(from: $1) }
+                update: {
+                    let knownEffort = $0.effortWasReported
+                    $0.update(from: $1)
+                    if let workoutID = $1.workoutID {
+                        $0.workoutID = workoutID
+                        if let acceptedPlanID = $1.acceptedPlanID {
+                            $0.acceptedPlanID = acceptedPlanID
+                        }
+                    }
+                    // Missing fields identify an older archive. They cannot
+                    // disprove provenance already recorded on this device.
+                    if $1.effortWasReported == nil { $0.effortWasReported = knownEffort }
+                }
             )
 
             report.progressStates = try mergeProgressStates(archive.progressStates)
+            let existingSessions = Dictionary(try exerciseSessions().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            for session in archive.exerciseSessions ?? [] {
+                if let existing = existingSessions[session.id] {
+                    if existing.updatedAt > session.updatedAt { continue }
+                    if existing.updatedAt == session.updatedAt, existing != session {
+                        var conflict = existing
+                        conflict.plan = nil
+                        conflict.completion = .unknown
+                        conflict.completedAt = [existing.completedAt, session.completedAt].compactMap { $0 }.max()
+                        try writeExerciseSession(conflict)
+                        report.exerciseSessions += 1
+                        continue
+                    }
+                }
+                try writeExerciseSession(session)
+                report.exerciseSessions += 1
+            }
             report.bodyweights = try mergeBodyweights(archive.bodyweights, calendar: calendar)
 
             // The gym the file was written in, written straight to the row rather

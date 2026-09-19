@@ -2,7 +2,7 @@
 
 This work begins the [recommendation engine plan](recommendation-engine-plan.md) in an isolated worktree on `feat/recommendation-engine`, based on the locally available `origin/main` commit `43f4714`.
 
-## Current milestone: core policy and replay tests
+## Current milestone: accepted plans, live logging, and persisted evidence
 
 Implemented in `WeightTrainingCore`:
 
@@ -18,19 +18,46 @@ The policy is currently for straight sets with external loads. Bodyweight, assis
 
 Historical duplicates are collapsed by exposure ID only when identical. Conflicting duplicates or reused working-set IDs prevent progression. Actual records remain the source of truth: rebuilding exposures after a correction or deletion recomputes the recommendation.
 
-## Integration boundary
+## App and persistence integration
 
-This milestone does **not** replace `ProgressionEngine` or `SuggestionEngine` on the live workout screen. The current app does not yet persist accepted set plans or trustworthy effort provenance, and treating old logs as if it did would manufacture progression evidence.
+The workout now exposes a **Review set plan** action before the first working
+set. The editor lets the lifter review or change the set count, achievable load,
+per-set reps, and target RPE. Accepting it records user intent; no recommendation
+changes a workout automatically. The screen advances through the accepted
+per-set targets and still permits early stops or extra work.
 
-No existing stored model or archive schema has changed. The new Codable values are domain inputs, not a new persistence system. When integrating the store, retain the accepted prescription as historical user intent and rebuild exposure sets from current `SetRecord` rows. Do not persist duplicate mutable workout totals.
+`StoredExerciseSession` persists one plan/completion record per exercise and
+workout. `SetRecord` carries optional workout, plan-revision, and reported-effort
+provenance. All new CloudKit fields are optional or defaulted. Archive version 2
+includes exercise sessions while version-1 backups remain readable.
 
-The integration sequence is:
+Actual sets remain the source of truth. Exposures are rebuilt from current set
+rows, so correction, deletion, restore, and deduplication immediately change the
+recommendation. Equal-time plan conflicts become unknown rather than choosing an
+arbitrary success. Older duplicate sets and backups cannot erase newer known
+workout or effort provenance.
 
-1. Persist accepted plan revisions and their session associations, with CloudKit-compatible optional/defaulted fields. Keep legacy completion and effort provenance unknown.
-2. Let the user review advisory set targets, record an explicit effort selection, and finish or shorten an exercise without being forced to complete the plan.
-3. Route both next-workout prescriptions and in-session progression suggestions through this policy. Immediate responses to unexpectedly hard work need their own consistent downward-adjustment path.
-4. Extend the existing muscle-volume report with reported/unknown effort, exercise counts, personalized budgets, and remaining planned work. Add weekly set allocation only after these inputs exist.
-5. Add optional tonnage/block targets and scheduled/adaptive deload coordination. This core currently respects an accepted deload; it does not create whole-program deload schedules or infer fatigue from wearable scores.
+RPE targets are displayed but never stored as actual effort until the lifter
+selects an RPE or speaks one. Live Activity logging records weight and reps with
+unknown effort. This prevents a one-tap target log from manufacturing an “easy”
+workout.
+
+The legacy progression engine remains active only for exercises that have never
+adopted an accepted plan. Planned exercises use the new engine for next-workout
+targets, while the in-session path retains only a conservative downward response
+to explicitly reported high effort.
+
+The remaining sequence is:
+
+1. Add an explicit early-completion reason UI for time, fatigue, and pain. The
+   store and domain values already support these states; Finish currently marks
+   exact plan-count completion and leaves other outcomes unknown.
+2. Extend muscle-volume reporting with reported/unknown effort, distinct exercise
+   counts, personalized budgets, and remaining planned work. Add weekly set
+   allocation only after these inputs exist.
+3. Add optional tonnage/block targets and scheduled/adaptive deload coordination.
+   The current core respects an accepted deload but does not create a whole-program
+   schedule or infer fatigue from wearable scores.
 
 ## Calling convention
 
@@ -64,17 +91,18 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
-Device validation is still required when the store and workout screen are integrated.
+Physical-device validation remains required for the integrated workout flow.
 
-Validation for this milestone on 2026-09-17:
+Validation for the integrated milestone on 2026-09-18:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including new recommendation tests | PASS |
+| Swift domain/store suite, including persistence and sync conflicts (710 tests) | PASS |
 | Repository scenario script, including new recommendation replays | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |
-| Physical device | NOT RUN — the new policy is not yet connected to the workout screen |
+| Focused iPhone UI: plan review/acceptance and explicit RPE selection | PASS |
+| Physical device | NOT RUN |
 
 Build products used a separate temporary derived-data directory. A remote fetch
 encountered the pre-existing malformed ref `refs/remotes/origin/fix/session-presentation 2`;

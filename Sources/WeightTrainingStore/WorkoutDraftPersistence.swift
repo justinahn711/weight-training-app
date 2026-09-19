@@ -39,20 +39,7 @@ extension TrainingStore {
             let slot = draft.slots.indices.contains(index)
                 ? draft.slots[index]
                 : (template.slots.indices.contains(index) ? template.slots[index] : nil)
-            let state = try progressState(forExercise: exercise.id)
-            let history = try sets(forExercise: exercise.id)
-            // A draft names an actual start instant, so it can safely span
-            // midnight. The ordinary start path intentionally groups by day;
-            // resume must restore everything logged after this workout began.
-            let logged = history.filter { $0.performedAt >= draft.startedAt }
-            let earlier = history.filter { $0.performedAt < draft.startedAt }
-            return SessionExercise(
-                exercise: exercise,
-                slot: slot,
-                prescription: Prescription(exercise: exercise, state: state),
-                lastPerformance: LastPerformance.mostRecent(in: earlier),
-                loggedSets: logged
-            )
+            return try sessionExercise(for: exercise, slot: slot, startedAt: draft.startedAt, workoutID: draft.id)
         }
 
         var session = Session(kind: draft.kind, exercises: rebuilt, startedAt: draft.startedAt)

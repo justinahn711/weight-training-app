@@ -41,6 +41,9 @@ struct SessionView: View {
     /// sheet, so carrying the subject keeps Save aimed where the tap began.
     @State private var enteringReps: RepEntryTarget?
     @State private var enteringWeight: WeightEntryTarget?
+    /// The accepted set plan is pinned while its sheet is open. Voice can move
+    /// the workout underneath a sheet, just as it can for swaps and config.
+    @State private var planning: PlanningTarget?
     @State private var isChoosingExercise = false
     /// Plate building is the exception path, opened from the breakdown it
     /// edits (#138). It stays open while plates are added, then closes when
@@ -168,6 +171,11 @@ struct SessionView: View {
         .sheet(item: $enteringWeight) { target in
             WeightEntrySheet(target: target) { load in
                 model.setTypedLoad(load, for: target.id)
+            }
+        }
+        .sheet(item: $planning) { target in
+            ExercisePlanEditor(plan: target.plan, recommendation: target.recommendation) { accepted in
+                if model.acceptPlan(accepted) { planning = nil }
             }
         }
         .sheet(isPresented: $isChoosingExercise) {
@@ -559,15 +567,49 @@ struct SessionView: View {
 
     private func targetSummary(_ exercise: SessionExercise) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Target")
+            Text(exercise.acceptedPlan == nil ? "Target" : "Set plan")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            Text(exercise.prescription.displayLine(in: gym.unit))
+            Text(planTargetLine(exercise))
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(exercise.prescription.isColdStart ? .secondary : .primary)
+            if let explanation = planExplanation(exercise) {
+                Text(explanation)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.canPlanCurrentExercise, model.current?.id == exercise.id {
+                Button(exercise.acceptedPlan == nil ? "Review set plan" : "Edit set plan") {
+                    if let plan = model.planProposal() {
+                        planning = PlanningTarget(plan: plan, recommendation: exercise.recommendation)
+                    }
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("session.plan.review")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func planTargetLine(_ exercise: SessionExercise) -> String {
+        guard let plan = exercise.acceptedPlan, !plan.sets.isEmpty else {
+            return exercise.prescription.displayLine(in: gym.unit)
+        }
+        let next = min(exercise.workingSets.count, plan.sets.count - 1)
+        let target = plan.sets[next]
+        return "Set \(next + 1) of \(plan.sets.count) · \(target.load.formatted(in: gym.unit)) × \(target.reps) @ \(target.rpe)"
+    }
+
+    private func planExplanation(_ exercise: SessionExercise) -> String? {
+        if let plan = exercise.acceptedPlan {
+            return exercise.workingSets.count >= plan.sets.count
+                ? "Planned work complete. Extra sets still count as training, but do not earn this progression."
+                : "RPE is optional to log; every planned set needs a reported RPE to earn progression."
+        }
+        return exercise.recommendation?.summary
     }
 
     private func lastTimeSummary(_ exercise: SessionExercise) -> some View {
@@ -827,11 +869,17 @@ struct SessionView: View {
         ChoiceRow(
             caption: "RPE",
             values: RPE.sessionChips,
-            isSelected: { $0 == model.pendingRPE },
+            isSelected: { model.pendingRPEWasReported && $0 == model.pendingRPE },
             label: { $0.value == $0.value.rounded()
                 ? String(format: "%.0f", $0.value)
                 : String(format: "%.1f", $0.value) },
-            onSelect: { model.pendingRPE = $0 }
+            onSelect: { value in
+                if model.pendingRPEWasReported && model.pendingRPE == value {
+                    model.clearRPE()
+                } else {
+                    model.selectRPE(value)
+                }
+            }
         )
         .frame(maxWidth: .infinity)
     }
@@ -941,6 +989,204 @@ private struct LoggedSetBanner: View {
 
 /// A sheet target carries both the exercise and the standing value at the
 /// moment the alternative entry path was opened.
+private struct PlanningTarget: Identifiable {
+    let plan: ExercisePlan
+    let recommendation: ExerciseRecommendation?
+    var id: UUID { plan.id }
+}
+
+/// Reviews a recommendation before it becomes the workout's accepted intent.
+/// Straight-set load and effort stay shared; reps remain per-set so a proposal
+/// such as 10/10/9 can add exactly one rep without pretending every set matched.
+private struct ExercisePlanEditor: View {
+    let plan: ExercisePlan
+    let recommendation: ExerciseRecommendation?
+    let onSave: (ExercisePlan) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var load: Load
+    @State private var reps: [Int]
+    @State private var targetRPE: RPE
+
+    init(
+        plan: ExercisePlan,
+        recommendation: ExerciseRecommendation?,
+        onSave: @escaping (ExercisePlan) -> Void
+    ) {
+        self.plan = plan
+        self.recommendation = recommendation
+        self.onSave = onSave
+        let first = plan.sets.first
+            ?? PlannedWorkingSet(load: plan.exercise.lightestUsableLoad,
+                                 reps: plan.exercise.recommendationPolicy.repRange.bottom)
+        _load = State(initialValue: first.load)
+        _reps = State(initialValue: plan.sets.isEmpty ? [first.reps] : plan.sets.map(\.reps))
+        _targetRPE = State(initialValue: first.rpe)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let recommendation {
+                    Section("Why this plan") {
+                        Text(recommendation.summary)
+                        Text(evidenceText(recommendation.evidence))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section {
+                    Stepper(value: setCount, in: 1...8) {
+                        LabeledContent("Sets", value: "\(reps.count)")
+                    }
+                    loadControl
+                    Picker("Target RPE", selection: $targetRPE) {
+                        ForEach(RPE.sessionChips, id: \.self) { rpe in
+                            Text(rpe.description).tag(rpe)
+                        }
+                    }
+                } header: {
+                    Text("Working sets")
+                } footer: {
+                    Text("The load and effort target apply to every working set. Reps can differ by set.")
+                }
+
+                Section {
+                    ForEach(reps.indices, id: \.self) { index in
+                        Stepper(value: $reps[index], in: repRange) {
+                            LabeledContent("Set \(index + 1)", value: "\(reps[index]) reps")
+                        }
+                        .accessibilityIdentifier("plan.reps.\(index + 1)")
+                    }
+                } header: {
+                    Text("Target reps")
+                } footer: {
+                    Text("You can stop early or log another set. Only completing this accepted plan can earn progression.")
+                }
+            }
+            .navigationTitle("Set plan")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Use Plan") { onSave(acceptedPlan) }
+                        .accessibilityIdentifier("plan.save")
+                }
+            }
+        }
+        // The complete plan should be reviewable as one task. A half-height
+        // detent leaves planned sets below the fold and exposes inactive
+        // workout text through the sheet, which also confuses accessibility
+        // audits about text that is visible but intentionally modal.
+        .presentationDetents([.large])
+    }
+
+    private var repRange: ClosedRange<Int> {
+        let range = plan.exercise.recommendationPolicy.repRange
+        return range.bottom...range.top
+    }
+
+    private var setCount: Binding<Int> {
+        Binding(
+            get: { reps.count },
+            set: { count in
+                if count > reps.count {
+                    let seed = reps.last ?? repRange.lowerBound
+                    reps.append(contentsOf: repeatElement(seed, count: count - reps.count))
+                } else if count < reps.count {
+                    reps.removeLast(reps.count - count)
+                }
+            }
+        )
+    }
+
+    private var acceptedPlan: ExercisePlan {
+        ExercisePlan(
+            id: plan.id,
+            exercise: plan.exercise,
+            sets: reps.map { PlannedWorkingSet(load: load, reps: $0, rpe: targetRPE) },
+            restSeconds: plan.restSeconds,
+            techniqueRevision: plan.techniqueRevision,
+            isDeload: plan.isDeload
+        )
+    }
+
+    @ViewBuilder
+    private var loadControl: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                Text("Weight")
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 0)
+                loadButtons
+            }
+            .fixedSize(horizontal: true, vertical: false)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Weight")
+                loadButtons
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+
+    private var loadButtons: some View {
+        HStack(spacing: 4) {
+            Button(action: decreaseLoad) {
+                Image(systemName: "minus")
+            }
+            .frame(minWidth: 48, minHeight: 48)
+            .contentShape(Rectangle())
+            .buttonStyle(.borderless)
+            .disabled(previousLoad == nil)
+            .accessibilityLabel("Decrease planned weight")
+
+            Text(load.formatted(in: GymSettings.shared.unit))
+                .font(.body.monospacedDigit())
+                .frame(minWidth: 76)
+
+            Button(action: increaseLoad) {
+                Image(systemName: "plus")
+            }
+            .frame(minWidth: 48, minHeight: 48)
+            .contentShape(Rectangle())
+            .buttonStyle(.borderless)
+            .disabled(nextLoad == nil)
+            .accessibilityLabel("Increase planned weight")
+        }
+    }
+
+    private var previousLoad: Load? {
+        if let loading = plan.exercise.loading, loading.isMeasured {
+            return loading.previousBuildable(before: load)
+        }
+        let candidate = plan.exercise.nearestAchievable(Load(load.pounds - plan.exercise.increment.pounds))
+        return candidate >= plan.exercise.lightestUsableLoad && candidate < load ? candidate : nil
+    }
+
+    private var nextLoad: Load? {
+        if let loading = plan.exercise.loading, loading.isMeasured {
+            return loading.nextBuildable(after: load)
+        }
+        let candidate = plan.exercise.nearestAchievable(Load(load.pounds + plan.exercise.increment.pounds))
+        return candidate > load ? candidate : nil
+    }
+
+    private func decreaseLoad() { if let previousLoad { load = previousLoad } }
+    private func increaseLoad() { if let nextLoad { load = nextLoad } }
+
+    private func evidenceText(_ evidence: ExerciseRecommendation.Evidence) -> String {
+        switch evidence {
+        case .insufficient: return "More comparable workouts are needed before increasing demand."
+        case .limited: return "This uses limited recent evidence; the recommendation holds the current demand."
+        case .consistent: return "This is supported by repeated comparable workouts."
+        }
+    }
+}
+
 private struct RepEntryTarget: Identifiable {
     let id: UUID
     let reps: Int

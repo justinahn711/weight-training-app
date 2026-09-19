@@ -22,7 +22,7 @@ public struct TrainingArchive: Codable, Hashable, Sendable {
     /// Versioned from the first release rather than when it first becomes
     /// necessary: an unversioned backup is unreadable the moment the model
     /// moves, and a backup is read at the worst possible time.
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 
     public var version: Int
     public var exportedAt: Date
@@ -45,6 +45,8 @@ public struct TrainingArchive: Codable, Hashable, Sendable {
     /// nil means "whatever this device already has", which is what those files
     /// have always meant.
     public var gymConfig: GymConfig?
+    /// Optional so version-one backups continue to decode with unknown plans.
+    public var exerciseSessions: [RecordedExerciseSession]?
 
     public init(
         version: Int = TrainingArchive.currentVersion,
@@ -54,7 +56,8 @@ public struct TrainingArchive: Codable, Hashable, Sendable {
         progressStates: [ProgressState] = [],
         dayTemplates: [DayTemplate] = [],
         bodyweights: [BodyweightReading] = [],
-        gymConfig: GymConfig? = nil
+        gymConfig: GymConfig? = nil,
+        exerciseSessions: [RecordedExerciseSession]? = nil
     ) {
         self.version = version
         self.exportedAt = exportedAt
@@ -64,12 +67,13 @@ public struct TrainingArchive: Codable, Hashable, Sendable {
         self.dayTemplates = dayTemplates
         self.bodyweights = bodyweights
         self.gymConfig = gymConfig
+        self.exerciseSessions = exerciseSessions
     }
 
     /// True when there is nothing in here worth writing to disk.
     public var isEmpty: Bool {
         exercises.isEmpty && sets.isEmpty && progressStates.isEmpty
-            && dayTemplates.isEmpty && bodyweights.isEmpty
+            && dayTemplates.isEmpty && bodyweights.isEmpty && (exerciseSessions?.isEmpty ?? true)
     }
 }
 
@@ -189,6 +193,7 @@ public struct RestoreReport: Hashable, Sendable {
     public var progressStates: Int = 0
     public var dayTemplates: Int = 0
     public var bodyweights: Int = 0
+    public var exerciseSessions: Int = 0
 
     /// Rows `deduplicate()` merged once the import had landed.
     public var deduplicated: DeduplicationReport = DeduplicationReport()
@@ -198,7 +203,7 @@ public struct RestoreReport: Hashable, Sendable {
     public var restoredGym: Bool = false
 
     public var total: Int {
-        exercises + sets + progressStates + dayTemplates + bodyweights
+        exercises + sets + progressStates + dayTemplates + bodyweights + exerciseSessions
     }
     public var isEmpty: Bool { total == 0 }
 }

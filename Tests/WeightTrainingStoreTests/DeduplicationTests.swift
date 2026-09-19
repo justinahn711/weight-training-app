@@ -75,6 +75,25 @@ final class DeduplicationTests: XCTestCase {
         XCTAssertEqual(try store.allSets().count, 1)
     }
 
+    func testDuplicateSetKeepsKnownWorkoutAndEffortProvenance() throws {
+        let id = UUID(), workout = UUID(), plan = UUID(), now = Date()
+        let legacy = SetRecord(id: id, exerciseID: incline.id, load: Load(70), reps: 10,
+                               rpe: .seven, performedAt: now)
+        let enriched = SetRecord(
+            id: id, exerciseID: incline.id, load: Load(70), reps: 10, rpe: .seven,
+            performedAt: now, workoutID: workout, acceptedPlanID: plan,
+            effortWasReported: true
+        )
+        try insertRaw(StoredSetLog(legacy))
+        try insertRaw(StoredSetLog(enriched))
+
+        XCTAssertEqual(try store.deduplicate().sets, 1)
+        let survivor = try XCTUnwrap(try store.allSets().first)
+        XCTAssertEqual(survivor.workoutID, workout)
+        XCTAssertEqual(survivor.acceptedPlanID, plan)
+        XCTAssertEqual(survivor.effortWasReported, true)
+    }
+
     /// Two genuinely different sets that happen to look alike are not
     /// duplicates — identity is the id, not the values.
     func testTwoIdenticalLookingSetsAreKept() throws {

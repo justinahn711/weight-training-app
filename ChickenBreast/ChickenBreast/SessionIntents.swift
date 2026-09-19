@@ -60,6 +60,7 @@ struct LogTargetSetIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         guard let id = UUID(uuidString: exerciseID),
               let setID = UUID(uuidString: actionID),
+              let workoutUUID = UUID(uuidString: workoutID),
               let activity = SessionActivityRefresh.current(workoutID: workoutID),
               activity.content.state.logActionID == setID,
               activity.content.state.restEndsAt.map({ $0 <= Date() }) ?? true else {
@@ -72,12 +73,17 @@ struct LogTargetSetIntent: LiveActivityIntent {
             exerciseID: id,
             load: Load(pounds),
             reps: reps,
-            rpe: rpe.flatMap { RPE($0) ?? RPE(snapping: $0) },
+            // The Live Activity displays the target RPE, but tapping Log does
+            // not report that the set actually felt that way.
+            rpe: nil,
             isWarmup: false,
             performedAt: Date()
         )
-        let inserted = try store.logIfAbsent(record)
-        guard inserted else { return .result() }
+        guard let draft = try store.workoutDraft(), draft.id == workoutUUID else { return .result() }
+        let saved = try store.logWorkoutSet(
+            record, workoutID: workoutUUID, startedAt: draft.startedAt, effortReported: false
+        )
+        guard saved.inserted else { return .result() }
 
         // The lock screen has to reflect the tap immediately: rest restarts and
         // the set count moves. Nothing else is watching — the session screen
@@ -85,7 +91,7 @@ struct LogTargetSetIntent: LiveActivityIntent {
         await SessionActivityRefresh.afterLoggedSet(
             workoutID: workoutID,
             setID: setID,
-            restEndsAt: record.performedAt.addingTimeInterval(
+            restEndsAt: saved.record.performedAt.addingTimeInterval(
                 (try? store.exercise(id: id))?.restTarget ?? 180
             )
         )

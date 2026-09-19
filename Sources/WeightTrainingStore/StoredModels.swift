@@ -154,6 +154,9 @@ public final class StoredSetLog {
     public var rpeValue: Double?
     public var isWarmup: Bool = false
     public var performedAt: Date = Date()
+    public var workoutID: UUID?
+    public var acceptedPlanID: UUID?
+    public var effortWasReported: Bool?
 
     public init(_ record: SetRecord) {
         self.id = record.id
@@ -163,6 +166,9 @@ public final class StoredSetLog {
         self.rpeValue = record.rpe?.value
         self.isWarmup = record.isWarmup
         self.performedAt = record.performedAt
+        self.workoutID = record.workoutID
+        self.acceptedPlanID = record.acceptedPlanID
+        self.effortWasReported = record.effortWasReported
     }
 
     /// Corrects a logged set in place (#61).
@@ -177,6 +183,7 @@ public final class StoredSetLog {
         reps = record.reps
         rpeValue = record.rpe?.value
         isWarmup = record.isWarmup
+        effortWasReported = record.effortWasReported
     }
 
     public func toDomain() -> SetRecord {
@@ -187,7 +194,10 @@ public final class StoredSetLog {
             reps: reps,
             rpe: rpe(fromStored: rpeValue),
             isWarmup: isWarmup,
-            performedAt: performedAt
+            performedAt: performedAt,
+            workoutID: workoutID,
+            acceptedPlanID: acceptedPlanID,
+            effortWasReported: effortWasReported
         )
     }
 }
@@ -455,5 +465,45 @@ public enum TrainingSchema {
         StoredBodyweight.self,
         StoredGymConfig.self,
         StoredWorkoutDraft.self,
+        StoredExerciseSession.self,
     ]
+}
+
+@Model
+public final class StoredExerciseSession {
+    public var workoutID: UUID = UUID()
+    public var exerciseID: UUID = UUID()
+    public var startedAt: Date = Date()
+    public var planData: Data = Data()
+    public var completionRaw: String = ExerciseExposure.Completion.unknown.rawValue
+    public var completedAt: Date?
+    public var updatedAt: Date = Date()
+    public var key: String { "\(workoutID.uuidString)/\(exerciseID.uuidString)" }
+
+    public init(_ value: RecordedExerciseSession) {
+        workoutID = value.workoutID
+        exerciseID = value.exerciseID
+        startedAt = value.startedAt
+        update(from: value)
+    }
+
+    public func update(from value: RecordedExerciseSession) {
+        planData = value.plan.map(encoded) ?? Data()
+        completionRaw = value.completion.rawValue
+        completedAt = value.completedAt
+        updatedAt = value.updatedAt
+    }
+
+    public func toDomain() throws -> RecordedExerciseSession {
+        do {
+            return RecordedExerciseSession(
+                workoutID: workoutID, exerciseID: exerciseID, startedAt: startedAt,
+                plan: planData.isEmpty ? nil : try decoded(ExercisePlan.self, from: planData),
+                completion: ExerciseExposure.Completion(rawValue: completionRaw) ?? .unknown,
+                completedAt: completedAt, updatedAt: updatedAt
+            )
+        } catch {
+            throw StoreError.corruptRecord(entity: "ExerciseSession", id: workoutID, underlying: error)
+        }
+    }
 }

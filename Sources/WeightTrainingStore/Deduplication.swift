@@ -10,9 +10,10 @@ public struct DeduplicationReport: Hashable, Sendable {
     public var dayTemplates: Int = 0
     public var gymConfigs: Int = 0
     public var workoutDrafts: Int = 0
+    public var exerciseSessions: Int = 0
 
     public var total: Int {
-        exercises + sets + progressStates + dayTemplates + gymConfigs + workoutDrafts
+        exercises + sets + progressStates + dayTemplates + gymConfigs + workoutDrafts + exerciseSessions
     }
     public var isEmpty: Bool { total == 0 }
 }
@@ -47,9 +48,30 @@ extension TrainingStore {
         report.sets = try collapse(
             FetchDescriptor<StoredSetLog>(), key: \.id
         ) { candidates in
-            // A set is immutable once logged, so duplicates are the same event
-            // recorded twice.
-            candidates.first
+            // Prefer the copy carrying workout and effort provenance when an
+            // older device uploads the same set without the newer fields.
+            // Conflicting non-nil values are not evidence: clear only the
+            // disputed association and let the performed set itself survive.
+            func richness(_ set: StoredSetLog) -> Int {
+                (set.workoutID == nil ? 0 : 1)
+                    + (set.acceptedPlanID == nil ? 0 : 1)
+                    + (set.effortWasReported == nil ? 0 : 1)
+            }
+            guard let keep = candidates.max(by: { richness($0) < richness($1) }) else { return nil }
+            let workouts = Set(candidates.compactMap(\.workoutID))
+            let plans = Set(candidates.compactMap(\.acceptedPlanID))
+            let effort = Set(candidates.compactMap(\.effortWasReported))
+            if workouts.count > 1 {
+                keep.workoutID = nil
+                keep.acceptedPlanID = nil
+                keep.effortWasReported = nil
+            } else if plans.count > 1 {
+                keep.acceptedPlanID = nil
+                keep.effortWasReported = nil
+            } else if effort.count > 1 {
+                keep.effortWasReported = nil
+            }
+            return keep
         }
 
         report.progressStates = try collapse(
@@ -85,6 +107,13 @@ extension TrainingStore {
             FetchDescriptor<StoredWorkoutDraft>(), key: \.id
         ) { candidates in
             candidates.max { $0.updatedAt < $1.updatedAt }
+        }
+
+        let sessionRows = try modelContext.fetch(FetchDescriptor<StoredExerciseSession>())
+        let sessions = try exerciseSessions()
+        report.exerciseSessions = sessionRows.count - sessions.count
+        if report.exerciseSessions > 0 {
+            for session in sessions { try writeExerciseSession(session) }
         }
 
         if !report.isEmpty {

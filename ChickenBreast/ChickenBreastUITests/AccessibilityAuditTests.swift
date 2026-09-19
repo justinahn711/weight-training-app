@@ -151,9 +151,56 @@ final class AccessibilityAuditTests: XCTestCase {
         for index in 0..<chips.count where chips.element(boundBy: index).isSelected {
             selected += 1
         }
-        // Exactly one: a row where none is selected reads as "no RPE chosen"
-        // when one plainly is, and more than one is incoherent.
-        XCTAssertEqual(selected, 1, "exactly one RPE chip should report the selected trait")
+        // RPE is an observation, not a prefilled answer. No chip is selected
+        // until the lifter reports effort for this set.
+        XCTAssertEqual(selected, 0, "an unreported RPE must not look selected")
+        chips.firstMatch.tap()
+        XCTAssertTrue(chips.firstMatch.isSelected, "tapping RPE reports and selects it")
+    }
+
+    /// The recommendation is advisory: the lifter reviews a concrete set plan
+    /// and explicitly accepts it before any set can count toward progression.
+    func testSetPlanCanBeReviewedAndAccepted() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let review = app.buttons["session.plan.review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 20))
+        let context = app.scrollViews.firstMatch
+        for _ in 0..<3 where !review.isHittable {
+            context.swipeUp()
+        }
+        XCTAssertTrue(review.isHittable)
+        review.tap()
+
+        XCTAssertTrue(app.navigationBars["Set plan"].waitForExistence(timeout: 5))
+        let form = app.collectionViews.firstMatch
+        let increase = app.buttons["Increase planned weight"]
+        for _ in 0..<3 where !increase.exists || !increase.isHittable {
+            form.swipeUp()
+        }
+        XCTAssertTrue(increase.exists)
+        XCTAssertTrue(increase.isHittable)
+        XCTAssertGreaterThanOrEqual(increase.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(increase.frame.height, 44)
+
+        let firstRep = app.steppers["plan.reps.1"]
+        for _ in 0..<3 where !firstRep.exists {
+            form.swipeUp()
+        }
+        XCTAssertTrue(firstRep.exists)
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Set plan"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        let save = app.buttons["plan.save"]
+        XCTAssertTrue(save.isHittable)
+        save.tap()
+        XCTAssertTrue(app.buttons["session.plan.review"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["session.plan.review"].label, "Edit set plan")
     }
 
     /// A partial finish must be a bottom sheet, never an unanchored bubble at
