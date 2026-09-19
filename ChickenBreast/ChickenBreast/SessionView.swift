@@ -1029,15 +1029,17 @@ struct SessionView: View {
             } label: {
                 // The values on the button, so confirming them is the same
                 // glance as tapping: one look says "185 × 8, yes" and one tap
-                // logs it. `Log Set` stays the accessible name (the UI tests
-                // and VoiceOver both find it by that), the numbers are its
-                // value.
+                // logs it. The accessible NAME stays the literal "Log Set"
+                // whatever the category — `SessionFlowUITests` and VoiceOver
+                // both find this control by that exact label (#211). The
+                // visible headline says which kind of set the tap will write,
+                // since on a warmup rung it silently logged a warmup.
                 //
                 // Near-black on the orange, not white: white measured 2.53:1
                 // (and 2.23:1 for the subtitle at 85% opacity), failing even
-                // large-text contrast on the most-read control in the app.
-                // `minHeight`, not a fixed height, so larger text grows the
-                // button instead of clipping it.
+                // large-text contrast on the most-read control in the app. On
+                // the warmup rung's dimmed tint that pairing inverts, so the
+                // label goes light there instead.
                 VStack(spacing: 0) {
                     Text(logSetTitle)
                         .font(isCompact ? .title3.bold() : .title2.bold())
@@ -1046,15 +1048,23 @@ struct SessionView: View {
                         .contentTransition(.numericText())
                         .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
                 }
-                .foregroundStyle(model.canLogSet ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.secondary))
+                .foregroundStyle(logSetForeground)
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: isCompact ? 56 : 62)
             }
+            // Prominent either way — a warmup rung is still the thing to tap
+            // next, not a lesser action — but tinted down from the accent
+            // color while on one, so the difference registers on the glance
+            // before the label is even read. This is the same restraint
+            // Theme.swift asks of every colour choice: not a new hue, a
+            // reduction in the same one, and it only ever appears while the
+            // category is actually in question.
             .buttonStyle(.borderedProminent)
+            .tint(model.isOnActiveWarmupRung ? Color.secondary : Color.accentColor)
             .buttonBorderShape(.roundedRectangle(radius: 16))
             .disabled(!model.canLogSet)
-            .accessibilityLabel(logSetTitle)
-            .accessibilityValue(model.canLogSet ? logSetSummary : "Set a weight first")
+            .accessibilityLabel("Log Set")
+            .accessibilityValue(logSetAccessibilityValue)
             .accessibilityIdentifier("session.log-set")
 
             // Previous lift, a More menu, and the one forward action.
@@ -1211,6 +1221,24 @@ struct SessionView: View {
             .tint(.accentColor)
             .accessibilityIdentifier("session.finish.footer")
         }
+    }
+
+    /// Near-black on the accent fill, light on the dimmed fill a warmup rung
+    /// uses (#211), muted when the button is refusing a zero load. A single
+    /// colour can't serve all three: `Theme.onAccent` on grey is as unreadable
+    /// as white on orange was.
+    private var logSetForeground: AnyShapeStyle {
+        guard model.canLogSet else { return AnyShapeStyle(.secondary) }
+        return model.isOnActiveWarmupRung
+            ? AnyShapeStyle(Color.white)
+            : AnyShapeStyle(Theme.onAccent)
+    }
+
+    /// Spoken as the button's value, never its name: the name stays "Log Set"
+    /// so VoiceOver and the UI tests keep finding it (#211).
+    private var logSetAccessibilityValue: String {
+        guard model.canLogSet else { return "Set a weight first" }
+        return model.isOnActiveWarmupRung ? "Warmup, \(logSetSummary)" : logSetSummary
     }
 
     /// What one tap of `Log Set` will write, spelled on the button itself.
@@ -1853,6 +1881,13 @@ private struct RestBanner: View {
     /// What the buzz did, once it has done it. See `RestAlertReport`.
     @State private var report: RestAlertReport?
 
+    /// Continuous, not circular — the corner Apple's own system surfaces use
+    /// (widgets, the Dynamic Island, a Live Activity). A `RoundedRectangle`'s
+    /// default corner reads as a UIKit card from a decade ago sitting next to
+    /// them; `.continuous` is the one-word difference.
+    private var cardShape: some Shape {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+    }
 
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
@@ -1870,13 +1905,21 @@ private struct RestBanner: View {
                 .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(done ? "Rest complete" : "Resting")
-                        .font(.caption2.weight(.semibold))
-                        // At accessibility sizes this hyphenated to "REST-".
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.5)
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
+                    // The same `timer` glyph `StartRestControl` showed for
+                    // the empty state of this slot (#223), so the clock reads
+                    // as one control rather than a bar that appears from
+                    // nowhere.
+                    Label {
+                        Text(done ? "Rest complete" : "Resting")
+                            .textCase(.uppercase)
+                    } icon: {
+                        Image(systemName: done ? "checkmark.circle.fill" : "timer")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    // At accessibility sizes this hyphenated to "REST-".
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .foregroundStyle(.secondary)
                     // Fixed rather than `@ScaledMetric` (a platform audit's
                     // P3, tried and reverted): scaling this relative to
                     // `.largeTitle` measured 22pt taller even at the
@@ -1910,9 +1953,18 @@ private struct RestBanner: View {
                     .tint(Theme.quietTint)
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.bar)
+            // #223's card vocabulary — `.ultraThinMaterial` in a continuous
+            // corner, floating on a 20pt margin rather than running bezel to
+            // bezel — at the compact height this pinned position asks for.
+            // The material and the corner are what make it read as a native
+            // transient surface; the size is what keeps it a status line
+            // under the navigation bar instead of a panel mid-screen.
+            .background(.ultraThinMaterial, in: cardShape)
+            .clipShape(cardShape)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 4)
         }
         // Waits for the clock rather than watching the view.
         //
