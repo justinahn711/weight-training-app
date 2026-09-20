@@ -489,6 +489,7 @@ public final class StoredExerciseSession {
     public var exerciseID: UUID = UUID()
     public var startedAt: Date = Date()
     public var planData: Data = Data()
+    public var recommendationTraceData: Data = Data()
     public var completionRaw: String = ExerciseExposure.Completion.unknown.rawValue
     public var completedAt: Date?
     public var updatedAt: Date = Date()
@@ -503,6 +504,7 @@ public final class StoredExerciseSession {
 
     public func update(from value: RecordedExerciseSession) {
         planData = value.plan.map(encoded) ?? Data()
+        recommendationTraceData = value.recommendationTrace.map(encoded) ?? Data()
         completionRaw = value.completion.rawValue
         completedAt = value.completedAt
         updatedAt = value.updatedAt
@@ -513,6 +515,9 @@ public final class StoredExerciseSession {
             return RecordedExerciseSession(
                 workoutID: workoutID, exerciseID: exerciseID, startedAt: startedAt,
                 plan: planData.isEmpty ? nil : try decoded(ExercisePlan.self, from: planData),
+                recommendationTrace: recommendationTraceData.isEmpty
+                    ? nil
+                    : try decoded(RecommendationTrace.self, from: recommendationTraceData),
                 completion: ExerciseExposure.Completion(rawValue: completionRaw) ?? .unknown,
                 completedAt: completedAt, updatedAt: updatedAt
             )

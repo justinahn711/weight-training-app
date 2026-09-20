@@ -124,6 +124,7 @@ extension TrainingStore {
                     if existing.updatedAt == session.updatedAt, existing != session {
                         var conflict = existing
                         conflict.plan = nil
+                        conflict.recommendationTrace = nil
                         conflict.completion = .unknown
                         conflict.completedAt = [existing.completedAt, session.completedAt].compactMap { $0 }.max()
                         try writeExerciseSession(conflict)

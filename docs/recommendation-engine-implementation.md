@@ -87,9 +87,17 @@ not become whole-program fatigue. A recovery proposal must be accepted, and the
 next build week offers the last non-deload plan again so the reduced plan does
 not become permanent.
 
-The next evaluation step is physical-device review with real history, followed
-by shadow comparison of recommendations and user overrides before tuning any
-thresholds.
+Each set-plan review now preserves the proposal that was shown and records
+whether it was accepted unchanged or edited. **Settings → Recommendation
+results** derives a rolling 28-day report from current logs: reviewed plans,
+edits, exact-plan completion, RPE coverage, and sets above target effort. It
+stores no mutable success counters, so correcting or deleting a set updates the
+report. Older history remains valid but is not retroactively labeled as a
+reviewed recommendation.
+
+The next evaluation step is physical-device review with real history. The new
+report supplies the shadow comparison and override evidence needed before
+tuning any thresholds.
 
 ## Calling convention
 
@@ -134,12 +142,13 @@ Validation through the training-block milestone on 2026-09-19:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including personalized bands, block persistence, baseline derivation, deload entry/exit, and sync constraints (742 tests) | PASS |
+| Swift domain/store suite, including personalized bands, block persistence, baseline derivation, deload entry/exit, feedback derivation, and sync constraints (748 tests) | PASS |
 | Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |
 | Focused iPhone UI through the early-completion milestone | PASS |
-| Signed iPhone build and install over existing app data | PASS |
+| Signed iPhone build | PASS |
+| Install of the current feedback milestone over existing phone data | PENDING — phone unavailable |
 | Physical-device hands-on volume and recommendation review | PENDING |
 
 Build products used a separate temporary derived-data directory. A remote fetch

@@ -8,12 +8,14 @@ public struct RecordedExerciseSession: Hashable, Codable, Sendable, Identifiable
     public let exerciseID: UUID
     public let startedAt: Date
     public var plan: ExercisePlan?
+    public var recommendationTrace: RecommendationTrace?
     public var completion: ExerciseExposure.Completion
     public var completedAt: Date?
     public var updatedAt: Date
 
     public init(
         workoutID: UUID, exerciseID: UUID, startedAt: Date, plan: ExercisePlan? = nil,
+        recommendationTrace: RecommendationTrace? = nil,
         completion: ExerciseExposure.Completion = .unknown,
         completedAt: Date? = nil, updatedAt: Date
     ) {
@@ -21,6 +23,7 @@ public struct RecordedExerciseSession: Hashable, Codable, Sendable, Identifiable
         self.exerciseID = exerciseID
         self.startedAt = startedAt
         self.plan = plan
+        self.recommendationTrace = recommendationTrace
         self.completion = completion
         self.completedAt = completedAt
         self.updatedAt = updatedAt

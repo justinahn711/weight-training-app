@@ -25,6 +25,7 @@ extension TrainingStore {
             // Equal-time conflicts cannot prove which plan was followed.
             if latest.contains(where: { $0 != winner }) {
                 winner.plan = nil
+                winner.recommendationTrace = nil
                 winner.completion = .unknown
                 winner.completedAt = latest.compactMap(\.completedAt).max()
             }
@@ -91,6 +92,15 @@ extension TrainingStore {
                                      isDeload: comparable.isDeload)
             if comparable == previous { accepted = previous }
         }
+        if intent.recommendationTrace == nil {
+            let recommendation = try recommendation(
+                for: exercise, excluding: workoutID, now: now
+            )
+            if !recommendation.sets.isEmpty {
+                intent.recommendationTrace = RecommendationTrace(recommendation: recommendation)
+            }
+        }
+        intent.recommendationTrace?.recordDecision(for: accepted)
         intent.plan = accepted
         intent.updatedAt = now
         do {
@@ -249,6 +259,19 @@ extension TrainingStore {
         guard let resolved else { return nil }
         return TrainingBlockEngine.status(
             config: resolved, history: try allExerciseExposures(), now: now, calendar: calendar
+        )
+    }
+
+    /// Review data is derived from the proposal snapshot, current accepted
+    /// plans, and corrected set rows. No mutable success counters are stored.
+    public func recommendationFeedbackReport(
+        now: Date = Date(), days: Int = 28
+    ) throws -> RecommendationFeedbackReport {
+        RecommendationFeedbackEngine.report(
+            sessions: try exerciseSessions(),
+            exposures: try allExerciseExposures(),
+            now: now,
+            days: days
         )
     }
 

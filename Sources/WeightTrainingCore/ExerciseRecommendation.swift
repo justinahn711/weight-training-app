@@ -46,11 +46,11 @@ public struct RecommendationContext: Hashable, Sendable {
 }
 
 public struct ExerciseRecommendation: Hashable, Sendable {
-    public enum Action: String, Sendable {
+    public enum Action: String, Codable, Sendable {
         case establish, hold, addReps, addLoad, addSet, reduce, deload, stop
     }
 
-    public enum Evidence: String, Sendable {
+    public enum Evidence: String, Codable, Sendable {
         case insufficient, limited, consistent
     }
 

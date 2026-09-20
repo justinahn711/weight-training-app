@@ -262,6 +262,15 @@ struct SettingsView: View {
                 LabeledContent("Training block", value: trainingBlockLabel)
             }
             .accessibilityIdentifier("settings.trainingBlock")
+
+            if let store {
+                NavigationLink {
+                    RecommendationFeedbackView(store: store)
+                } label: {
+                    LabeledContent("Recommendation results", value: "Last 28 days")
+                }
+                .accessibilityIdentifier("settings.recommendationResults")
+            }
         } header: {
             Text("Training")
         } footer: {
@@ -404,7 +413,8 @@ struct SettingsView: View {
                     unit: unit,
                     trainingSplit: gym.trainingSplit,
                     weeklySessionTarget: gym.weeklySessionTarget,
-                    volumeBudgets: gym.volumeBudgets
+                    volumeBudgets: gym.volumeBudgets,
+                    trainingBlock: gym.trainingBlock
                 ))
             }
         )
@@ -564,6 +574,76 @@ private struct MuscleVolumeBudgetEditor: View {
 
     private func maximumBinding(for muscle: Muscle) -> Binding<Int> {
         Binding(get: { maximum(for: muscle) }, set: { replace(muscle, maximum: $0) })
+    }
+}
+
+// MARK: - Recommendation feedback
+
+private struct RecommendationFeedbackView: View {
+    let store: TrainingStore
+    @State private var report: RecommendationFeedbackReport?
+    @State private var failed = false
+
+    var body: some View {
+        List {
+            if let report, report.reviewedPlans > 0 {
+                Section {
+                    LabeledContent("Plans reviewed", value: "\(report.reviewedPlans)")
+                    LabeledContent("Used as suggested", value: "\(report.acceptedAsSuggested)")
+                    LabeledContent("Edited before use", value: "\(report.editedBeforeUse)")
+                } header: {
+                    Text("Last \(report.days) days")
+                } footer: {
+                    Text("A plan counts after you open Review set plan and press Use Plan. Editing the load, reps, set count, or recovery status is recorded separately.")
+                }
+
+                Section {
+                    LabeledContent(
+                        "Completed as planned",
+                        value: "\(report.completedAsPlanned) of \(report.finishedAcceptedPlans)"
+                    )
+                    LabeledContent("RPE reported", value: effortCoverage(report))
+                    LabeledContent(
+                        "Sets above target RPE",
+                        value: "\(report.aboveTargetEffortSets)"
+                    )
+                } header: {
+                    Text("Suggested plans used")
+                } footer: {
+                    Text("Outcomes use only plans accepted exactly as suggested. Correcting or deleting a set updates these results automatically.")
+                }
+            } else if failed {
+                ContentUnavailableView(
+                    "Results unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text("The saved recommendation history could not be read.")
+                )
+            } else {
+                ContentUnavailableView(
+                    "No reviewed plans yet",
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    description: Text("Future set-plan reviews will appear here after you choose Use Plan. Existing workout history remains unchanged.")
+                )
+            }
+        }
+        .navigationTitle("Recommendation results")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { reload() }
+    }
+
+    private func reload() {
+        do {
+            report = try store.recommendationFeedbackReport()
+            failed = false
+        } catch {
+            report = nil
+            failed = true
+        }
+    }
+
+    private func effortCoverage(_ report: RecommendationFeedbackReport) -> String {
+        guard let coverage = report.effortCoverage else { return "No sets yet" }
+        return "\(Int((coverage * 100).rounded()))%"
     }
 }
 

@@ -1,8 +1,8 @@
 # Progressive overload recommendation engine
 
-Status: phases 1–3 and explicit early-completion reasons are implemented on
-`feat/recommendation-engine`; personalized starting bands, optional tonnage
-blocks, and adaptive whole-program deloads remain planned.
+Status: phases 1–4 and the phase-5 recommendation feedback instrumentation are
+implemented on `feat/recommendation-engine`. Physical-device review with real
+history remains before threshold tuning.
 
 Provisional audience: healthy adult recreational lifters seeking muscle growth with steady strength gains. Goal, experience, available equipment, exercise priorities, and training frequency are explicit configuration. Strength and general fitness can use different exercise prescriptions without replacing the decision pipeline.
 
@@ -192,7 +192,7 @@ actual logs + accepted plans + exercise/profile configuration
    accepted remaining-work projection, and a one-set increase only when ordinary
    rep/load progression is unavailable and every involved muscle remains in budget.
 4. Add optional training blocks, baseline comparisons, and scheduled/adaptive deload coordination. **Implemented:** synced opt-in schedule, derived comparable-week baseline, build/recovery tonnage targets, reviewable scheduled and multi-exercise adaptive deloads, and explicit post-deload resumption.
-5. Replay historical scenarios in shadow mode before showing the new engine's suggestions. **Started:** deterministic multi-week replays now cover the block schedule and false-fatigue guards. Physical-device comparison with real history and collection of acceptance, overrides, achieved reps, RPE overshoot, and workout completion remain. Acceptance alone does not establish quality.
+5. Replay historical scenarios in shadow mode before tuning the engine's suggestions. **In progress:** deterministic multi-week replays cover the block schedule and false-fatigue guards. The app now preserves the proposal shown at plan review, distinguishes unchanged acceptance from an edit, and derives 28-day completion, achieved-target, RPE-coverage, and effort-overshoot results from corrected logs. Physical-device comparison with real history remains. Acceptance alone does not establish quality.
 
 Required evaluation scenarios: two easy exposures; a single unusually good workout; a hard final set hidden by a low average RPE; partial completion for time versus fatigue; absent RPE; warmup-only history; changed machine or ROM; mixed loads; plate minimums; coarse dumbbell steps; kg/lb conversion; overlapping muscle budgets; an unfinished week; missed sessions; a long break; deload entry/exit; duplicates/imports; corrected/deleted logs; and sessions across midnight.
 

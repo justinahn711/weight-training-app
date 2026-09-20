@@ -375,6 +375,26 @@ final class AccessibilityAuditTests: XCTestCase {
         add(screenshot)
     }
 
+    func testRecommendationResultsAreReachable() throws {
+        let app = launch()
+        XCTAssertTrue(try reachTrainScreen(app))
+
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable)
+        settings.tap()
+
+        let list = app.collectionViews.firstMatch
+        let results = app.descendants(matching: .any)["settings.recommendationResults"]
+        for _ in 0..<5 where !results.exists || !results.isHittable {
+            list.swipeUp()
+        }
+        XCTAssertTrue(results.exists && results.isHittable)
+        results.tap()
+
+        XCTAssertTrue(app.navigationBars["Recommendation results"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No reviewed plans yet"].waitForExistence(timeout: 5))
+    }
+
     /// Answers first-launch setup when it covers Train, then waits for a day
     /// or resumable workout that can actually receive a tap.
     @discardableResult

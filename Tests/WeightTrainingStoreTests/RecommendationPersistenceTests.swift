@@ -93,6 +93,70 @@ final class RecommendationPersistenceTests: XCTestCase {
         XCTAssertEqual(recommendation.sets.map(\.reps), [10, 10, 10])
     }
 
+    func testReviewedRecommendationRecordsAcceptanceAndCurrentOutcome() throws {
+        let exercise = try lift()
+        let firstWorkout = UUID()
+        let first = try store.acceptExercisePlan(
+            plan(exercise), workoutID: firstWorkout, startedAt: epoch, now: epoch
+        )
+        _ = try complete(plan: first, workoutID: firstWorkout, start: epoch)
+
+        let secondStart = epoch.addingTimeInterval(2 * 86_400)
+        let secondWorkout = UUID()
+        let recommendation = try store.recommendation(for: exercise, now: secondStart)
+        let proposed = ExercisePlan(exercise: exercise, sets: recommendation.sets)
+        let accepted = try store.acceptExercisePlan(
+            proposed, workoutID: secondWorkout, startedAt: secondStart, now: secondStart
+        )
+        _ = try complete(plan: accepted, workoutID: secondWorkout, start: secondStart)
+
+        let session = try XCTUnwrap(
+            store.exerciseSession(workoutID: secondWorkout, exerciseID: exercise.id)
+        )
+        XCTAssertEqual(session.recommendationTrace?.action, recommendation.action)
+        XCTAssertEqual(session.recommendationTrace?.decision, .accepted)
+        XCTAssertEqual(session.recommendationTrace?.proposedSets, recommendation.sets)
+
+        let report = try store.recommendationFeedbackReport(
+            now: secondStart.addingTimeInterval(2_000)
+        )
+        XCTAssertEqual(report.reviewedPlans, 1)
+        XCTAssertEqual(report.acceptedAsSuggested, 1)
+        XCTAssertEqual(report.finishedAcceptedPlans, 1)
+        XCTAssertEqual(report.completedAsPlanned, 1)
+        XCTAssertEqual(report.effortCoverage, 1)
+    }
+
+    func testEditingARecommendationIsKeptSeparateFromAcceptedOutcomes() throws {
+        let exercise = try lift()
+        let firstWorkout = UUID()
+        let first = try store.acceptExercisePlan(
+            plan(exercise), workoutID: firstWorkout, startedAt: epoch, now: epoch
+        )
+        _ = try complete(plan: first, workoutID: firstWorkout, start: epoch)
+
+        let secondStart = epoch.addingTimeInterval(2 * 86_400)
+        let secondWorkout = UUID()
+        let recommendation = try store.recommendation(for: exercise, now: secondStart)
+        var editedSets = recommendation.sets
+        editedSets[0].reps -= 1
+        _ = try store.acceptExercisePlan(
+            ExercisePlan(exercise: exercise, sets: editedSets),
+            workoutID: secondWorkout,
+            startedAt: secondStart,
+            now: secondStart
+        )
+
+        let session = try XCTUnwrap(
+            store.exerciseSession(workoutID: secondWorkout, exerciseID: exercise.id)
+        )
+        XCTAssertEqual(session.recommendationTrace?.decision, .edited)
+        let report = try store.recommendationFeedbackReport(now: secondStart)
+        XCTAssertEqual(report.reviewedPlans, 1)
+        XCTAssertEqual(report.editedBeforeUse, 1)
+        XCTAssertEqual(report.acceptedWorkingSets, 0)
+    }
+
     func testWeeklyVolumeAddsOneSetWhenTheLoadStepIsTooLarge() throws {
         let exercise = Exercise(
             name: "Volume Press", muscles: [.primary(.chest), .secondary(.triceps)],
