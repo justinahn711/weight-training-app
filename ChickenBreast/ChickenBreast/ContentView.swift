@@ -337,12 +337,17 @@ struct ContentView: View {
         .buttonStyle(.plain)
     }
 
-    private var dayPicker: some View {
-        VStack(spacing: 16) {
-            Spacer()
-
-            SyncBadge(status: sync)
-
+    /// The optional prompts, kept below the primary action (#215).
+    ///
+    /// They used to render above Resume and the day buttons, so returning
+    /// to a workout in progress meant scanning four things that could all
+    /// wait. Order among themselves is unchanged, and so is every
+    /// condition deciding whether each one appears at all.
+    ///
+    /// Tighter spacing than the stack above it: 12 rather than 16, which
+    /// reads as one group of asides rather than four more primary rows.
+    private var secondaryPrompts: some View {
+        VStack(spacing: 12) {
             if !completionSummary.isEmpty || !completionRecords.isEmpty {
                 Button { showingCompletionSummary = true } label: {
                     HStack(spacing: 8) {
@@ -362,17 +367,6 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("home.completion-summary")
                 .accessibilityHint("Shows the targets saved after your last workout.")
-            }
-
-            if let cycle {
-                Text(cycle.summary())
-                    .font(.headline)
-                    // Was `.secondary`, which fails contrast at this size (#114).
-                    // This line is the answer to "what am I training today" —
-                    // the question the screen exists for — so receding was the
-                    // wrong instinct twice over.
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if healthNeedsPermission {
@@ -415,6 +409,12 @@ struct ContentView: View {
             // Train is already tappable (#115), so the centred stack re-laid
             // out and every day button moved under a thumb already reaching for
             // one.
+            //
+            // Still required after this row moved below the day buttons (#215).
+            // The reservation is not about what sits underneath it: the whole
+            // stack is centred between two Spacers, so a late height change
+            // anywhere in it re-centres everything above as well. Dropping the
+            // reservation here would relocate the #115 jump, not remove it.
             Group {
                 if let volume {
                     volumeRow(volume)
@@ -426,6 +426,25 @@ struct ContentView: View {
             // reserving less than the control needs made the outer frame the
             // real hit area, which is how a full-width row ended up 18pt tall.
             .frame(height: 44)
+        }
+    }
+
+    private var dayPicker: some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            SyncBadge(status: sync)
+
+            if let cycle {
+                Text(cycle.summary())
+                    .font(.headline)
+                    // Was `.secondary`, which fails contrast at this size (#114).
+                    // This line is the answer to "what am I training today" —
+                    // the question the screen exists for — so receding was the
+                    // wrong instinct twice over.
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if let workoutDraft {
                 Button {
@@ -495,6 +514,11 @@ struct ContentView: View {
                     .disabled(store == nil)
                 }
             }
+
+            // Demoted below the day's one action, not removed (#215). Each
+            // of these still earns its place; none of them is what a lifter
+            // opened the app to do.
+            secondaryPrompts
 
             Spacer()
         }
