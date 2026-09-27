@@ -232,11 +232,17 @@ final class SessionViewModel {
             // Arm the Next-up card on the set that matches last time. Read
             // back off `session.current` rather than the `current` captured
             // above, because `session.log` is what just changed the count.
-            if startsRest,
-               RestAlertSettings.autoAdvanceEnabled,
-               session.current?.justReachedUsualSetCount == true,
-               let next = session.next {
-                pendingAdvance = next
+            // Every working set re-decides it: one more after the match means
+            // the lifter is still on this lift, so a move armed by the set
+            // before must not fire when this set's rest ends (#212).
+            if startsRest {
+                if RestAlertSettings.autoAdvanceEnabled,
+                   session.current?.justReachedUsualSetCount == true,
+                   let next = session.next {
+                    pendingAdvance = next
+                } else {
+                    pendingAdvance = nil
+                }
             }
             // Log, start resting, and be ready for the next set — one tap does
             // all three (#6). Warmups don't start a rest; ramping is continuous
