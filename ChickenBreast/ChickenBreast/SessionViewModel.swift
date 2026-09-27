@@ -209,14 +209,25 @@ final class SessionViewModel {
             // Logging on the lift the session moved to is the "next action"
             // the moved-on notice waits for; it has done its job.
             autoAdvancedFrom = nil
-            // Judged against previous days, not earlier today: feeling out
-            // a new lift across three sets is one session, not three
-            // records. The digest's weekly view keeps the engine's own
-            // per-set judgement; this is only what the banner celebrates.
-            let today = Calendar.current.startOfDay(for: record.performedAt)
-            let previousDays = ((try? store.sets(forExercise: record.exerciseID)) ?? [])
-                .filter { $0.performedAt < today }
-            recentRecord = Self.headline(of: PersonalRecords.set(by: record, history: previousDays))
+            // Judged against the lift's whole history, earlier today
+            // included. Excluding today was how this read before (#213), to
+            // keep feeling out a new lift across three sets from counting as
+            // three records — but it also meant a 180 logged after today's
+            // 200 still beat last week's 170 and got a gold banner for a set
+            // that was the second best thing done in the last hour. A
+            // celebration that fires on a backoff set teaches you to ignore
+            // the ones that mean something.
+            //
+            // The original worry is still answered, and now by the one rule
+            // rather than by this call site: `PersonalRecords.set` refuses
+            // every record on a lift with nothing before today, so a first
+            // outing's ramp stays silent. Past that, a set has to beat what
+            // the lifter has already done today, which is the only reading of
+            // "record" that survives being checked against the screen above
+            // it. The banner, the finish sheet and the trend marks now all
+            // ask that same question.
+            let history = (try? store.sets(forExercise: record.exerciseID)) ?? []
+            recentRecord = Self.headline(of: PersonalRecords.set(by: record, history: history))
             if recentRecord != nil { recordSetIDs.insert(record.id) }
             // Arm the Next-up card on the set that matches last time. Read
             // back off `session.current` rather than the `current` captured
@@ -383,8 +394,7 @@ final class SessionViewModel {
             // The set that armed the move is gone, so the move is too.
             pendingAdvance = nil
             recentlyLoggedSet = nil
-            recordSetIDs.remove(record.id)
-            if recentRecord?.set.id == record.id { recentRecord = nil }
+            refreshRecords()
             liveLogActionID = UUID()
             publishActivity()
         } catch {
@@ -400,19 +410,54 @@ final class SessionViewModel {
         recentRecord = nil
     }
 
-    /// Every record set today across the session, judged the way the
-    /// banner judges — against previous days — and then per set against
-    /// what came earlier today, so a lift that climbed through three
-    /// sets reports its best rather than all three. One per lift.
+    /// Every record set today across the session, judged exactly the way the
+    /// banner judges, and then reduced to one headline per lift: a lift that
+    /// climbed through three sets reports its best rather than all three.
+    ///
+    /// The "nothing before today, nothing to celebrate" guard that used to
+    /// stand here explicitly is gone because `PersonalRecords.set` enforces
+    /// it for everyone now. That is the point of #213 — the finish sheet and
+    /// the banner cannot be made to disagree by editing only one of them.
     private func recordsSetToday() -> [SessionRecordEntry] {
         let today = Calendar.current.startOfDay(for: session.startedAt)
         return session.exercises.compactMap { exercise -> SessionRecordEntry? in
             let history = (try? store.sets(forExercise: exercise.id)) ?? []
-            guard history.contains(where: { !$0.isWarmup && $0.performedAt < today }) else { return nil }
             guard let record = Self.headline(of: PersonalRecords.recent(in: history, since: today)) else {
                 return nil
             }
             return SessionRecordEntry(exercise: exercise.exercise, record: record)
+        }
+    }
+
+    /// Works out every record badge in the session again, from disk.
+    ///
+    /// Records are derived, never stored, so the honest answer to a set
+    /// changing under them is to recompute rather than to patch. Removing the
+    /// edited row's own id — all the delete path used to do — gets the first
+    /// half right and leaves the second half lying: correct today's 200 down
+    /// to 160 and the 180 logged after it, silent at the time because it lost
+    /// to the 200, is now the day's best and has earned the badge (#213).
+    ///
+    /// The banner follows the badges instead of simply being cleared, so an
+    /// edit that leaves the celebrated set a record restates it with the
+    /// corrected numbers. A banner already dismissed stays dismissed:
+    /// `recentRecord` is nil by then and nothing here brings it back.
+    private func refreshRecords() {
+        var badges: Set<UUID> = []
+        for exercise in session.exercises {
+            let history = (try? store.sets(forExercise: exercise.id)) ?? []
+            for set in exercise.workingSets
+            where !PersonalRecords.set(by: set, history: history).isEmpty {
+                badges.insert(set.id)
+            }
+        }
+        recordSetIDs = badges
+
+        if let shown = recentRecord {
+            let history = (try? store.sets(forExercise: shown.set.exerciseID)) ?? []
+            recentRecord = history
+                .first { $0.id == shown.set.id }
+                .flatMap { Self.headline(of: PersonalRecords.set(by: $0, history: history)) }
         }
     }
 
@@ -473,10 +518,12 @@ final class SessionViewModel {
         if let recent = recentlyLoggedSet, !survivingIDs.contains(recent.id) {
             recentlyLoggedSet = nil
         }
-        recordSetIDs.formIntersection(survivingIDs)
-        if let record = recentRecord, !survivingIDs.contains(record.set.id) {
-            recentRecord = nil
-        }
+        // Not `formIntersection(survivingIDs)`: dropping the deleted row's
+        // badge is only half of it. Deleting today's 200 promotes the 180
+        // logged after it, which was not a record while the 200 stood, so the
+        // surviving badges have to be worked out again rather than filtered
+        // (#213).
+        refreshRecords()
 
         // Checked independently of the banner above, not nested inside it:
         // `dismissRecentSetUndo` clears `recentlyLoggedSet` without touching
@@ -521,6 +568,12 @@ final class SessionViewModel {
             if recentlyLoggedSet?.id == record.id {
                 recentlyLoggedSet = record
             }
+            // A correction is a history edit like any other, so the records
+            // come back off disk rather than being left as they were. Editing
+            // the set that holds the badge is the obvious case; the one that
+            // used to be wrong is the set logged *after* it, which becomes a
+            // record the moment the row above it stops being one (#213).
+            refreshRecords()
             publishActivity()
             return true
         } catch {
