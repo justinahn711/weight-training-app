@@ -1,0 +1,6 @@
+# Keep the user's main-task model choice. These settings apply to subagents.
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 2
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "low"
