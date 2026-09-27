@@ -4,7 +4,7 @@ import XCTest
 final class RecommendationFeedbackTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    func testReportSeparatesEditedPlansAndMeasuresAcceptedOutcomes() {
+    func testReportSeparatesEditedPlansAndMeasuresAcceptedOutcomes() throws {
         let exercise = Exercise(
             name: "Press",
             muscles: [.primary(.chest)],
@@ -88,6 +88,19 @@ final class RecommendationFeedbackTests: XCTestCase {
         XCTAssertEqual(report.acceptedWorkingSets, 3)
         XCTAssertEqual(report.aboveTargetEffortSets, 1)
         XCTAssertEqual(report.effortCoverage, 1)
+        XCTAssertEqual(report.entries.count, 2)
+        let acceptedEntry = try XCTUnwrap(report.entries.first { $0.decision == .accepted })
+        XCTAssertEqual(acceptedEntry.exerciseID, exercise.id)
+        XCTAssertEqual(acceptedEntry.action, .hold)
+        XCTAssertTrue(acceptedEntry.finished)
+        XCTAssertTrue(acceptedEntry.completedAsPlanned)
+        XCTAssertEqual(acceptedEntry.reportedEffortSets, 3)
+        XCTAssertEqual(acceptedEntry.workingSets, 3)
+        XCTAssertEqual(acceptedEntry.aboveTargetEffortSets, 1)
+        let editedEntry = try XCTUnwrap(report.entries.first { $0.decision == .edited })
+        XCTAssertFalse(editedEntry.finished)
+        XCTAssertFalse(editedEntry.completedAsPlanned)
+        XCTAssertEqual(editedEntry.workingSets, 0)
     }
 
     func testOldAndFutureTracesStayOutOfRollingWindow() {
@@ -153,6 +166,8 @@ final class RecommendationFeedbackTests: XCTestCase {
 
         XCTAssertEqual(report.finishedAcceptedPlans, 1)
         XCTAssertEqual(report.completedAsPlanned, 0)
+        XCTAssertEqual(report.entries.first?.completion, .shortenedForTime)
+        XCTAssertFalse(report.entries.first?.completedAsPlanned ?? true)
     }
 
     func testSessionWrittenBeforeFeedbackTracingStillDecodes() throws {

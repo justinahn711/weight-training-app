@@ -47,6 +47,9 @@ public struct RecommendationFeedbackReport: Hashable, Sendable {
     public let reportedEffortSets: Int
     public let acceptedWorkingSets: Int
     public let aboveTargetEffortSets: Int
+    /// Newest-first detail for every proposal included in the aggregate. This
+    /// makes shadow evaluation actionable without storing another result row.
+    public let entries: [RecommendationFeedbackEntry]
 
     public init(
         days: Int,
@@ -57,7 +60,8 @@ public struct RecommendationFeedbackReport: Hashable, Sendable {
         completedAsPlanned: Int,
         reportedEffortSets: Int,
         acceptedWorkingSets: Int,
-        aboveTargetEffortSets: Int
+        aboveTargetEffortSets: Int,
+        entries: [RecommendationFeedbackEntry] = []
     ) {
         self.days = days
         self.reviewedPlans = reviewedPlans
@@ -68,12 +72,31 @@ public struct RecommendationFeedbackReport: Hashable, Sendable {
         self.reportedEffortSets = reportedEffortSets
         self.acceptedWorkingSets = acceptedWorkingSets
         self.aboveTargetEffortSets = aboveTargetEffortSets
+        self.entries = entries
     }
 
     public var effortCoverage: Double? {
         acceptedWorkingSets > 0
             ? Double(reportedEffortSets) / Double(acceptedWorkingSets)
             : nil
+    }
+}
+
+public struct RecommendationFeedbackEntry: Hashable, Sendable, Identifiable {
+    public let id: String
+    public let exerciseID: UUID
+    public let generatedAt: Date
+    public let action: ExerciseRecommendation.Action
+    public let decision: RecommendationTrace.Decision
+    public let finished: Bool
+    public let completion: ExerciseExposure.Completion?
+    public let completedAsPlanned: Bool
+    public let reportedEffortSets: Int
+    public let workingSets: Int
+    public let aboveTargetEffortSets: Int
+
+    public var effortCoverage: Double? {
+        workingSets > 0 ? Double(reportedEffortSets) / Double(workingSets) : nil
     }
 }
 
@@ -101,31 +124,55 @@ public enum RecommendationFeedbackEngine {
         var reportedEffortSets = 0
         var acceptedWorkingSets = 0
         var aboveTargetEffortSets = 0
+        var entries: [RecommendationFeedbackEntry] = []
 
-        for session in accepted {
-            guard let plan = session.plan,
-                  let exposure = exposureByKey[key(
-                    workoutID: session.workoutID,
-                    exerciseID: session.exerciseID
-                  )] else { continue }
-            let working = exposure.workingSets
-            let comparable = Array(working.prefix(plan.sets.count))
-            acceptedWorkingSets += comparable.count
-            reportedEffortSets += comparable.filter { $0.effortSource == .reported }.count
-            aboveTargetEffortSets += zip(comparable, plan.sets).filter { performed, target in
-                performed.effortSource == .reported
-                    && performed.record.rpe.map { $0 > target.rpe } == true
-            }.count
+        for session in reviewed {
+            guard let trace = session.recommendationTrace else { continue }
+            let plan = session.plan
+            let exposure = exposureByKey[key(
+                workoutID: session.workoutID,
+                exerciseID: session.exerciseID
+            )]
+            let working = exposure?.workingSets ?? []
+            let comparable = Array(working.prefix(plan?.sets.count ?? 0))
+            let reported = comparable.filter { $0.effortSource == .reported }.count
+            let aboveTarget = plan.map { plan in
+                zip(comparable, plan.sets).filter { performed, target in
+                    performed.effortSource == .reported
+                        && performed.record.rpe.map { $0 > target.rpe } == true
+                }.count
+            } ?? 0
+            let followedExactly = plan.map { plan in
+                exposure?.completion == .completed
+                    && working.count == plan.sets.count
+                    && zip(working, plan.sets).allSatisfy { performed, target in
+                        performed.record.load == target.load && performed.record.reps >= target.reps
+                    }
+            } ?? false
 
-            guard session.completedAt != nil else { continue }
-            finishedAcceptedPlans += 1
-            if exposure.completion == .completed,
-               working.count == plan.sets.count,
-               zip(working, plan.sets).allSatisfy({ performed, target in
-                   performed.record.load == target.load && performed.record.reps >= target.reps
-               }) {
-                completedAsPlanned += 1
+            if trace.decision == .accepted, plan != nil, exposure != nil {
+                acceptedWorkingSets += comparable.count
+                reportedEffortSets += reported
+                aboveTargetEffortSets += aboveTarget
+                if session.completedAt != nil {
+                    finishedAcceptedPlans += 1
+                    if followedExactly { completedAsPlanned += 1 }
+                }
             }
+
+            entries.append(RecommendationFeedbackEntry(
+                id: session.id,
+                exerciseID: session.exerciseID,
+                generatedAt: trace.generatedAt,
+                action: trace.action,
+                decision: trace.decision,
+                finished: session.completedAt != nil,
+                completion: exposure?.completion,
+                completedAsPlanned: trace.decision == .accepted && followedExactly,
+                reportedEffortSets: trace.decision == .accepted ? reported : 0,
+                workingSets: trace.decision == .accepted ? comparable.count : 0,
+                aboveTargetEffortSets: trace.decision == .accepted ? aboveTarget : 0
+            ))
         }
 
         return RecommendationFeedbackReport(
@@ -137,7 +184,11 @@ public enum RecommendationFeedbackEngine {
             completedAsPlanned: completedAsPlanned,
             reportedEffortSets: reportedEffortSets,
             acceptedWorkingSets: acceptedWorkingSets,
-            aboveTargetEffortSets: aboveTargetEffortSets
+            aboveTargetEffortSets: aboveTargetEffortSets,
+            entries: entries.sorted {
+                if $0.generatedAt != $1.generatedAt { return $0.generatedAt > $1.generatedAt }
+                return $0.id < $1.id
+            }
         )
     }
 

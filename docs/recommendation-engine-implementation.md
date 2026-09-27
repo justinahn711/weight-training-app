@@ -103,6 +103,10 @@ stores no mutable success counters, so correcting or deleting a set updates the
 report. Older history remains valid but is not retroactively labeled as a
 reviewed recommendation.
 
+The same screen lists each recent reviewed exercise with its proposed action,
+accept/edit decision, completion outcome, and RPE coverage. This makes a real
+workout auditable without treating plan acceptance as a successful outcome.
+
 The next evaluation step is physical-device review with real history. The new
 report supplies the shadow comparison and override evidence needed before
 tuning any thresholds.
@@ -156,7 +160,7 @@ Validation through the training-block milestone on 2026-09-19:
 | App and widget build for iOS Simulator | PASS |
 | Focused iPhone UI through the early-completion milestone | PASS |
 | Signed iPhone build | PASS |
-| Install of the feedback milestone over existing phone data | PASS |
+| Install of the feedback and per-exercise results milestones over existing phone data | PASS |
 | Read-only replay against the phone's 101-set history | PASS — T-Bar Row now receives an 80 lb × 12, 12 baseline; Incline DB Press holds for missing RPE |
 | Physical-device hands-on volume and recommendation review | PENDING |
 

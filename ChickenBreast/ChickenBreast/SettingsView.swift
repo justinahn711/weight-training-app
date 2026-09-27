@@ -582,6 +582,7 @@ private struct MuscleVolumeBudgetEditor: View {
 private struct RecommendationFeedbackView: View {
     let store: TrainingStore
     @State private var report: RecommendationFeedbackReport?
+    @State private var exerciseNames: [UUID: String] = [:]
     @State private var failed = false
 
     var body: some View {
@@ -612,6 +613,29 @@ private struct RecommendationFeedbackView: View {
                 } footer: {
                     Text("Outcomes use only plans accepted exactly as suggested. Correcting or deleting a set updates these results automatically.")
                 }
+
+                Section("Recent plan reviews") {
+                    ForEach(report.entries) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(exerciseNames[entry.exerciseID] ?? "Exercise")
+                                    .font(.headline)
+                                Spacer()
+                                Text(entry.generatedAt.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("\(actionLabel(entry.action)) · \(outcomeLabel(entry))")
+                                .font(.subheadline)
+                            if entry.decision == .accepted {
+                                Text(effortLabel(entry))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
             } else if failed {
                 ContentUnavailableView(
                     "Results unavailable",
@@ -634,9 +658,14 @@ private struct RecommendationFeedbackView: View {
     private func reload() {
         do {
             report = try store.recommendationFeedbackReport()
+            exerciseNames = Dictionary(
+                try store.exercises().map { ($0.id, $0.name) },
+                uniquingKeysWith: { first, _ in first }
+            )
             failed = false
         } catch {
             report = nil
+            exerciseNames = [:]
             failed = true
         }
     }
@@ -644,6 +673,39 @@ private struct RecommendationFeedbackView: View {
     private func effortCoverage(_ report: RecommendationFeedbackReport) -> String {
         guard let coverage = report.effortCoverage else { return "No sets yet" }
         return "\(Int((coverage * 100).rounded()))%"
+    }
+
+    private func actionLabel(_ action: ExerciseRecommendation.Action) -> String {
+        switch action {
+        case .establish: return "Starting plan"
+        case .hold: return "Hold"
+        case .addReps: return "Add reps"
+        case .addLoad: return "Add weight"
+        case .addSet: return "Add a set"
+        case .reduce: return "Reduce demand"
+        case .deload: return "Recovery plan"
+        case .stop: return "Stop movement"
+        }
+    }
+
+    private func outcomeLabel(_ entry: RecommendationFeedbackEntry) -> String {
+        if entry.decision == .edited { return "Edited before use" }
+        if !entry.finished { return entry.workingSets > 0 ? "Workout in progress" : "Not completed yet" }
+        if entry.completedAsPlanned { return "Completed as planned" }
+        switch entry.completion {
+        case .shortenedForTime: return "Ended early for time"
+        case .stoppedForFatigue: return "Ended early for fatigue"
+        case .stoppedForPain: return "Ended early for pain"
+        case .completed: return "Finished with different sets"
+        case .unknown, nil: return "Finished without a completion result"
+        }
+    }
+
+    private func effortLabel(_ entry: RecommendationFeedbackEntry) -> String {
+        guard entry.workingSets > 0 else { return "No working sets logged" }
+        let effort = "RPE reported for \(entry.reportedEffortSets) of \(entry.workingSets) sets"
+        guard entry.aboveTargetEffortSets > 0 else { return effort }
+        return "\(effort) · \(entry.aboveTargetEffortSets) above target"
     }
 }
 

@@ -194,6 +194,11 @@ actual logs + accepted plans + exercise/profile configuration
 4. Add optional training blocks, baseline comparisons, and scheduled/adaptive deload coordination. **Implemented:** synced opt-in schedule, derived comparable-week baseline, build/recovery tonnage targets, reviewable scheduled and multi-exercise adaptive deloads, and explicit post-deload resumption.
 5. Replay historical scenarios in shadow mode before tuning the engine's suggestions. **In progress:** deterministic multi-week replays cover the block schedule and false-fatigue guards. The app preserves the proposal shown at plan review, distinguishes unchanged acceptance from an edit, and derives 28-day completion, achieved-target, RPE-coverage, and effort-overshoot results from corrected logs. A read-only physical-device replay exposed legacy lifts with no accepted plan; recent pre-plan sets now produce a conservative, reviewable baseline without earning progression. Ongoing workout outcomes remain before threshold tuning. Acceptance alone does not establish quality.
 
+   The results screen also shows a newest-first entry for each reviewed exercise,
+   including the proposed action, whether the plan was edited, its completion
+   result, and per-plan RPE coverage. These details remain derived from the
+   proposal snapshot and current logs rather than stored success counters.
+
 Required evaluation scenarios: two easy exposures; a single unusually good workout; a hard final set hidden by a low average RPE; partial completion for time versus fatigue; absent RPE; warmup-only history; changed machine or ROM; mixed loads; plate minimums; coarse dumbbell steps; kg/lb conversion; overlapping muscle budgets; an unfinished week; missed sessions; a long break; deload entry/exit; duplicates/imports; corrected/deleted logs; and sessions across midnight.
 
 Assert that missing information never manufactures success, warmups never earn progression, recommendations stay achievable, muscle budgets account for all proposed work, and replaying the same inputs gives the same result. Simulations should check behavior over multiple weeks, including whether the conservative gate produces excessive holding. Use observed outcomes and coach review to tune thresholds before claiming effectiveness.
