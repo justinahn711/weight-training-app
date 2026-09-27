@@ -278,10 +278,23 @@ extension TrainingStore {
     public func recommendation(for exercise: Exercise, excluding workoutID: UUID? = nil,
                                now: Date = Date()) throws -> ExerciseRecommendation {
         let plan = try latestExercisePlan(for: exercise.id, excluding: workoutID)
-        let progression = RecommendationEngine.recommend(
-            exercise: exercise, plan: plan,
-            history: try exerciseExposures(for: exercise.id, excluding: workoutID),
-            policy: exercise.recommendationPolicy, now: now)
+        let progression: ExerciseRecommendation
+        if plan == nil,
+           let baseline = LegacyPlanBootstrapEngine.recommend(
+               exercise: exercise,
+               history: try sets(forExercise: exercise.id).filter {
+                   workoutID == nil || $0.workoutID != workoutID
+               },
+               now: now
+           ) {
+            progression = baseline
+        } else {
+            progression = RecommendationEngine.recommend(
+                exercise: exercise, plan: plan,
+                history: try exerciseExposures(for: exercise.id, excluding: workoutID),
+                policy: exercise.recommendationPolicy, now: now
+            )
+        }
         let allocated = VolumeAllocationEngine.applyingWeeklyVolume(
             to: progression,
             exercise: exercise,

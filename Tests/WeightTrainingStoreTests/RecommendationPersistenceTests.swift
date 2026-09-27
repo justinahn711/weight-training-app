@@ -72,6 +72,65 @@ final class RecommendationPersistenceTests: XCTestCase {
         XCTAssertTrue(exposure.workingSets.allSatisfy { $0.effortSource == .reported })
     }
 
+    func testRecentLegacySetsOfferAStartingPlanWithoutEarningProgression() throws {
+        let exercise = try lift()
+        let recent = Date().addingTimeInterval(-600)
+        for (index, reps) in [10, 9, 8].enumerated() {
+            try store.log(SetRecord(
+                exerciseID: exercise.id,
+                load: 100,
+                reps: reps,
+                performedAt: recent.addingTimeInterval(Double(index) * 60)
+            ))
+        }
+
+        let recommendation = try store.recommendation(
+            for: exercise,
+            now: recent.addingTimeInterval(300)
+        )
+
+        XCTAssertEqual(recommendation.action, .establish)
+        XCTAssertEqual(recommendation.reason, .legacyBaseline)
+        XCTAssertEqual(recommendation.sets.map(\.reps), [10, 9, 8])
+        XCTAssertEqual(recommendation.evidence, .limited)
+        XCTAssertTrue(recommendation.supportingExposureIDs.isEmpty)
+
+        let session = try store.sessionExercise(
+            for: exercise,
+            slot: nil,
+            startedAt: recent.addingTimeInterval(300),
+            workoutID: UUID()
+        )
+        XCTAssertEqual(session.recommendation?.action, recommendation.action)
+        XCTAssertEqual(session.recommendation?.reason, recommendation.reason)
+        XCTAssertEqual(session.recommendation?.sets, recommendation.sets)
+        XCTAssertNil(session.acceptedPlan)
+    }
+
+    func testCurrentWorkoutCannotBootstrapItselfAfterLoggingStarts() throws {
+        let exercise = try lift()
+        let workout = UUID()
+        let now = Date()
+        _ = try store.logWorkoutSet(
+            SetRecord(
+                exerciseID: exercise.id, load: 100, reps: 10,
+                performedAt: now
+            ),
+            workoutID: workout,
+            startedAt: now,
+            effortReported: false
+        )
+
+        let recommendation = try store.recommendation(
+            for: exercise,
+            excluding: workout,
+            now: now.addingTimeInterval(60)
+        )
+
+        XCTAssertEqual(recommendation.reason, .firstPlanNeeded)
+        XCTAssertTrue(recommendation.sets.isEmpty)
+    }
+
     func testTwoAcceptedEasyWorkoutsEarnOneRep() throws {
         let exercise = try lift()
         let firstID = UUID()

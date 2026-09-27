@@ -56,6 +56,7 @@ public struct ExerciseRecommendation: Hashable, Sendable {
 
     public enum Reason: Hashable, Sendable {
         case firstPlanNeeded
+        case legacyBaseline
         case invalidInput
         case unsupportedEquipment
         case equipmentChanged
@@ -100,6 +101,7 @@ public struct ExerciseRecommendation: Hashable, Sendable {
     public var summary: String {
         switch reason {
         case .firstPlanNeeded: return "Choose a starting prescription before progressing"
+        case .legacyBaseline: return "Start from your most recent workout — review this baseline"
         case .invalidInput: return "Review the plan and workout records before progressing"
         case .unsupportedEquipment: return "This equipment needs its own progression policy"
         case .equipmentChanged: return "Equipment changed — establish a new prescription"

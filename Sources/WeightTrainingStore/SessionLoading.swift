@@ -115,7 +115,9 @@ extension TrainingStore {
         let accepted = try workoutID.flatMap { try exerciseSession(workoutID: $0, exerciseID: exercise.id)?.plan }
         let prior = try latestExercisePlan(for: exercise.id, excluding: workoutID)
         let plan = accepted ?? prior
-        let advice = try plan.map { _ in try recommendation(for: exercise, excluding: workoutID) }
+        let advice = exercise.supportsPlannedProgression
+            ? try recommendation(for: exercise, excluding: workoutID)
+            : nil
         let prescription: Prescription
         if let target = plan?.sets.first, plan?.exercise == exercise {
             prescription = Prescription(load: exercise.nearestAchievable(target.load), reps: target.reps, rpe: target.rpe)

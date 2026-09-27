@@ -47,6 +47,14 @@ adopted an accepted plan. Planned exercises use the new engine for next-workout
 targets, while the in-session path retains only a conservative downward response
 to explicitly reported high effort.
 
+Recent pre-plan history now supplies a reviewable starting baseline instead of
+an empty recommendation. The baseline repeats the most recent workout using the
+lightest load from that workout, snaps it to available equipment, preserves up
+to eight set-by-set rep counts inside the exercise's configured range, and uses
+the exercise's target RPE. It expires after 21 days. Because legacy logs do not
+prove that an accepted plan was completed or that effort was easy, this action
+can only establish a plan; it never earns a rep, load, or set increase.
+
 The trailing volume report now separates completed working sets, known hard
 sets, unknown-effort sets, direct and secondary credit, distinct exercises,
 session frequency, and remaining sets from accepted active plans. Per-muscle
@@ -142,13 +150,14 @@ Validation through the training-block milestone on 2026-09-19:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including personalized bands, block persistence, baseline derivation, deload entry/exit, feedback derivation, and sync constraints (748 tests) | PASS |
+| Swift domain/store suite, including legacy-history baselines, personalized bands, block persistence, deload entry/exit, feedback derivation, and sync constraints (752 tests) | PASS |
 | Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |
 | Focused iPhone UI through the early-completion milestone | PASS |
 | Signed iPhone build | PASS |
-| Install of the current feedback milestone over existing phone data | PENDING — phone unavailable |
+| Install of the feedback milestone over existing phone data | PASS |
+| Read-only replay against the phone's 101-set history | PASS — T-Bar Row now receives an 80 lb × 12, 12 baseline; Incline DB Press holds for missing RPE |
 | Physical-device hands-on volume and recommendation review | PENDING |
 
 Build products used a separate temporary derived-data directory. A remote fetch
