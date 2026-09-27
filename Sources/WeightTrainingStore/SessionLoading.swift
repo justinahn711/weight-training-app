@@ -292,7 +292,8 @@ extension TrainingStore {
             // set (#61) takes its record with it.
             records: PersonalRecords.recent(
                 in: history,
-                since: calendar.date(byAdding: .day, value: -7, to: now) ?? now
+                since: calendar.date(byAdding: .day, value: -7, to: now) ?? now,
+                calendar: calendar
             ),
             readiness: readiness,
             // The store is the one place that knows the gym, so it is where

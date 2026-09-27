@@ -318,6 +318,15 @@ final class SessionViewModelTests: XCTestCase {
 
     /// A dumbbell lift with `history` already on disk from three days ago.
     private func viewModelWithHistory(_ history: [(load: Double, reps: Int)]) throws -> SessionViewModel {
+        try viewModelAndStore(history).0
+    }
+
+    /// The same fixture, keeping the store — a History-tab edit writes
+    /// through it directly rather than through the view model (#199), and
+    /// #213's correction cases need to stage exactly that.
+    private func viewModelAndStore(
+        _ history: [(load: Double, reps: Int)]
+    ) throws -> (SessionViewModel, TrainingStore) {
         let store = try TrainingStore.inMemory()
         let lift = lateralRaise()
         try store.create(lift)
@@ -332,7 +341,7 @@ final class SessionViewModelTests: XCTestCase {
         let session = Session(kind: .push, exercises: [SessionExercise(
             exercise: lift, prescription: Prescription(load: Load(20), reps: 12, rpe: .eight)
         )])
-        return SessionViewModel(store: store, session: session, draftID: UUID())
+        return (SessionViewModel(store: store, session: session, draftID: UUID()), store)
     }
 
     func test_logSet_firstOutingIsNotARecord() throws {
@@ -348,7 +357,7 @@ final class SessionViewModelTests: XCTestCase {
         vm.logSet()
         vm.pendingLoad = Load(30)
         vm.logSet()
-        XCTAssertNil(vm.recentRecord, "records are judged against previous days, not the warm-up to a first session")
+        XCTAssertNil(vm.recentRecord, "a lift with nothing before today is being felt out, not beaten (#213)")
     }
 
     func test_logSet_heavierThanEverIsARecordAndUndoTakesItBack() throws {
@@ -389,6 +398,124 @@ final class SessionViewModelTests: XCTestCase {
         vm.dismissRecentSetUndo(id: id)
         XCTAssertNil(vm.recentRecord)
         XCTAssertTrue(vm.recordSetIDs.contains(id))
+    }
+
+    // MARK: - Only genuine current records (#213)
+
+    /// The bug: 20 last time, 25 today, then a 22 backoff. The 22 beat last
+    /// time and lost to twenty minutes ago, and a gold banner on it is what
+    /// teaches you to stop reading gold banners.
+    func test_logSet_aLowerSetLaterTodayIsNotARecord() throws {
+        let vm = try viewModelWithHistory([(20, 12), (20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let best = try XCTUnwrap(vm.recentlyLoggedSet)
+        XCTAssertEqual(vm.recentRecord?.kind, .heaviest(Load(25)))
+
+        vm.pendingLoad = Load(22)
+        vm.logSet()
+        let backoff = try XCTUnwrap(vm.recentlyLoggedSet)
+
+        XCTAssertNil(vm.recentRecord, "it lost to earlier today")
+        XCTAssertFalse(vm.recordSetIDs.contains(backoff.id))
+        XCTAssertTrue(vm.recordSetIDs.contains(best.id), "the real one keeps its badge")
+    }
+
+    /// The other half: beating today's best again is a second record, and
+    /// saying so is correct — they were two different bests.
+    func test_logSet_aGenuineImprovementLaterTodayIsARecord() throws {
+        let vm = try viewModelWithHistory([(20, 12), (20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let first = try XCTUnwrap(vm.recentlyLoggedSet)
+
+        vm.pendingLoad = Load(30)
+        vm.logSet()
+        let second = try XCTUnwrap(vm.recentlyLoggedSet)
+
+        XCTAssertEqual(vm.recentRecord?.kind, .heaviest(Load(30)))
+        XCTAssertEqual(vm.recentRecord?.set.id, second.id)
+        XCTAssertEqual(vm.recordSetIDs, [first.id, second.id])
+    }
+
+    /// Correcting the set that holds the badge hands it to the set logged
+    /// after it, which was silent at the time only because it lost. Removing
+    /// the corrected row's own id — all the old code did — would leave the
+    /// day with no record at all and the 22 still unmarked.
+    func test_correctSet_loweringTodaysBestMovesTheBadgeToTheSetAfterIt() throws {
+        let vm = try viewModelWithHistory([(20, 12), (20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let best = try XCTUnwrap(vm.recentlyLoggedSet)
+        vm.pendingLoad = Load(22)
+        vm.logSet()
+        let backoff = try XCTUnwrap(vm.recentlyLoggedSet)
+        XCTAssertEqual(vm.recordSetIDs, [best.id])
+
+        var corrected = best
+        corrected.load = Load(16)
+        XCTAssertTrue(vm.correctSet(corrected))
+
+        XCTAssertEqual(vm.recordSetIDs, [backoff.id],
+                       "the 22 is now the day's best and beats last time")
+    }
+
+    /// A correction that leaves the celebrated set a record restates the
+    /// banner with the new numbers rather than blanking it.
+    func test_correctSet_restatesTheBannerWithTheCorrectedNumbers() throws {
+        let vm = try viewModelWithHistory([(20, 12), (20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let logged = try XCTUnwrap(vm.recentlyLoggedSet)
+        XCTAssertEqual(vm.recentRecord?.kind, .heaviest(Load(25)))
+
+        var corrected = logged
+        corrected.load = Load(30)
+        XCTAssertTrue(vm.correctSet(corrected))
+        XCTAssertEqual(vm.recentRecord?.kind, .heaviest(Load(30)))
+
+        // And a correction that takes the record away takes the banner too.
+        var undone = corrected
+        undone.load = Load(18)
+        XCTAssertTrue(vm.correctSet(undone))
+        XCTAssertNil(vm.recentRecord)
+        XCTAssertTrue(vm.recordSetIDs.isEmpty)
+    }
+
+    /// #199's route, #213's expectation: History deletes today's best from
+    /// the other tab while the session is still open. The banner goes and the
+    /// badge moves down to the set that inherits the day.
+    func test_reconcile_deletingTodaysBestPromotesTheSetLoggedAfterIt() throws {
+        let (vm, store) = try viewModelAndStore([(20, 12), (20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let best = try XCTUnwrap(vm.recentlyLoggedSet)
+        vm.pendingLoad = Load(22)
+        vm.logSet()
+        let backoff = try XCTUnwrap(vm.recentlyLoggedSet)
+
+        _ = try store.deleteSet(id: best.id)
+        vm.reconcilePersistedSetsAfterHistoryEdit()
+
+        XCTAssertNil(vm.recentRecord)
+        XCTAssertEqual(vm.recordSetIDs, [backoff.id])
+    }
+
+    /// Undo recomputes like everything else now, so the check worth making
+    /// is that recomputing doesn't cost a badge it shouldn't: taking back a
+    /// backoff set leaves the record above it exactly where it was.
+    func test_undo_ofABackoffSetLeavesTheRecordAboveItAlone() throws {
+        let vm = try viewModelWithHistory([(20, 12), (20, 12)])
+        vm.pendingLoad = Load(25)
+        vm.logSet()
+        let best = try XCTUnwrap(vm.recentlyLoggedSet)
+        vm.pendingLoad = Load(22)
+        vm.logSet()
+        let backoff = try XCTUnwrap(vm.recentlyLoggedSet)
+
+        vm.undoRecentlyLoggedSet(id: backoff.id)
+
+        XCTAssertEqual(vm.recordSetIDs, [best.id])
     }
 
     // MARK: - Warmup ramp leads the exercise (#206)

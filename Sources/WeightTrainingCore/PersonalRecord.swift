@@ -52,12 +52,19 @@ public enum PersonalRecords {
 
     /// Records set by `candidate`, given the history preceding it.
     ///
+    /// This is *the* definition of a record. The in-session banner, the
+    /// finish sheet and the trend chart's marks all resolve to it, because
+    /// three screens disagreeing about what a record is teaches the lifter to
+    /// trust none of them (#213).
+    ///
     /// - Parameter history: every set for this lift. Sets at or after the
     ///   candidate are ignored, so a record is always judged against what was
-    ///   known at the time.
+    ///   known at the time — earlier sets from the same day very much
+    ///   included. A 180 that follows today's 200 has beaten nothing.
     public static func set(
         by candidate: SetRecord,
-        history: [SetRecord]
+        history: [SetRecord],
+        calendar: Calendar = .current
     ) -> [PersonalRecord] {
         // Warmups can't set records, and nothing scores them.
         guard !candidate.isWarmup else { return [] }
@@ -68,8 +75,14 @@ public enum PersonalRecords {
                 && $0.id != candidate.id
                 && $0.performedAt < candidate.performedAt
         }
-        // The first working set of a lift is a starting point, not a record.
-        guard !earlier.isEmpty else { return [] }
+        // A lift's first session is a starting point, not a record: feeling
+        // out a new movement across three sets is one session, not three
+        // celebrations. So the baseline has to reach back past today — an
+        // earlier set from *today* raises the bar a candidate must clear, but
+        // it can never be the only thing a record is measured against.
+        guard earlier.contains(where: {
+            !calendar.isDate($0.performedAt, inSameDayAs: candidate.performedAt)
+        }) else { return [] }
 
         var records: [PersonalRecord] = []
 
@@ -118,12 +131,13 @@ public enum PersonalRecords {
     /// record, and hiding it would make the week look flatter than it was.
     public static func recent(
         in history: [SetRecord],
-        since cutoff: Date
+        since cutoff: Date,
+        calendar: Calendar = .current
     ) -> [PersonalRecord] {
         let ordered = history.sorted { $0.performedAt < $1.performedAt }
         return ordered
             .filter { $0.performedAt >= cutoff }
-            .flatMap { set(by: $0, history: ordered) }
+            .flatMap { set(by: $0, history: ordered, calendar: calendar) }
             .sorted { $0.set.performedAt > $1.set.performedAt }
     }
 }
