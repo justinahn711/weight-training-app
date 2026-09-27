@@ -339,6 +339,176 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         )
     }
 
+    /// #216's last open criterion, measured rather than argued: with the
+    /// plate row open — the one editor in the action bar that still expands,
+    /// now that reps and RPE are always-visible steppers — the lift's name,
+    /// the newest logged set and Log Set must all still be on screen and
+    /// tappable. Opening an editor must not cost the lifter the context the
+    /// edit is about, or the one action it leads to.
+    func testPlateRowKeepsLiftSetAndLogInView() throws {
+        try assertPlateRowKeepsContextInView(arguments: [], sizeName: "default")
+    }
+
+    /// The same measurement at the largest accessibility text size, where the
+    /// action bar becomes its own scroll view capped at 60% of the height.
+    /// The raw value is the short `UICTContentSizeCategoryAccessibilityXXXL` —
+    /// the long spelling is silently ignored — and the test proves the
+    /// argument took by checking reps and RPE stacked, which only happens at
+    /// accessibility sizes.
+    ///
+    /// A weaker claim than the default-size test, on purpose and measured: at
+    /// this size the latest set row alone is ~150pt tall and Log Set ~138pt,
+    /// against a context area of ~180pt, so all three cannot share one screen
+    /// with the plate row open on any iPhone. What this guards is what does
+    /// fit: the lift's name stays on screen, and Log Set stays one scroll of
+    /// the action bar away rather than lost.
+    func testPlateRowKeepsLiftInViewAndLogReachableAtAccessibilityText() throws {
+        try assertPlateRowKeepsContextInView(
+            arguments: [
+                "-UIPreferredContentSizeCategoryName",
+                "UICTContentSizeCategoryAccessibilityXXXL",
+            ],
+            sizeName: "AccessibilityXXXL",
+            expectsStackedSteppers: true,
+            requiresAllOnOneScreen: false
+        )
+    }
+
+    private func assertPlateRowKeepsContextInView(
+        arguments: [String],
+        sizeName: String,
+        expectsStackedSteppers: Bool = false,
+        requiresAllOnOneScreen: Bool = true
+    ) throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(arguments: arguments)
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        // Only a measured, plate-built lift offers the plate row — on Push
+        // that's Flat Bench, a barbell lift. A draft resumed from an earlier
+        // test can be parked anywhere (and at accessibility sizes Previous
+        // and Next can sit scrolled out of the action bar), so jump there
+        // through the exercise chooser in the header rather than walking.
+        // Queried as any element type: the readout collapses its children
+        // into one accessibility element, which XCUI doesn't report as a button.
+        let plates = app.descendants(matching: .any)["session.plates.toggle"]
+        if !plates.waitForExistence(timeout: 2) {
+            let choose = app.buttons["session.exercise.choose"]
+            XCTAssertTrue(choose.waitForExistence(timeout: 5) && choose.isHittable)
+            choose.tap()
+            let flatBench = app.staticTexts["Flat Bench"].firstMatch
+            XCTAssertTrue(flatBench.waitForExistence(timeout: 5),
+                          "Push day should contain a plate-built lift (Flat Bench)")
+            flatBench.tap()
+        }
+        XCTAssertTrue(plates.waitForExistence(timeout: 5), "Flat Bench should offer Adjust plates")
+        let liftName = app.buttons["session.exercise.swap"]
+        XCTAssertTrue(liftName.waitForExistence(timeout: 5))
+        let liftLabel = liftName.label
+
+        // Log one set so there is a latest set to keep in view. Logging also
+        // collapses the plate row by design (#170), so the row is opened
+        // after, not before.
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 5))
+        if !logSet.isEnabled {
+            let heavier = app.buttons["session.weight.increment"]
+            XCTAssertTrue(heavier.waitForExistence(timeout: 5))
+            heavier.tap()
+        }
+        XCTAssertTrue(logSet.isEnabled)
+        logSet.tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5), "the set should have been logged")
+        // If that set finished the lift, the app offers the next one without
+        // moving; staying is the lifter's choice, and the one this test needs.
+        let stay = app.buttons["session.nextUp.stay"]
+        if stay.exists && stay.isHittable { stay.tap() }
+        XCTAssertEqual(liftName.label, liftLabel, "the test should still be on the lift it logged")
+
+        let latestSet = app.buttons["session.set.latest"]
+        XCTAssertTrue(latestSet.waitForExistence(timeout: 5), "the logged set should have a row")
+
+        attachScreenshot("216-before-plates-\(sizeName)")
+        // At accessibility sizes the action bar is its own scroll view and
+        // can sit scrolled past the weight readout; bring it back first.
+        if !plates.isHittable { logSet.swipeDown() }
+        XCTAssertTrue(plates.isHittable, "Adjust plates should be tappable [\(sizeName)]")
+        plates.tap()
+        let plateRow = app.otherElements["session.plates.row"]
+        XCTAssertTrue(plateRow.waitForExistence(timeout: 5), "tapping Adjust plates should open the plate row")
+        // Load a plate, so the row is measured in its taller state — loaded
+        // plates and the plates to add — not only at an empty bar.
+        let addPlate = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Add ' AND label ENDSWITH ' plate'")
+        ).firstMatch
+        XCTAssertTrue(addPlate.waitForExistence(timeout: 5), "the plate row should offer plates to add")
+        if addPlate.isHittable { addPlate.tap() }
+        // Let the transitions settle before reading frames.
+        Thread.sleep(forTimeInterval: 1)
+
+        if expectsStackedSteppers {
+            let reps = app.buttons["session.reps.value"]
+            let rpe = app.descendants(matching: .any)["session.rpe.value"]
+            if reps.exists && rpe.exists {
+                // Stacked rows overlap horizontally; side by side, RPE starts
+                // where reps ends.
+                XCTAssertLessThan(
+                    rpe.frame.minX, reps.frame.maxX,
+                    "reps and RPE stack only at accessibility sizes — side by side means the launch argument didn't take"
+                )
+            }
+        }
+
+        attachScreenshot("216-plates-open-\(sizeName)")
+        let window = app.windows.firstMatch.frame
+        // Printed for the record: #216 asked for the expanded state to be
+        // measured on a device-sized screen, not reasoned about.
+        print("#216 plate row open [\(sizeName)] window=\(window) "
+              + "liftName=\(liftName.frame) latestSet=\(latestSet.frame) "
+              + "plateRow=\(plateRow.frame) logSet=\(logSet.frame) "
+              + "actionBar=\(app.otherElements["session.actionBar"].frame)")
+
+        var mustBeOnScreen = [("lift name", liftName)]
+        if requiresAllOnOneScreen {
+            mustBeOnScreen += [("latest set", latestSet), ("Log Set", logSet)]
+            // Hittable only proves the centre is uncovered. The row has to
+            // clear the action bar entirely, not be clipped by its top edge.
+            let barTop = app.otherElements["session.actionBar"].frame.minY
+            XCTAssertLessThanOrEqual(latestSet.frame.maxY, barTop + 0.5,
+                                     "the latest set should sit wholly above the action bar")
+            XCTAssertLessThanOrEqual(liftName.frame.maxY, barTop + 0.5,
+                                     "the lift name should sit wholly above the action bar")
+        } else {
+            XCTAssertTrue(latestSet.exists, "the latest set should still be in the context, if scrolled")
+            var swipes = 0
+            while !logSet.isHittable && swipes < 3 {
+                plateRow.swipeUp()
+                swipes += 1
+            }
+            print("#216 [\(sizeName)] Log Set after \(swipes) action-bar swipe(s): \(logSet.frame)")
+            XCTAssertTrue(logSet.isHittable, "Log Set should be reachable by scrolling the action bar")
+        }
+        for (name, element) in mustBeOnScreen {
+            XCTAssertTrue(element.exists, "\(name) should still exist with the plate row open")
+            XCTAssertFalse(element.frame.isEmpty, "\(name) should have a real frame")
+            XCTAssertTrue(window.contains(element.frame),
+                          "\(name) should be fully on screen with the plate row open (\(element.frame) in \(window))")
+            XCTAssertTrue(element.isHittable,
+                          "\(name) should be tappable with the plate row open, not scrolled or covered away")
+        }
+    }
+
+    /// Kept on a green run too: the screenshot is the evidence #216 asked for.
+    private func attachScreenshot(_ name: String) {
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
     /// The Progress tab's region filter, checked for the two things #217 says
     /// a selected control owes someone: the selected state has to be exposed
     /// as a trait, and colour must not be the only way to see it.

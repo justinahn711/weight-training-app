@@ -318,11 +318,26 @@ struct SessionView: View {
         }
     }
 
+    /// True while the plate row is open in a portrait layout (#216).
+    ///
+    /// The plate row is the one editor in the action bar that still expands,
+    /// and in portrait the bar grows upward into the context above it. Measured
+    /// on an iPhone 17 simulator, opening it left the context ~60pt: the lift's
+    /// name was clipped and the latest set was gone entirely — the edit lost
+    /// sight of what it was editing. While it's open the context narrows to
+    /// the two things the edit is about, the lift and the newest set, and
+    /// everything else returns the moment the row closes. Landscape is exempt:
+    /// there the bar is its own column and takes nothing from the context.
+    private var isFocusedOnPlates: Bool {
+        isPlateRowExpanded && !model.plateOptions.isEmpty && verticalSizeClass != .compact
+    }
+
     private func contextScroll(
         _ exercise: SessionExercise,
         isCompact: Bool,
         includesStatus: Bool
     ) -> some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: isCompact ? 12 : 20) {
                 header(exercise, isCompact: isCompact)
@@ -343,14 +358,20 @@ struct SessionView: View {
                     statusBanners
                 }
 
-                context(exercise, isCompact: isCompact)
-
-                if isCompact {
+                if isFocusedOnPlates {
+                    // Only the newest set: the one checked between sets, and
+                    // the one whose weight the plates are usually changing.
                     compactSetRows(exercise)
-                    suggestionRow
+                } else {
+                    context(exercise, isCompact: isCompact)
+
+                    if isCompact {
+                        compactSetRows(exercise)
+                        suggestionRow
+                    }
                 }
 
-                if !model.warmupRamp.isEmpty {
+                if !model.warmupRamp.isEmpty, !isFocusedOnPlates {
                     WarmupBlock(
                         ramp: model.warmupRamp,
                         isExpanded: $model.isWarmupRampExpanded,
@@ -360,12 +381,18 @@ struct SessionView: View {
                     )
                 }
 
-                if !isCompact {
+                if !isCompact, !isFocusedOnPlates {
                     setRows(exercise)
                 }
             }
             .padding(.horizontal, isCompact ? 12 : 20)
             .padding(.bottom, isCompact ? 12 : 24)
+        }
+        // Opening plates from further down the page would otherwise leave
+        // the lift's name scrolled away above the narrowed context.
+        .onChange(of: isFocusedOnPlates) { _, focused in
+            if focused { proxy.scrollTo(exercise.id, anchor: .top) }
+        }
         }
     }
 
@@ -436,7 +463,10 @@ struct SessionView: View {
         // control, relocated): a manual rest is a once-a-session correction,
         // so it lives in the action bar's More menu beside Extra warmup
         // instead of spending a row on every set (critique, distill).
-        if let record = model.recentlyLoggedSet {
+        // Hidden, not dismissed, while the plate row is open: it repeats the
+        // latest set row the narrowed context already shows, and its Undo is
+        // back the moment the row closes.
+        if let record = model.recentlyLoggedSet, !isFocusedOnPlates {
             LoggedSetBanner(
                 record: record,
                 personalRecord: model.recentRecord?.set.id == record.id ? model.recentRecord : nil,
@@ -451,6 +481,11 @@ struct SessionView: View {
 
     private func header(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
+            // On a short screen the narrowed context (#216) can't hold this
+            // row as well as the name and the newest set — measured on an SE,
+            // the set row ended up under the action bar. The name says which
+            // lift; position and Finish come back when the plate row closes.
+            if !(isCompact && isFocusedOnPlates) {
             HStack(spacing: 8) {
                 Button {
                     isChoosingExercise = true
@@ -520,6 +555,7 @@ struct SessionView: View {
                     .accessibilityLabel("Finish workout")
                     .accessibilityIdentifier("session.finish.header")
                 }
+            }
             }
             Button {
                 swapping = exercise
@@ -846,6 +882,11 @@ struct SessionView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Edits this logged set")
+                    // Only the newest row is named: it's the one #216 says
+                    // has to stay in view while the plate row is open.
+                    .accessibilityIdentifier(
+                        index == exercise.loggedSets.count - 1 ? "session.set.latest" : ""
+                    )
                 }
             }
         }
@@ -857,10 +898,15 @@ struct SessionView: View {
     /// fold on the smallest screen.
     private func compactSetRows(_ exercise: SessionExercise) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Latest set")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+            // The caption goes while the plate row is open (#216): on an SE
+            // its line was the difference between the row clearing the
+            // action bar and being clipped by it.
+            if !isFocusedOnPlates {
+                Text("Latest set")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+            }
 
             if let latest = exercise.loggedSets.last {
                 Button {
@@ -871,6 +917,7 @@ struct SessionView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Edits this logged set")
+                .accessibilityIdentifier("session.set.latest")
 
                 if exercise.loggedSets.count > 1 {
                     DisclosureGroup("Earlier sets (\(exercise.loggedSets.count - 1))") {
@@ -976,6 +1023,8 @@ struct SessionView: View {
                     onRemove: { model.removePlate($0) },
                     onClear: { model.clearToBar() }
                 )
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("session.plates.row")
                 .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
             }
 
@@ -2175,19 +2224,21 @@ private struct PlateRow: View {
     let onRemove: (Double) -> Void
     let onClear: () -> Void
 
+    /// Two rows at most, and one while the bar is empty (#216). This used to
+    /// be a loaded section, an add section and a full-width reset — ~209pt
+    /// that the action bar took straight out of the context above it. The
+    /// readout on the stepper already says what's loaded ("45 + 25 each
+    /// side", "Bar only", "Not an exact plate build"), so the empty-state
+    /// sentence and the second caption were saying it twice; the reset sits
+    /// beside the plates it clears, and only while there is something to clear.
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(sleeves == 1 ? "Loaded" : "Loaded · each side")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(sleeves == 1 ? "Plates" : "Plates · each side")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
 
-                if loadedPlates.isEmpty {
-                    Text(breakdown == nil ? "This weight is not an exact plate build" : emptyLabel)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .frame(minHeight: 44, alignment: .leading)
-                } else {
+            if !loadedPlates.isEmpty {
+                HStack(spacing: 8) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(Array(loadedPlates.enumerated()), id: \.offset) { _, plate in
@@ -2209,46 +2260,39 @@ private struct PlateRow: View {
                         }
                         .padding(.horizontal, 2)
                     }
-                }
-            }
 
-            Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(sleeves == 1 ? "Add plates" : "Add plates · each side")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(plates, id: \.self) { plate in
-                            Button { onAdd(plate) } label: {
-                                Text(label(plate))
-                                    .font(.callout.weight(.semibold).monospacedDigit())
-                                    // Sized for chalky hands, like the stepper.
-                                    .frame(minWidth: 54, minHeight: 44)
-                                    .background(.fill.tertiary,
-                                                in: RoundedRectangle(cornerRadius: 10))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Add \(spokenLabel(plate))")
-                            .accessibilityHint(additionHint)
-                        }
+                    // Not an inverse of any one plate: it clears the whole
+                    // apparatus, so it stays visually apart from the chips.
+                    Button(action: onClear) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.callout.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 10))
                     }
-                    .padding(.horizontal, 2)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(resetLabel)
+                    .accessibilityHint("Removes all loaded plates")
                 }
             }
 
-            // A reset is intentionally outside both plate rows. It is not an
-            // inverse add action: it removes everything from the apparatus.
-            Button(action: onClear) {
-                Label(resetLabel, systemImage: "arrow.counterclockwise")
-                    .font(.callout.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 10))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(plates, id: \.self) { plate in
+                        Button { onAdd(plate) } label: {
+                            Text("+" + label(plate))
+                                .font(.callout.weight(.semibold).monospacedDigit())
+                                // Sized for chalky hands, like the stepper.
+                                .frame(minWidth: 54, minHeight: 44)
+                                .background(.fill.tertiary,
+                                            in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Add \(spokenLabel(plate))")
+                        .accessibilityHint(additionHint)
+                    }
+                }
+                .padding(.horizontal, 2)
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Removes all loaded plates")
         }
     }
 
@@ -2256,10 +2300,6 @@ private struct PlateRow: View {
         breakdown?.perSide.flatMap { entry in
             Array(repeating: entry.plate, count: entry.count)
         } ?? []
-    }
-
-    private var emptyLabel: String {
-        isBarbell ? "Bar only" : "Empty apparatus"
     }
 
     private var resetLabel: String {
@@ -2356,6 +2396,7 @@ private struct WeightStepper: View {
                 .accessibilityHint(
                     isPlateDisclosureExpanded ? "Hides plate buttons" : "Shows plate buttons"
                 )
+                .accessibilityIdentifier("session.plates.toggle")
             } else {
                 Button(action: onEnterWeight ?? {}) {
                     readout(detail: adjustmentLabel, showsEntry: onEnterWeight != nil)
