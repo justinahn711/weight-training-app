@@ -29,6 +29,7 @@ struct ExerciseConfigView: View {
     let onSave: (LoadIncrement, LoadingStyle?, TimeInterval?) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Everything on this screen is typed and read in the unit the equipment
     /// is marked in — the lift's own if it has one, otherwise the gym's (#67).
@@ -233,7 +234,7 @@ struct ExerciseConfigView: View {
 
                 if isPlateBuilt {
                     Section {
-                        Toggle("I've weighed it", isOn: $isMeasured.animation(.snappy))
+                        Toggle("I've weighed it", isOn: $isMeasured.animation(Theme.quick(reduceMotion: reduceMotion)))
 
                         if isMeasured {
                             // Typed, not stepped (#99). This number is *read* —
@@ -356,7 +357,7 @@ struct ExerciseConfigView: View {
                 }
 
                 Section {
-                    Toggle("Set my own rest time", isOn: $overridesRest.animation(.snappy))
+                    Toggle("Set my own rest time", isOn: $overridesRest.animation(Theme.quick(reduceMotion: reduceMotion)))
 
                     if overridesRest {
                         ChoiceRow(
