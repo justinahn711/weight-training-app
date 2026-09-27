@@ -318,6 +318,13 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
     /// figure reported in the PR so this stays a real regression guard
     /// rather than a brittle pixel match — the point is "still small," not
     /// "exactly this."
+    ///
+    /// Measured from the bar's top to the bottom of its last row of controls,
+    /// not the bar's own frame (#236). The frame carries `.background(.bar)`
+    /// down under the home indicator, so on a Face ID phone it included ~34pt
+    /// of inset the SE doesn't have — iPhone 17 read 361.7pt and failed, while
+    /// taking a smaller share of its screen (41%) than the SE's passing 296.5pt
+    /// does of its own (44%). #205 counted controls, so this does too.
     func testActionBarMinimumHeightIsReclaimedForSetRows() throws {
         let app = launch()
         try openPushDay(app)
@@ -328,10 +335,15 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let actionBar = app.otherElements["session.actionBar"]
         XCTAssertTrue(actionBar.waitForExistence(timeout: 5), "action bar should be reachable by identifier")
 
-        let height = actionBar.frame.height
+        let lastRow = ["session.exercise.previous", "session.more", "session.exercise.next"]
+            .map { app.buttons[$0] }
+            .filter { $0.exists }
+            .map { $0.frame.maxY }
+        let controlsBottom = try XCTUnwrap(lastRow.max(), "the Back / More / Next row should be on screen")
+        let height = controlsBottom - actionBar.frame.minY
         // Printed for the record (#205 asked for a measured number, not a
         // font-metrics estimate) — visible in the xcodebuild test log.
-        print("SessionView action bar minimum height: \(height)pt")
+        print("SessionView action bar minimum height: \(height)pt (frame incl. bottom inset: \(actionBar.frame.height)pt)")
         XCTAssertGreaterThan(height, 0, "the action bar should have a real, non-zero frame")
         XCTAssertLessThanOrEqual(
             height, 340,
