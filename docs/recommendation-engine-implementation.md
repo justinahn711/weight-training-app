@@ -2,13 +2,14 @@
 
 This work begins the [recommendation engine plan](recommendation-engine-plan.md) in an isolated worktree on `feat/recommendation-engine`, based on the locally available `origin/main` commit `43f4714`.
 
-## Current status: review fixes and automatic workout integration
+## Current status: automatic workout prescriptions
 
 The phased plan was revised on 2026-09-27 to make recommendations part of normal
-workout logging with minimal configuration. The shipped implementation still
-requires Review set plan → Use Plan to adopt the planned engine. Removing that
-gate, automatically recording the displayed prescription before working sets,
-and coordinating the whole workout are **planned, not implemented**.
+workout logging with minimal configuration. An eligible recommendation now
+becomes the active prescription when its exercise enters the normal workout.
+The exact displayed proposal is stored before the first working set; Review set
+plan remains an optional editor. Coordinating candidates for every not-yet-opened
+exercise across the entire workout remains planned.
 
 The review of commit `3d07d6d` found seven gaps: incomplete volume projections,
 pain bypass during legacy initialization, incomparable adaptive-fatigue evidence,
@@ -40,11 +41,13 @@ Historical duplicates are collapsed by exposure ID only when identical. Conflict
 
 ## App and persistence integration
 
-The workout now exposes a **Review set plan** action before the first working
-set. The editor lets the lifter review or change the set count, achievable load,
-per-set reps, and target RPE. Accepting it records user intent; no recommendation
-changes a workout automatically. The screen advances through the accepted
-per-set targets and still permits early stops or extra work.
+The workout displays the recommendation directly in its normal load, reps, and
+RPE controls. Entering an eligible exercise stores that exact proposal as an
+automatically activated prescription; the first working-set boundary verifies
+activation again before writing. **Review set plan** remains available to inspect
+or change set count, achievable load, per-set reps, and target RPE. The screen
+advances through per-set targets and still permits direct edits, early stops, or
+extra work.
 
 `StoredExerciseSession` persists one plan/completion record per exercise and
 workout. `SetRecord` carries optional workout, plan-revision, and reported-effort
@@ -91,8 +94,8 @@ to remain below its weekly minimum, and rejects the increase if any primary or
 secondary muscle would exceed its personalized maximum. The allocator validates
 the complete candidate prescription and retains remaining accepted work for
 sibling exercises in the same workout. Completed and accepted remaining work
-both count. The recommendation stays advisory and is persisted only if the
-lifter accepts it.
+both count. The recommendation automatically becomes the active prescription
+when the lifter reaches that exercise and remains editable before the first set.
 
 Finishing a workout with unstarted exercises or an accepted plan that still has
 sets remaining now asks for a lightweight completion reason. Time and fatigue
@@ -120,11 +123,12 @@ accepted workload rather than an unaccepted progression proposal. A recovery
 proposal must be accepted, and the next build week—or disabling blocks—offers
 the last non-deload plan again so the reduced plan does not become permanent.
 
-Set-plan acceptance carries the displayed proposal into persistence, verifies
-that its decision inputs and outputs are still current, and records that exact
-snapshot plus whether it was accepted or edited. **Settings → Recommendation
-results** derives a rolling 28-day report from current logs: reviewed plans,
-edits, exact-plan completion, RPE coverage, and sets above target effort. It
+Automatic activation and explicit set-plan review both carry the displayed
+proposal into persistence, verify that its decision inputs and outputs are still
+current, and retain that exact snapshot. Automatic activation, acceptance, edits,
+completion, and reported effort remain separate facts. **Settings → Recommendation
+results** derives a rolling 28-day report from current logs: automatic targets,
+reviewed plans, edits, exact-plan completion, RPE coverage, and sets above target effort. It
 stores no mutable success counters, so correcting or deleting a set updates the
 report. Older history remains valid but is not retroactively labeled as a
 reviewed recommendation.
@@ -133,13 +137,12 @@ The same screen lists each recent reviewed exercise with its proposed action,
 accept/edit decision, completion outcome, and RPE coverage. This makes a real
 workout auditable without treating plan acceptance as a successful outcome.
 
-Live Activity logging now advances through different per-set targets, undo
-restores the prior target, and foreground reconciliation reloads persisted plan
-state before publishing. The next work is to integrate automatic prescriptions
-into the default touch and voice workflow, then validate that flow on the phone.
-The redesigned metrics will distinguish
-automatic activation, explicit review, and overrides without requiring users to
-visit this screen.
+Live Activity logging advances through different per-set targets, undo restores
+the prior target, and foreground reconciliation reloads persisted plan state
+before publishing. Touch and voice share the same activate-before-log boundary.
+The next work is workout-wide allocation, physical-phone validation, and outcome
+collection before tuning thresholds. Users never need to visit Recommendation
+results to receive targets.
 
 ## Calling convention
 
@@ -184,7 +187,7 @@ Validation after the review-fix milestone on 2026-09-27:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including review regressions, legacy-history baselines, personalized bands, block persistence, deload entry/exit, feedback derivation, and sync constraints (772 tests) | PASS |
+| Swift domain/store suite, including automatic activation, review regressions, legacy-history baselines, personalized bands, block persistence, deload entry/exit, feedback derivation, and sync constraints (779 tests) | PASS |
 | Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |

@@ -90,6 +90,14 @@ final class SessionViewModel {
     // MARK: - Logging
 
     func logSet(isWarmup: Bool = false) {
+        // The displayed recommendation becomes the workout's active
+        // prescription before the first working set. Keep this guard at the
+        // write boundary as well as the screen-entry path: voice and other
+        // logging surfaces must never create unprescribed evidence merely
+        // because the view lifecycle did not get a chance to prepare first.
+        if !isWarmup, !activateCurrentRecommendationIfNeeded(seedControls: false) {
+            return
+        }
         guard let current else { return }
         let record = SetRecord(
             exerciseID: current.exercise.id,
@@ -346,19 +354,19 @@ final class SessionViewModel {
 
     func advance() {
         session.advance()
-        seedPendingFromCurrent()
+        prepareCurrentExercise()
         saveDraft()
     }
 
     func goBack() {
         session.goBack()
-        seedPendingFromCurrent()
+        prepareCurrentExercise()
         saveDraft()
     }
 
     func select(exerciseID: UUID) {
         session.select(exerciseID: exerciseID)
-        seedPendingFromCurrent()
+        prepareCurrentExercise()
         saveDraft()
     }
 
@@ -864,7 +872,7 @@ final class SessionViewModel {
         }
         allExercises = (try? store.exercises()) ?? []
         lastPerformed = (try? store.lastPerformedDates()) ?? [:]
-        refreshPlanContext()
+        prepareCurrentExercise()
     }
 
     // MARK: - Accepted working-set plans
@@ -924,13 +932,60 @@ final class SessionViewModel {
         } catch { failure = "Couldn't save the completion reason: \(error.localizedDescription)" }
     }
 
-    private func refreshPlanContext() {
-        guard let current else { return }
+    /// Refreshes an unstarted proposal from current history, then activates the
+    /// exact proposal shown on screen. Existing plans are returned unchanged by
+    /// the store, which keeps an exercise's targets stable once training has
+    /// begun while making Review set plan an optional editor.
+    private func prepareCurrentExercise() {
+        guard refreshPlanContext() else { return }
+        seedPendingFromCurrent()
+        _ = activateCurrentRecommendationIfNeeded(seedControls: true)
+    }
+
+    /// Automatic activation is deliberately idempotent and happens again at
+    /// the logging boundary. A direct edit to the normal controls is preserved
+    /// there (`seedControls == false`): the recommendation remains the recorded
+    /// prescription and the set records what was actually performed.
+    @discardableResult
+    private func activateCurrentRecommendationIfNeeded(seedControls: Bool) -> Bool {
+        guard let current else { return true }
+        guard current.acceptedPlan == nil else {
+            // `seedPendingFromCurrent` already restored either the next plan
+            // row or an in-memory rep edit for this exercise. Re-seeding here
+            // would erase that edit merely because the lifter navigated away
+            // and back before logging it.
+            return true
+        }
+        guard current.workingSets.isEmpty,
+              let recommendation = current.recommendation,
+              !recommendation.sets.isEmpty else { return true }
+        do {
+            _ = try store.activateExerciseRecommendation(
+                recommendation,
+                workoutID: draftID,
+                startedAt: session.startedAt
+            )
+            guard refreshPlanContext() else { return false }
+            if seedControls { seedNextPlannedSet() }
+            return true
+        } catch {
+            failure = "Couldn't start this recommendation: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    @discardableResult
+    private func refreshPlanContext() -> Bool {
+        guard let current else { return false }
         do {
             let rebuilt = try store.sessionExercise(for: current.exercise, slot: current.slot,
                 startedAt: session.startedAt, workoutID: draftID)
             session.reconfigureCurrent(with: rebuilt)
-        } catch { failure = "Couldn't load the set plan: \(error.localizedDescription)" }
+            return true
+        } catch {
+            failure = "Couldn't load the set plan: \(error.localizedDescription)"
+            return false
+        }
     }
 
     private func seedNextPlannedSet() {

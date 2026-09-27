@@ -1,10 +1,11 @@
 import Foundation
 
-/// The proposal that was on screen when a lifter reviewed a set plan. Keeping
-/// this small snapshot makes later evaluation honest: a future engine version
-/// cannot rewrite what the app suggested in the past.
+/// The proposal on screen when a prescription was activated or reviewed.
+/// Its snapshot makes later evaluation honest: a future engine version cannot
+/// rewrite what the app suggested in the past.
 public struct RecommendationTrace: Hashable, Codable, Sendable {
     public enum Decision: String, Codable, Sendable {
+        case automaticallyActivated
         case accepted
         case edited
     }
@@ -15,10 +16,15 @@ public struct RecommendationTrace: Hashable, Codable, Sendable {
     public let proposedDeload: Bool
     public let ruleVersion: String
     public var decision: Decision
+    /// Absent on historical traces; never reconstruct missing provenance.
+    public let displayedRecommendation: ExerciseRecommendation?
+    /// Retained when the lifter subsequently reviews or edits an automatic plan.
+    public let automaticallyActivatedAt: Date?
 
     public init(
         recommendation: ExerciseRecommendation,
-        decision: Decision = .accepted
+        decision: Decision = .accepted,
+        automaticallyActivatedAt: Date? = nil
     ) {
         generatedAt = recommendation.generatedAt
         action = recommendation.action
@@ -26,6 +32,8 @@ public struct RecommendationTrace: Hashable, Codable, Sendable {
         proposedDeload = recommendation.action == .deload
         ruleVersion = recommendation.ruleVersion
         self.decision = decision
+        displayedRecommendation = recommendation
+        self.automaticallyActivatedAt = automaticallyActivatedAt
     }
 
     public mutating func recordDecision(for plan: ExercisePlan) {
@@ -35,11 +43,12 @@ public struct RecommendationTrace: Hashable, Codable, Sendable {
     }
 }
 
-/// A rolling, derived quality report for proposals the user actually reviewed.
+/// A rolling, derived quality report separating automatic activation from review.
 /// Raw plans and sets remain the source of truth, so corrections reflow here.
 public struct RecommendationFeedbackReport: Hashable, Sendable {
     public let days: Int
     public let reviewedPlans: Int
+    public let automaticActivations: Int
     public let acceptedAsSuggested: Int
     public let editedBeforeUse: Int
     public let finishedAcceptedPlans: Int
@@ -61,10 +70,12 @@ public struct RecommendationFeedbackReport: Hashable, Sendable {
         reportedEffortSets: Int,
         acceptedWorkingSets: Int,
         aboveTargetEffortSets: Int,
-        entries: [RecommendationFeedbackEntry] = []
+        entries: [RecommendationFeedbackEntry] = [],
+        automaticActivations: Int = 0
     ) {
         self.days = days
         self.reviewedPlans = reviewedPlans
+        self.automaticActivations = automaticActivations
         self.acceptedAsSuggested = acceptedAsSuggested
         self.editedBeforeUse = editedBeforeUse
         self.finishedAcceptedPlans = finishedAcceptedPlans
@@ -109,10 +120,15 @@ public enum RecommendationFeedbackEngine {
     ) -> RecommendationFeedbackReport {
         let boundedDays = min(max(days, 1), 365)
         let start = now.addingTimeInterval(-Double(boundedDays) * 86_400)
-        let reviewed = sessions.filter {
+        let recorded = sessions.filter {
             guard let trace = $0.recommendationTrace else { return false }
             return trace.generatedAt >= start && trace.generatedAt <= now
         }
+        let reviewed = recorded.filter { $0.recommendationTrace?.decision != .automaticallyActivated }
+        let automaticActivations = recorded.filter {
+            $0.recommendationTrace?.automaticallyActivatedAt != nil
+                || $0.recommendationTrace?.decision == .automaticallyActivated
+        }.count
         let accepted = reviewed.filter { $0.recommendationTrace?.decision == .accepted }
         let exposureByKey = Dictionary(
             exposures.map { (key(workoutID: $0.id, exerciseID: $0.exerciseID), $0) },
@@ -126,7 +142,7 @@ public enum RecommendationFeedbackEngine {
         var aboveTargetEffortSets = 0
         var entries: [RecommendationFeedbackEntry] = []
 
-        for session in reviewed {
+        for session in recorded {
             guard let trace = session.recommendationTrace else { continue }
             let plan = session.plan
             let exposure = exposureByKey[key(
@@ -149,6 +165,7 @@ public enum RecommendationFeedbackEngine {
                         performed.record.load == target.load && performed.record.reps >= target.reps
                     }
             } ?? false
+            let planWasUsedWithoutEdit = trace.decision != .edited
 
             if trace.decision == .accepted, plan != nil, exposure != nil {
                 acceptedWorkingSets += comparable.count
@@ -168,10 +185,10 @@ public enum RecommendationFeedbackEngine {
                 decision: trace.decision,
                 finished: session.completedAt != nil,
                 completion: exposure?.completion,
-                completedAsPlanned: trace.decision == .accepted && followedExactly,
-                reportedEffortSets: trace.decision == .accepted ? reported : 0,
-                workingSets: trace.decision == .accepted ? comparable.count : 0,
-                aboveTargetEffortSets: trace.decision == .accepted ? aboveTarget : 0
+                completedAsPlanned: planWasUsedWithoutEdit && followedExactly,
+                reportedEffortSets: planWasUsedWithoutEdit ? reported : 0,
+                workingSets: planWasUsedWithoutEdit ? comparable.count : 0,
+                aboveTargetEffortSets: planWasUsedWithoutEdit ? aboveTarget : 0
             ))
         }
 
@@ -188,7 +205,8 @@ public enum RecommendationFeedbackEngine {
             entries: entries.sorted {
                 if $0.generatedAt != $1.generatedAt { return $0.generatedAt > $1.generatedAt }
                 return $0.id < $1.id
-            }
+            },
+            automaticActivations: automaticActivations
         )
     }
 

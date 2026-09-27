@@ -60,6 +60,40 @@ extension TrainingStore {
         _ proposed: ExercisePlan, workoutID: UUID, startedAt: Date,
         displayedRecommendation: ExerciseRecommendation? = nil, now: Date = Date()
     ) throws -> ExercisePlan {
+        try persistExercisePlan(proposed, workoutID: workoutID, startedAt: startedAt,
+                                displayedRecommendation: displayedRecommendation, automatically: false, now: now)
+    }
+
+    /// Freeze the exact displayed targets before any working set is recorded.
+    /// Activation records app intent, never user approval or performed effort.
+    /// A retry returns the existing prescription without refreshing its targets.
+    @discardableResult
+    public func activateExerciseRecommendation(
+        _ displayedRecommendation: ExerciseRecommendation,
+        workoutID: UUID, startedAt: Date, now: Date = Date()
+    ) throws -> ExercisePlan? {
+        if let session = try exerciseSession(workoutID: workoutID, exerciseID: displayedRecommendation.exerciseID) {
+            guard session.completedAt == nil else { throw PlanStoreError.workoutFinished }
+            if let active = session.plan { return active }
+        }
+        guard displayedRecommendation.action != .stop, !displayedRecommendation.sets.isEmpty else { return nil }
+        guard let exercise = try exercise(id: displayedRecommendation.exerciseID),
+              exercise.supportsPlannedProgression else { throw PlanStoreError.exerciseChanged }
+        let previous = try latestExercisePlan(for: exercise.id, excluding: workoutID)
+        let proposed = ExercisePlan(
+            exercise: exercise, sets: displayedRecommendation.sets,
+            restSeconds: previous == nil ? Int(exercise.restTarget) : previous?.restSeconds,
+            techniqueRevision: previous?.techniqueRevision,
+            isDeload: displayedRecommendation.action == .deload
+        )
+        return try persistExercisePlan(proposed, workoutID: workoutID, startedAt: startedAt,
+                                       displayedRecommendation: displayedRecommendation, automatically: true, now: now)
+    }
+
+    private func persistExercisePlan(
+        _ proposed: ExercisePlan, workoutID: UUID, startedAt: Date,
+        displayedRecommendation: ExerciseRecommendation?, automatically: Bool, now: Date
+    ) throws -> ExercisePlan {
         guard let exercise = try exercise(id: proposed.exercise.id), exercise == proposed.exercise else {
             throw PlanStoreError.exerciseChanged
         }
@@ -107,10 +141,14 @@ extension TrainingStore {
                 reviewed = current
             }
             if !reviewed.sets.isEmpty {
-                intent.recommendationTrace = RecommendationTrace(recommendation: reviewed)
+                intent.recommendationTrace = RecommendationTrace(
+                    recommendation: reviewed,
+                    decision: automatically ? .automaticallyActivated : .accepted,
+                    automaticallyActivatedAt: automatically ? now : nil
+                )
             }
         }
-        intent.recommendationTrace?.recordDecision(for: accepted)
+        if !automatically { intent.recommendationTrace?.recordDecision(for: accepted) }
         intent.plan = accepted
         intent.updatedAt = now
         do {

@@ -113,13 +113,15 @@ extension TrainingStore {
         let todayIDs = Set(today.map(\.id))
         let earlier = history.filter { !todayIDs.contains($0.id) }
         let accepted = try workoutID.flatMap { try exerciseSession(workoutID: $0, exerciseID: exercise.id)?.plan }
-        let prior = try latestExercisePlan(for: exercise.id, excluding: workoutID)
-        let plan = accepted ?? prior
         let advice = exercise.supportsPlannedProgression
             ? try recommendation(for: exercise, excluding: workoutID)
             : nil
         let prescription: Prescription
-        if let target = plan?.sets.first, plan?.exercise == exercise {
+        if let target = accepted?.sets.first {
+            // An active prescription is historical intent. Configuration or
+            // history refreshes must not silently round or replace its targets.
+            prescription = Prescription(load: target.load, reps: target.reps, rpe: target.rpe)
+        } else if let target = advice?.sets.first {
             prescription = Prescription(load: exercise.nearestAchievable(target.load), reps: target.reps, rpe: target.rpe)
         } else {
             prescription = Prescription(exercise: exercise, state: state)

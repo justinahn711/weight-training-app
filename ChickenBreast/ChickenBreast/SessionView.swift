@@ -175,7 +175,11 @@ struct SessionView: View {
             }
         }
         .sheet(item: $planning) { target in
-            ExercisePlanEditor(plan: target.plan, recommendation: target.recommendation) { accepted in
+            ExercisePlanEditor(
+                plan: target.plan,
+                recommendation: target.recommendation,
+                isEditing: target.isEditing
+            ) { accepted in
                 if model.acceptPlan(accepted, displayedRecommendation: target.recommendation) {
                     planning = nil
                 }
@@ -586,7 +590,11 @@ struct SessionView: View {
             if model.canPlanCurrentExercise, model.current?.id == exercise.id {
                 Button(exercise.acceptedPlan == nil ? "Review set plan" : "Edit set plan") {
                     if let plan = model.planProposal() {
-                        planning = PlanningTarget(plan: plan, recommendation: exercise.recommendation)
+                        planning = PlanningTarget(
+                            plan: plan,
+                            recommendation: exercise.recommendation,
+                            isEditing: exercise.acceptedPlan != nil
+                        )
                     }
                 }
                 .font(.subheadline.weight(.semibold))
@@ -608,9 +616,14 @@ struct SessionView: View {
 
     private func planExplanation(_ exercise: SessionExercise) -> String? {
         if let plan = exercise.acceptedPlan {
-            return exercise.workingSets.count >= plan.sets.count
-                ? "Planned work complete. Extra sets still count as training, but do not earn this progression."
-                : "RPE is optional to log; every planned set needs a reported RPE to earn progression."
+            if exercise.workingSets.count >= plan.sets.count {
+                return "Planned work complete. Extra sets still count as training, but do not earn this progression."
+            }
+            // Automatic activation must not make the engine's explanation
+            // disappear. The reason belongs beside the target in the normal
+            // workout; the sheet is only for details and edits.
+            return exercise.recommendation?.summary
+                ?? "RPE is optional to log; every planned set needs a reported RPE to earn progression."
         }
         return exercise.recommendation?.summary
     }
@@ -1057,6 +1070,7 @@ private struct LoggedSetBanner: View {
 private struct PlanningTarget: Identifiable {
     let plan: ExercisePlan
     let recommendation: ExerciseRecommendation?
+    let isEditing: Bool
     var id: UUID { plan.id }
 }
 
@@ -1066,6 +1080,7 @@ private struct PlanningTarget: Identifiable {
 private struct ExercisePlanEditor: View {
     let plan: ExercisePlan
     let recommendation: ExerciseRecommendation?
+    let isEditing: Bool
     let onSave: (ExercisePlan) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1076,10 +1091,12 @@ private struct ExercisePlanEditor: View {
     init(
         plan: ExercisePlan,
         recommendation: ExerciseRecommendation?,
+        isEditing: Bool,
         onSave: @escaping (ExercisePlan) -> Void
     ) {
         self.plan = plan
         self.recommendation = recommendation
+        self.isEditing = isEditing
         self.onSave = onSave
         let first = plan.sets.first
             ?? PlannedWorkingSet(load: plan.exercise.lightestUsableLoad,
@@ -1137,7 +1154,7 @@ private struct ExercisePlanEditor: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Use Plan") { onSave(acceptedPlan) }
+                    Button(isEditing ? "Save" : "Use Plan") { onSave(acceptedPlan) }
                         .accessibilityIdentifier("plan.save")
                 }
             }

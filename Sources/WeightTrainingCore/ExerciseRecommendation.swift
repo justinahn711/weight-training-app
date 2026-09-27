@@ -45,7 +45,7 @@ public struct RecommendationContext: Hashable, Sendable {
     }
 }
 
-public struct ExerciseRecommendation: Hashable, Sendable {
+public struct ExerciseRecommendation: Hashable, Codable, Sendable {
     public enum Action: String, Codable, Sendable {
         case establish, hold, addReps, addLoad, addSet, reduce, deload, stop
     }
@@ -54,7 +54,7 @@ public struct ExerciseRecommendation: Hashable, Sendable {
         case insufficient, limited, consistent
     }
 
-    public enum Reason: Hashable, Sendable {
+    public enum Reason: Hashable, Codable, Sendable {
         case firstPlanNeeded
         case legacyBaseline
         case invalidInput

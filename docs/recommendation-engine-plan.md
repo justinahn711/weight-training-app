@@ -234,7 +234,7 @@ The persisted active prescription stays stable across refreshes and relaunches.
 
 ### Phase 1 — Reliable history and automatic prescription records
 
-**Foundation and correction integrity implemented; automatic activation remains.** Preserve
+**Foundation, correction integrity, and automatic activation implemented.** Preserve
 plan revisions, workout identities, completion reasons, and legacy logs. Add
 the exact displayed proposal and automatic/explicit origin to the prescription
 lifecycle. Save the active prescription before the first working set without
@@ -247,7 +247,7 @@ undo, corrections, restore, sync, and relaunch preserve the prescription record.
 
 ### Phase 2 — Recommendations inside the normal workout
 
-**Core progression and shared per-set logging implemented; default workflow remains.**
+**Core progression and the default touch/voice per-set workflow implemented; phone validation remains.**
 Keep repeated-easy, achievable-load, and one-variable-at-a-time rules. Populate
 targets and their reason directly in the exercise view. Review set plan becomes
 an optional detailed editor. Use the same per-set targets for touch, voice,
@@ -289,7 +289,7 @@ not earn progression; resumption establishes fresh evidence.
 
 ### Phase 5 — Outcome evaluation, phone validation, and optimization
 
-**Instrumentation and evidence integrity implemented; automatic-flow outcomes remain.**
+**Instrumentation, evidence integrity, and automatic-origin tracking implemented; real outcomes remain.**
 Recommendation results is primarily for development/evaluation, not a required
 user workflow. Preserve the exact displayed proposal instead of recomputing it
 at acceptance. Track displayed prescriptions, automatic activation, explicit
@@ -310,10 +310,10 @@ the full phone flow passes; observed outcomes support any threshold change.
 
 ### Execution order and review regression gates
 
-The seven review findings now have automated regressions. Next deliver the
-automatic workout workflow, validate it on the phone, and collect outcomes before
-tuning thresholds. Do not mark a phase complete merely because its UI or pure
-engine exists.
+The seven review findings and automatic prescription lifecycle have automated
+regressions. Next coordinate the full workout before candidates are activated,
+validate the flow on the phone, and collect outcomes before tuning thresholds.
+Do not mark a phase complete merely because its UI or pure engine exists.
 
 | Review finding | Regression / owning phase | Status |
 |---|---|---|

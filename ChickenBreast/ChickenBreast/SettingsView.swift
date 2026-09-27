@@ -587,34 +587,37 @@ private struct RecommendationFeedbackView: View {
 
     var body: some View {
         List {
-            if let report, report.reviewedPlans > 0 {
+            if let report, report.reviewedPlans > 0 || report.automaticActivations > 0 {
                 Section {
+                    LabeledContent("Automatic targets", value: "\(report.automaticActivations)")
                     LabeledContent("Plans reviewed", value: "\(report.reviewedPlans)")
                     LabeledContent("Used as suggested", value: "\(report.acceptedAsSuggested)")
                     LabeledContent("Edited before use", value: "\(report.editedBeforeUse)")
                 } header: {
                     Text("Last \(report.days) days")
                 } footer: {
-                    Text("A plan counts after you open Review set plan and press Use Plan. Editing the load, reps, set count, or recovery status is recorded separately.")
+                    Text("Automatic targets start in the workout. Opening the optional plan editor records a separate review or edit.")
                 }
 
-                Section {
-                    LabeledContent(
-                        "Completed as planned",
-                        value: "\(report.completedAsPlanned) of \(report.finishedAcceptedPlans)"
-                    )
-                    LabeledContent("RPE reported", value: effortCoverage(report))
-                    LabeledContent(
-                        "Sets above target RPE",
-                        value: "\(report.aboveTargetEffortSets)"
-                    )
-                } header: {
-                    Text("Suggested plans used")
-                } footer: {
-                    Text("Outcomes use only plans accepted exactly as suggested. Correcting or deleting a set updates these results automatically.")
+                if report.reviewedPlans > 0 {
+                    Section {
+                        LabeledContent(
+                            "Completed as planned",
+                            value: "\(report.completedAsPlanned) of \(report.finishedAcceptedPlans)"
+                        )
+                        LabeledContent("RPE reported", value: effortCoverage(report))
+                        LabeledContent(
+                            "Sets above target RPE",
+                            value: "\(report.aboveTargetEffortSets)"
+                        )
+                    } header: {
+                        Text("Explicitly reviewed plans")
+                    } footer: {
+                        Text("These aggregate outcomes use only plans explicitly accepted as suggested. Correcting or deleting a set updates the results automatically.")
+                    }
                 }
 
-                Section("Recent plan reviews") {
+                Section("Recent recommendations") {
                     ForEach(report.entries) { entry in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .firstTextBaseline) {
@@ -627,7 +630,7 @@ private struct RecommendationFeedbackView: View {
                             }
                             Text("\(actionLabel(entry.action)) · \(outcomeLabel(entry))")
                                 .font(.subheadline)
-                            if entry.decision == .accepted {
+                            if entry.decision != .edited {
                                 Text(effortLabel(entry))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -644,9 +647,9 @@ private struct RecommendationFeedbackView: View {
                 )
             } else {
                 ContentUnavailableView(
-                    "No reviewed plans yet",
+                    "No recommendations yet",
                     systemImage: "chart.line.uptrend.xyaxis",
-                    description: Text("Future set-plan reviews will appear here after you choose Use Plan. Existing workout history remains unchanged.")
+                    description: Text("Automatic targets and optional plan reviews will appear here after a future workout. Existing history remains unchanged.")
                 )
             }
         }
@@ -690,7 +693,12 @@ private struct RecommendationFeedbackView: View {
 
     private func outcomeLabel(_ entry: RecommendationFeedbackEntry) -> String {
         if entry.decision == .edited { return "Edited before use" }
-        if !entry.finished { return entry.workingSets > 0 ? "Workout in progress" : "Not completed yet" }
+        if !entry.finished {
+            if entry.workingSets > 0 { return "Workout in progress" }
+            return entry.decision == .automaticallyActivated
+                ? "Activated automatically"
+                : "Not completed yet"
+        }
         if entry.completedAsPlanned { return "Completed as planned" }
         switch entry.completion {
         case .shortenedForTime: return "Ended early for time"

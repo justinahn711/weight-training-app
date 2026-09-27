@@ -13,9 +13,10 @@ public struct PlannedWorkingSet: Hashable, Codable, Sendable {
     }
 }
 
-/// A prescription the lifter accepted, rather than a reconstruction of what
-/// they happened to finish. Reuse its ID while repeating the prescription;
-/// give it a new ID when accepting a change, including after a deload.
+/// A prescription activated by the app or explicitly reviewed by the lifter,
+/// independent of what they finish. Reuse its ID while repeating the targets;
+/// give it a new ID when changing them, including after a deload.
+/// Activation/review provenance belongs to the recorded session trace.
 ///
 /// The exercise snapshot and comparison context prevent old success on a
 /// different apparatus, rest protocol, or technique from earning a load jump.
