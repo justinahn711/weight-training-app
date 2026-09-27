@@ -33,6 +33,13 @@ final class BodyweightTests: XCTestCase {
     }
 
     /// A moment today that has definitely already happened.
+    ///
+    /// Fine for a single reading. Do NOT call this more than once to build
+    /// several fixtures that need to land on the same calendar day — each
+    /// call reads the real clock again, and if midnight falls between two of
+    /// those calls the fixtures split across two days. Use `midday(daysAgo:)`
+    /// with a shared offset instead (see `testOneReadingPerDay`, which hit
+    /// exactly this at 00:02).
     private func recently(secondsAgo: TimeInterval = 1) -> Date {
         Date().addingTimeInterval(-secondsAgo)
     }
@@ -64,13 +71,23 @@ final class BodyweightTests: XCTestCase {
 
     /// A scale stepped on three times in a morning is one measurement. Keeping
     /// all three would weight the series towards whichever day someone fidgeted.
+    ///
+    /// Anchored to `midday(daysAgo: 1)` rather than `recently(secondsAgo:)` —
+    /// three readings a few minutes apart from `Date()` used to straddle
+    /// midnight and land on two different calendar days, exactly the #79 trap
+    /// this file's own `midday` doc comment warns about. Confirmed for real:
+    /// this failed at 00:02 (`count` was 2, not 1) and passed at 00:03.
     func testOneReadingPerDay() throws {
-        try store.record(BodyweightReading(pounds: 176, recordedAt: recently(secondsAgo: 180)))
-        try store.record(BodyweightReading(pounds: 175.4, recordedAt: recently(secondsAgo: 120)))
-        try store.record(BodyweightReading(pounds: 175.8, recordedAt: recently(secondsAgo: 60)))
+        let first = midday(daysAgo: 1)
+        let second = first.addingTimeInterval(60)
+        let third = first.addingTimeInterval(120)
+
+        try store.record(BodyweightReading(pounds: 176, recordedAt: first))
+        try store.record(BodyweightReading(pounds: 175.4, recordedAt: second))
+        try store.record(BodyweightReading(pounds: 175.8, recordedAt: third))
 
         XCTAssertEqual(try store.bodyweights().count, 1)
-        XCTAssertEqual(try store.bodyweight(on: Date()), 175.8, "the last one wins")
+        XCTAssertEqual(try store.bodyweight(on: third), 175.8, "the last one wins")
     }
 
     /// Health is read repeatedly — every launch — so importing the same
