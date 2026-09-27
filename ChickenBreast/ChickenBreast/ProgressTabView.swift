@@ -240,6 +240,22 @@ private struct ActivityRings: View {
     var gap: CGFloat = 3
 
     @State private var revealed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The draw-in, or Reduce Motion's answer to it.
+    ///
+    /// The full case keeps this card's own slower spring rather than the
+    /// app's `Theme.spring`: a ring filling is a chart being drawn, not a
+    /// control landing, and it reads wrong at the shorter duration. The
+    /// reduced case is `Theme`'s, so this screen can never disagree with the
+    /// session screen about what "reduced" means. Still an animation and not
+    /// a cut — see `Theme.reducedSpring` for why a `0` here would drop the
+    /// state change rather than just its bounce.
+    private var reveal: Animation {
+        reduceMotion
+            ? Theme.spring(reduceMotion: true)
+            : .spring(duration: 0.9, bounce: 0.18)
+    }
 
     var body: some View {
         ZStack {
@@ -256,7 +272,7 @@ private struct ActivityRings: View {
             }
         }
         .onAppear {
-            withAnimation(.spring(duration: 0.9, bounce: 0.18)) { revealed = true }
+            withAnimation(reveal) { revealed = true }
         }
     }
 }
@@ -268,6 +284,8 @@ private struct VolumeChartCard: View {
 
     @State private var region: MuscleRegion?
     @State private var selectedWeek: Date?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var calendar: Calendar { .current }
 
@@ -316,7 +334,13 @@ private struct VolumeChartCard: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(headline)
                         .font(.title2.bold().monospacedDigit())
-                        .contentTransition(.numericText())
+                        // Digits roll when the filter changes underneath
+                        // them, because the chip below animates that change.
+                        // Rolling digits are motion in the literal sense the
+                        // preference is about — a glyph travelling — so under
+                        // Reduce Motion the number simply becomes the new
+                        // number.
+                        .contentTransition(reduceMotion ? .identity : .numericText())
                     Text(headlineCaption)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -520,6 +544,8 @@ private struct ConsistencyCard: View {
 private struct RegionFilterRow: View {
     @Binding var selection: MuscleRegion?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -535,18 +561,35 @@ private struct RegionFilterRow: View {
     private func chip(_ value: MuscleRegion?, _ title: String) -> some View {
         let isSelected = selection == value
         return Button {
-            withAnimation(.snappy) { selection = value }
+            withAnimation(Theme.quick(reduceMotion: reduceMotion)) { selection = value }
         } label: {
-            Text(title)
-                .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.primary))
-                .padding(.horizontal, 12)
-                .frame(minHeight: 36)
-                .background(
-                    isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
-                    in: Capsule()
-                )
-                .contentShape(Capsule())
+            HStack(spacing: 5) {
+                // The non-colour half of "this one is selected". Weight alone
+                // was carrying it — regular to semibold at subheadline is a
+                // difference you can only see with the unselected chips beside
+                // it for comparison, which is exactly the comparison someone
+                // who can not tell the fill from the background is unable to
+                // make. A glyph is either there or it is not.
+                //
+                // Hidden from VoiceOver rather than labelled: the button
+                // already carries `.isSelected`, and a second "selected" read
+                // aloud after the region name is noise.
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption2.weight(.bold))
+                        .accessibilityHidden(true)
+                }
+                Text(title)
+                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+            }
+            .foregroundStyle(isSelected ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.primary))
+            .padding(.horizontal, 12)
+            .frame(minHeight: 36)
+            .background(
+                isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
+                in: Capsule()
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])

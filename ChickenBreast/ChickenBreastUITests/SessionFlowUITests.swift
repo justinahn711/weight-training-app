@@ -338,4 +338,104 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
             "the action bar should no longer approach the ~368pt #205 measured before this change"
         )
     }
+
+    /// The Progress tab's region filter, checked for the two things #217 says
+    /// a selected control owes someone: the selected state has to be exposed
+    /// as a trait, and colour must not be the only way to see it.
+    ///
+    /// The non-colour cue is asserted as width rather than by finding the
+    /// checkmark glyph: the glyph is deliberately `accessibilityHidden` (the
+    /// button already carries `.isSelected`, so reading "checkmark" after the
+    /// region name is noise), which means XCUI cannot see it as an element.
+    /// What XCUI can see is that selecting a chip makes it render *more* than
+    /// an unselected one does — a bolder label and a glyph that was not there
+    /// — and that is exactly the property the criterion is about. A chip that
+    /// only changed its fill colour would come back the same width and fail
+    /// here.
+    ///
+    /// Reduce Motion itself is not exercised: there is no XCUI or `simctl`
+    /// API that flips the system preference for a single test run, so the
+    /// animation half of #217 is verified by reading the diff and on the
+    /// phone, not here. Said out loud rather than faked with a test that
+    /// passes either way.
+    func testProgressFilterChipCarriesANonColourSelectedCue() throws {
+        let app = launch()
+
+        // The Progress tab draws nothing at all until something has been
+        // logged, so this test makes its own data rather than inheriting
+        // whatever an earlier test in the run happened to leave behind.
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["Log Set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20))
+        if !logSet.isEnabled {
+            let heavier = app.buttons["session.weight.increment"]
+            XCTAssertTrue(heavier.waitForExistence(timeout: 5))
+            heavier.tap()
+        }
+        XCTAssertTrue(logSet.isEnabled)
+        logSet.tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5),
+                      "the set should have been logged")
+
+        // Relaunching is how this test gets out of the session and back to
+        // the tab bar, and it also guarantees the Progress tab reads the set
+        // from the store rather than from whatever was in memory.
+        app.terminate()
+        let relaunched = launch()
+        XCTAssertTrue(try reachTrainScreen(relaunched))
+
+        let progress = relaunched.tabBars.buttons["Progress"]
+        XCTAssertTrue(progress.waitForExistence(timeout: 5) && progress.isHittable)
+        progress.tap()
+
+        let all = relaunched.buttons["progress.volume.filter.all"]
+        // The first region chip, not a later one: the row scrolls
+        // horizontally, and on the narrowest supported screen anything past
+        // the second chip starts the run off-screen and unhittable.
+        let chest = relaunched.buttons["progress.volume.filter.chest"]
+        XCTAssertTrue(all.waitForExistence(timeout: 15),
+                      "the volume card's filter row should be on the Progress tab")
+        XCTAssertTrue(chest.waitForExistence(timeout: 5))
+
+        XCTAssertTrue(all.isSelected, "All is the filter row's default selection")
+        XCTAssertFalse(chest.isSelected)
+
+        let unselectedWidth = chest.frame.width
+        let selectedWidthOfAll = all.frame.width
+        chest.tap()
+
+        XCTAssertTrue(chest.isSelected, "tapping a region chip should select it")
+        XCTAssertFalse(all.isSelected, "selection should move, not accumulate")
+
+        // Printed so the measured difference is in the test log rather than
+        // only in an assertion message.
+        print("Progress filter chip widths — chest unselected \(unselectedWidth)pt, "
+              + "selected \(chest.frame.width)pt; all selected \(selectedWidthOfAll)pt, "
+              + "unselected \(all.frame.width)pt")
+        XCTAssertGreaterThan(
+            chest.frame.width, unselectedWidth,
+            "a selected chip must show something an unselected one does not — "
+            + "colour alone is not a cue (#217)"
+        )
+        XCTAssertLessThan(
+            all.frame.width, selectedWidthOfAll,
+            "and the chip that lost the selection must give that cue back"
+        )
+
+        // #217's contrast criterion is a measured number, not an opinion, and
+        // the only honest place to measure it is the rendered pixels. Attached
+        // rather than asserted here: XCUI cannot sample a colour, so the ratio
+        // is computed off this image and recorded in the PR. Kept always, so
+        // the evidence survives a green run rather than only a red one.
+        //
+        // Scrolled first because the filter row sits under the floating tab
+        // bar at rest, and the bar's glass darkens everything behind it — a
+        // sample taken there measures the blend, not the chip.
+        relaunched.swipeUp()
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "progress-filter-selected"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
 }
