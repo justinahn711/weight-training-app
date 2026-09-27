@@ -1,14 +1,51 @@
 # Progressive overload recommendation engine
 
-Status: phases 1–4 and the phase-5 recommendation feedback instrumentation are
-implemented on `feat/recommendation-engine`. Physical-device review with real
-history remains before threshold tuning.
+Status: revised after the implementation review and product clarification on
+2026-09-27. All five phases have implementation on `feat/recommendation-engine`,
+but none is considered finished against the revised completion criteria below.
+Correctness fixes and automatic workout integration precede outcome collection
+and threshold tuning. This document specifies the intended behavior; it does
+not claim that the revised workflow is already installed.
 
-Provisional audience: healthy adult recreational lifters seeking muscle growth with steady strength gains. Goal, experience, available equipment, exercise priorities, and training frequency are explicit configuration. Strength and general fitness can use different exercise prescriptions without replacing the decision pipeline.
+Provisional audience: healthy adult recreational lifters seeking muscle growth with steady strength gains. Offer a goal and equipment choice during first use, reusing any existing setup. Experience, frequency, and exercise priorities are optional refinements; reuse the chosen routine and observed schedule without treating an inferred preference as user-confirmed. Strength and general fitness can use different exercise prescriptions without replacing the decision pipeline.
 
 ## Product contract
 
-For each exercise, recommend an achievable load, reps for each working set, a suggested set count, target RPE, and a short explanation grounded in actual history. The lifter accepts, edits, or ignores the recommendation. Completing a set records what was actually performed.
+For each exercise, prepopulate an achievable load, reps for each working set, a suggested set count, target RPE, and a short explanation grounded in actual history. The lifter can train immediately or edit targets directly in the workout. Ordinary progression must not require opening Review set plan or pressing Use Plan. Completing a set records what was actually performed.
+
+At workout preparation, coordinate targets across the full routine. When an
+exercise starts, persist the exact displayed prescription before its first
+working set, using the same operation whether the user logs by touch, voice,
+or the lock screen. This is a record of what the app prescribed, not evidence
+that the user explicitly approved a recommendation or completed it. Existing
+references to an "accepted plan" denote the stored prescription/revision; the
+revised model must distinguish automatic activation from an explicit edit or
+review. Historical accepted plans retain their original provenance.
+
+Keep an activated exercise's targets stable for that workout. Recompute future
+recommendations after relevant log or configuration changes; make any change
+to the active prescription explicit. Preserve the ability to change targets,
+stop early, or log extra work. A pain report takes precedence over every
+recommendation path, including first use and legacy-history initialization.
+
+## Minimal-configuration workout experience
+
+- Reuse existing goal, routine, equipment, and history. Offer editable defaults
+  when these are absent; do not require a volume-budget or training-block setup.
+- Recent comparable history supplies a conservative starting target without a
+  plan-review gate. With no usable history, guide selection of a starting load;
+  do not present an equipment minimum as a personalized working-weight estimate.
+- Show one short reason beside the target. Detailed evidence and advanced
+  settings are optional, outside the normal logging flow.
+- Actual RPE remains optional and separate from target RPE. Prompt lightly when
+  missing effort is preventing a decision; otherwise explain a conservative hold.
+  Do not copy one reported set's effort to the other sets.
+- Muscle-volume calculations and default ranges work automatically. Adjustments
+  to volume ranges, priorities, and scheduled blocks belong in advanced settings.
+- Explain recovery proposals in the workout with a simple way to use, adjust,
+  or dismiss them. Provide an explicit exit from recovery even with blocks off.
+- Recommendation results in Settings is an evaluation surface. Visiting it,
+  reviewing plans, or configuring metrics is never necessary to obtain guidance.
 
 Use a deterministic rule engine for v1. Every decision includes its rule version, supporting session identifiers, reason codes, and data limitations. Do not generate numerical prescriptions with an LLM.
 
@@ -27,9 +64,9 @@ All numerical decision thresholds below are configurable engineering defaults to
 
 | Entity | Required information | Why it matters |
 |---|---|---|
-| Training profile | Goal, experience, normal schedule, priority exercises | Selects progression policy and reasonable starting set targets |
+| Training profile | Goal/default; optional experience, schedule, priorities with source/provenance | Selects policy without mandatory advanced configuration |
 | Exercise configuration | Stable exercise/variant ID, muscles and roles, equipment identity, load convention, achievable loads, rep range, target RPE | Prevents comparisons between different movements or machines |
-| Planned exercise exposure | Session ID, ordered set targets, planned load/reps/RPE, accepted plan changes | Distinguishes completing the prescription from stopping early |
+| Planned exercise exposure | Session ID, exact displayed proposal, active ordered set targets, load/reps/RPE, revision and automatic/explicit origin | Distinguishes suggested work, user changes, performed work, and early stops |
 | Actual set | ID, session ID, exercise ID, set order, load, reps, optional RPE, warmup/work status, timestamp | Source of performance and volume calculations |
 | Exercise completion | Completed, shortened for time, stopped for fatigue, stopped for pain, or unknown | A missed target is different from an interrupted workout |
 | Optional context | Rest duration, technique/ROM consistency, pain flag, subjective recovery | Establishes comparability and constrains increases |
@@ -112,11 +149,11 @@ Change one demand variable at a time. A load increase with a compensating rep re
 
 ## Weekly set allocation
 
-Adding a set is a planned review decision, not the default response to an easy session. From three to four sets is a 33% increase in exercise set volume.
+Adding a set is a coordinated workout-allocation decision, not the default response to an easy session. It does not require a separate user review screen. From three to four sets is a 33% increase in exercise set volume.
 
 Only consider it when recovery is acceptable, repeated training has been tolerable, the completed schedule is below a personalized set budget, and ordinary rep/load progression is unavailable or a planned volume block explicitly calls for it. Maintain a progressing routine by default. A plateau with high effort is not evidence that more volume is needed.
 
-Select one priority exercise and add at most one set in a review period. Check every involved muscle's projected workload, including secondary exposure and already planned remaining sessions. If several exercises are eligible, rank by explicit user priority and then stable exercise ID. A chest press can be rejected if its additional triceps exposure exceeds that muscle's budget.
+Select one exercise and add at most one set in a defined seven-day allocation period, tracked from prescription decisions rather than screen openings. Check every involved muscle's projected workload, including the entire candidate prescription, secondary exposure, sibling exercises, and already planned remaining sessions. Avoid double counting work already reserved for that exercise. If several exercises are eligible, rank by optional user priority, then routine order and stable exercise ID. A chest press can be rejected if its additional triceps exposure exceeds that muscle's budget. When upcoming work or recovery is too uncertain to establish headroom, hold the set count instead of assuming the budget is empty.
 
 Derive initial budgets from two to three weeks of completed, tolerated training plus goal/experience configuration. Population guidance can inform suggested bands, but current fixed per-muscle ranges should become defaults the user can adjust. Never treat a band boundary as an injury threshold.
 
@@ -153,7 +190,7 @@ ExerciseRecommendation
   missingInputs, constraintsApplied, ruleVersion
 ```
 
-Evidence status is a description of input quality, not a probability of success. Recompute live recommendations after log corrections, deletions, configuration changes, or new sessions. Persist the accepted plan as a historical user decision so completion can be assessed; it must not become an authoritative cache of future recommendations.
+Evidence status is a description of input quality, not a probability of success. Recompute future recommendations after log corrections, deletions, configuration changes, or new sessions. Persist the displayed proposal and activated prescription with their origin so completion can be assessed. Neither is an authoritative cache of future recommendations, and automatic activation is not a historical user approval.
 
 Example: "Bench press: 100 lb for 10, 10, 10 reps. Your last two workouts completed 10, 10, 9 with every set at RPE 7 or lower. Add one rep to your final set."
 
@@ -161,7 +198,9 @@ Another: "Repeat 100 lb for 12, 12, 12. Your final set was RPE 9, above your tar
 
 ## Integration with the inspected Swift app
 
-The inspected checkout is `weight-training-app` under this workspace; this is not an audit of every sibling worktree.
+The following integration notes describe the original baseline inspected before
+implementation. Current delivery status and remaining work are defined below;
+these notes are not a claim that the listed data models remain absent.
 
 - `ProgressionEngine.swift` already handles double progression and RPE-based loading. Extend it with comparable exposure history and planned completion. Its current middle-of-range rep increases do not require repeated easy exposures, and its RPE-targeted rule can raise load from one scored set.
 - `Suggestion.swift` can suggest a load increase during a workout from one easy set. Route it through the same policy so it cannot bypass the repeated-session gate or contradict a recovery action. Keep immediate downward adjustments available for unexpectedly hard work.
@@ -175,29 +214,116 @@ The inspected checkout is `weight-training-app` under this workspace; this is no
 Suggested pipeline:
 
 ```text
-actual logs + accepted plans + exercise/profile configuration
+actual logs + prescription snapshots + exercise/profile configuration
     -> comparable exposures and muscle workload summaries
     -> recovery and data-quality gates
-    -> exercise progression candidate
-    -> weekly budget and equipment validation
-    -> one explained recommendation
+    -> exercise progression candidates
+    -> coordinated workout allocation and equipment validation
+    -> explained targets in the workout
+    -> exact proposal and active-prescription snapshot before logging
 ```
+
+Build exposure and muscle summaries once per workout evaluation and share them
+across candidates, avoiding repeated full-history fetches per exercise. Optimize
+only with equivalence tests and measured representative histories. Any cache
+must include history/configuration revisions and relevant time-window boundaries;
+corrections, deletions, sync, and schedule changes must invalidate future advice.
+The persisted active prescription stays stable across refreshes and relaunches.
 
 ## Delivery and evaluation
 
-1. Add plan/completion metadata, exposure matching, and missing-effort handling. Preserve old logs and first-session behavior.
-2. Implement hold/add-rep/add-load behavior with repeated-easy gates, achievable load checks, and one shared decision path for session suggestions.
-3. Add personalized muscle budgets and guarded weekly set allocation. **Implemented:**
-   adjustable per-muscle bands, direct/secondary and known/unknown effort reporting,
-   accepted remaining-work projection, and a one-set increase only when ordinary
-   rep/load progression is unavailable and every involved muscle remains in budget.
-4. Add optional training blocks, baseline comparisons, and scheduled/adaptive deload coordination. **Implemented:** synced opt-in schedule, derived comparable-week baseline, build/recovery tonnage targets, reviewable scheduled and multi-exercise adaptive deloads, and explicit post-deload resumption.
-5. Replay historical scenarios in shadow mode before tuning the engine's suggestions. **In progress:** deterministic multi-week replays cover the block schedule and false-fatigue guards. The app preserves the proposal shown at plan review, distinguishes unchanged acceptance from an edit, and derives 28-day completion, achieved-target, RPE-coverage, and effort-overshoot results from corrected logs. A read-only physical-device replay exposed legacy lifts with no accepted plan; recent pre-plan sets now produce a conservative, reviewable baseline without earning progression. Ongoing workout outcomes remain before threshold tuning. Acceptance alone does not establish quality.
+### Phase 1 — Reliable history and automatic prescription records
 
-   The results screen also shows a newest-first entry for each reviewed exercise,
-   including the proposed action, whether the plan was edited, its completion
-   result, and per-plan RPE coverage. These details remain derived from the
-   proposal snapshot and current logs rather than stored success counters.
+**Foundation implemented; corrective and integration work remains.** Preserve
+plan revisions, workout identities, completion reasons, and legacy logs. Add
+the exact displayed proposal and automatic/explicit origin to the prescription
+lifecycle. Save the active prescription before the first working set without
+requiring a review screen. RPE additions/removals in both correction editors
+must update effort provenance; a weight-only edit must not certify an old RPE.
+
+**Complete when:** first-use and returning-user flows work with minimal setup;
+automatic activation cannot manufacture completion or effort evidence; logging,
+undo, corrections, restore, sync, and relaunch preserve the prescription record.
+
+### Phase 2 — Recommendations inside the normal workout
+
+**Core progression implemented; default workflow and shared logging need work.**
+Keep repeated-easy, achievable-load, and one-variable-at-a-time rules. Populate
+targets and their reason directly in the exercise view. Review set plan becomes
+an optional detailed editor. Use the same per-set targets for touch, voice,
+Live Activity logging, undo, and resumed sessions. Apply pain gates before
+legacy initialization as well as normal progression. Refresh unstarted proposals
+when their evidence changes; retain active targets unless explicitly changed.
+
+**Complete when:** users can receive, follow, and edit recommendations without
+visiting Settings or accepting a separate plan; a 10/10/9 prescription advances
+correctly through every logging surface; recorded pain always pauses guidance.
+
+### Phase 3 — Automatic workout-wide muscle-volume coordination
+
+**Reporting and adjustable ranges implemented; allocation is incomplete.**
+Reuse routine/history with editable default set ranges. Coordinate candidates
+together, counting the full proposed prescription, remaining sibling work,
+secondary muscles, and known upcoming sessions. Enforce one extra set on one
+selected exercise per allocation period. Do not interpret an incomplete schedule
+as permission to add work. Manual muscle budgets remain optional.
+
+**Complete when:** 9 logged chest sets plus a proposed 4 cannot pass a maximum
+of 12; overlapping accepted work is retained; candidate ordering and repeated
+reads cannot allocate extra sets twice; no volume configuration is required.
+
+### Phase 4 — Explainable recovery and optional training blocks
+
+**Block/recovery scaffolding implemented; comparability and exit need fixes.**
+Require comparable loads, reps, set structures, equipment, and execution before
+using effort trends to infer deterioration. Separate local resets from broader
+recovery. Keep scheduled blocks opt-in and ensure the base recommendation flow
+works with them off. Recovery proposals have a visible use/adjust/dismiss path
+and an explicit route back to normal training when a block is disabled. Preserve
+the consistent exercise basket for baseline comparisons and show actual recovery
+reductions after rounding rather than implying the percentage was achieved.
+
+**Complete when:** doing harder or different work alone does not trigger a false
+fatigue trend; disabling a block cannot trap a lift in recovery; deload sets do
+not earn progression; resumption establishes fresh evidence.
+
+### Phase 5 — Outcome evaluation, phone validation, and optimization
+
+**Instrumentation implemented; evidence integrity and real outcomes remain.**
+Recommendation results is primarily for development/evaluation, not a required
+user workflow. Preserve the exact displayed proposal instead of recomputing it
+at acceptance. Track displayed prescriptions, automatic activation, explicit
+reviews, overrides, completion, RPE coverage, and effort overshoot separately.
+Do not relabel old history as an automatic recommendation or approval. Derive
+outcomes from corrected logs and count effort only when an actual reported RPE
+exists. Activation, acceptance, and completion are distinct metrics.
+
+Validate the normal phone flow, including lock-screen logging, corrections,
+relaunches, and recovery exit. Replay multiweek scenarios and inspect per-exercise
+holds/overrides before tuning the two-workout gate, load cap, freshness window,
+or volume ranges. Measure history-fetch and calculation costs; share summaries
+without changing decisions or allowing stale advice.
+
+**Complete when:** displayed proposals match evaluation records; editing RPE
+updates coverage correctly; automatic targets require no evaluation-screen use;
+the full phone flow passes; observed outcomes support any threshold change.
+
+### Execution order and review regression gates
+
+First fix the seven review findings across the existing phases, then deliver the
+automatic workout workflow, validate it on the phone, and collect outcomes before
+tuning thresholds. Do not mark a phase complete merely because its UI or pure
+engine exists.
+
+| Review finding | Required regression / owning phase |
+|---|---|
+| Volume cap exceeded and sibling work omitted | Full candidate plus other remaining work fits every budget; phase 3 |
+| Pain ignored before first accepted plan | Legacy/no-plan pain history returns stop; phase 2 |
+| Incomparable work triggers adaptive fatigue | Load/rep/technique changes cannot establish decline; phase 4 |
+| Disabling blocks retains deload forever | Explicit recovery exit works with blocks off; phase 4 |
+| RPE edits leave stale provenance or coverage | Adding/removing RPE changes evidence and coverage correctly; phases 1 and 5 |
+| Live Activity repeats the prior set target | Logging and undo advance/restore the correct per-set target; phase 2 |
+| Stored proposal differs from displayed proposal | Snapshot the displayed proposal and distinguish actual overrides; phases 1 and 5 |
 
 Required evaluation scenarios: two easy exposures; a single unusually good workout; a hard final set hidden by a low average RPE; partial completion for time versus fatigue; absent RPE; warmup-only history; changed machine or ROM; mixed loads; plate minimums; coarse dumbbell steps; kg/lb conversion; overlapping muscle budgets; an unfinished week; missed sessions; a long break; deload entry/exit; duplicates/imports; corrected/deleted logs; and sessions across midnight.
 

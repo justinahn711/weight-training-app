@@ -2,7 +2,28 @@
 
 This work begins the [recommendation engine plan](recommendation-engine-plan.md) in an isolated worktree on `feat/recommendation-engine`, based on the locally available `origin/main` commit `43f4714`.
 
-## Current milestone: personalized volume and training blocks
+## Current status: review fixes and automatic workout integration
+
+The phased plan was revised on 2026-09-27 to make recommendations part of normal
+workout logging with minimal configuration. The shipped implementation still
+requires Review set plan → Use Plan to adopt the planned engine. Removing that
+gate, automatically recording the displayed prescription before working sets,
+and coordinating the whole workout are **planned, not implemented**.
+
+The review of commit `3d07d6d` found seven gaps: incomplete volume projections,
+pain bypass during legacy initialization, incomparable adaptive-fatigue evidence,
+recovery exit when blocks are disabled, stale RPE provenance/coverage after edits,
+Live Activity targets that do not advance per set, and proposal traces recomputed
+instead of captured from the displayed recommendation. Existing 752 tests passed;
+six isolated regression cases reproduced the volume, pain, fatigue, recovery-exit,
+and RPE defects. The remaining findings came from implementation tracing.
+
+The sections below describe existing components and their intended behavior;
+these review gaps qualify the previous milestone claims. The revised
+[phase completion criteria](recommendation-engine-plan.md#delivery-and-evaluation)
+are authoritative. Correctness and normal-workout integration come before
+collecting outcomes for threshold tuning. Recommendation results in Settings is
+an evaluation surface, never a prerequisite for obtaining recommendations.
 
 Implemented in `WeightTrainingCore`:
 
@@ -12,7 +33,7 @@ Implemented in `WeightTrainingCore`:
 - `RecommendationEngine`: a pure function returning one explained recommendation, evidence status, supporting exposure IDs, and a rule version. Repeated reads do not consume evidence.
 - `RecommendationPolicy`: configurable rep range, repeated-workout threshold, RPE slack, maximum load increase, and history freshness.
 
-The policy increases one total rep after two consecutive easy workouts on the same accepted plan. At the rep ceiling it proposes the next achievable load within the configured increase limit and resets reps. It holds for missing effort, interrupted workouts, unexpectedly difficult sets, stale history, changed execution, and coarse equipment increments. It can suggest a local load reduction after two comparable full workouts miss the rep floor. Pain suspends progression; an accepted deload blocks increases, and deload history cannot earn progression after resuming.
+The policy increases one total rep after two consecutive easy workouts on the same accepted plan. At the rep ceiling it proposes the next achievable load within the configured increase limit and resets reps. It holds for missing effort, interrupted workouts, unexpectedly difficult sets, stale history, changed execution, and coarse equipment increments. It can suggest a local load reduction after two comparable full workouts miss the rep floor. The planned-history path checks pain; the no-plan/legacy bypass remains to be fixed. An accepted deload blocks increases, and deload history cannot earn progression after resuming.
 
 The policy is currently for straight sets with external loads. Bodyweight, assistance, unmeasured plate-built equipment, and mixed top/back-off prescriptions require explicit policies before support. An unavailable reduction returns a hold with an explanation rather than forcing a large equipment step.
 
@@ -95,8 +116,10 @@ not become whole-program fatigue. A recovery proposal must be accepted, and the
 next build week offers the last non-deload plan again so the reduced plan does
 not become permanent.
 
-Each set-plan review now preserves the proposal that was shown and records
-whether it was accepted unchanged or edited. **Settings → Recommendation
+Each set-plan acceptance currently recomputes and stores a proposal, then records
+whether the plan matches it or was edited. This is not yet a reliable snapshot
+of what was shown: a cached displayed proposal may differ by acceptance time.
+**Settings → Recommendation
 results** derives a rolling 28-day report from current logs: reviewed plans,
 edits, exact-plan completion, RPE coverage, and sets above target effort. It
 stores no mutable success counters, so correcting or deleting a set updates the
@@ -107,9 +130,12 @@ The same screen lists each recent reviewed exercise with its proposed action,
 accept/edit decision, completion outcome, and RPE coverage. This makes a real
 workout auditable without treating plan acceptance as a successful outcome.
 
-The next evaluation step is physical-device review with real history. The new
-report supplies the shadow comparison and override evidence needed before
-tuning any thresholds.
+The next work is to fix the review findings and integrate automatic prescriptions
+into touch, voice, and lock-screen logging, then validate that flow on the phone.
+The report's snapshot and RPE-correction defects must be resolved before its
+outcomes inform threshold tuning. The redesigned metrics will distinguish
+automatic activation, explicit review, and overrides without requiring users to
+visit this screen.
 
 ## Calling convention
 
