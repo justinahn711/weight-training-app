@@ -374,4 +374,30 @@ final class RecommendationEngineTests: XCTestCase {
         let restored = try JSONDecoder().decode(ExerciseExposure.self, from: JSONEncoder().encode(original))
         XCTAssertEqual(original, restored)
     }
+    func testLatestRecordedPainPrecedesMissingPlanAndUnsupportedEquipment() {
+        for equipment in [Equipment.dumbbell, .bodyweight] {
+            let lift = exercise(equipment: equipment)
+            let target = plan(lift)
+            var painful = exposure(target, daysAgo: 2, completion: .stoppedForPain)
+            painful.plan = nil
+            let result = RecommendationEngine.recommend(
+                exercise: lift, plan: nil, history: [painful], now: now
+            )
+            XCTAssertEqual(result.action, .stop)
+            XCTAssertEqual(result.reason, .pain)
+            XCTAssertTrue(result.sets.isEmpty)
+            XCTAssertEqual(result.supportingExposureIDs, [painful.id])
+        }
+    }
+
+    func testPainDoesNotLeakFromOtherExercisesOrFutureExposures() {
+        let target = plan(exercise())
+        let other = exposure(plan(exercise()), daysAgo: 2, completion: .stoppedForPain)
+        let future = exposure(target, daysAgo: -1, completion: .stoppedForPain)
+        let result = RecommendationEngine.recommend(
+            exercise: target.exercise, plan: nil, history: [other, future], now: now
+        )
+        XCTAssertEqual(result.reason, .firstPlanNeeded)
+    }
+
 }

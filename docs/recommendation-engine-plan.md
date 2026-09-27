@@ -234,7 +234,7 @@ The persisted active prescription stays stable across refreshes and relaunches.
 
 ### Phase 1 — Reliable history and automatic prescription records
 
-**Foundation implemented; corrective and integration work remains.** Preserve
+**Foundation and correction integrity implemented; automatic activation remains.** Preserve
 plan revisions, workout identities, completion reasons, and legacy logs. Add
 the exact displayed proposal and automatic/explicit origin to the prescription
 lifecycle. Save the active prescription before the first working set without
@@ -247,7 +247,7 @@ undo, corrections, restore, sync, and relaunch preserve the prescription record.
 
 ### Phase 2 — Recommendations inside the normal workout
 
-**Core progression implemented; default workflow and shared logging need work.**
+**Core progression and shared per-set logging implemented; default workflow remains.**
 Keep repeated-easy, achievable-load, and one-variable-at-a-time rules. Populate
 targets and their reason directly in the exercise view. Review set plan becomes
 an optional detailed editor. Use the same per-set targets for touch, voice,
@@ -261,7 +261,7 @@ correctly through every logging surface; recorded pain always pauses guidance.
 
 ### Phase 3 — Automatic workout-wide muscle-volume coordination
 
-**Reporting and adjustable ranges implemented; allocation is incomplete.**
+**Reporting, adjustable ranges, and review regression gates implemented; workout-wide selection remains.**
 Reuse routine/history with editable default set ranges. Coordinate candidates
 together, counting the full proposed prescription, remaining sibling work,
 secondary muscles, and known upcoming sessions. Enforce one extra set on one
@@ -274,7 +274,7 @@ reads cannot allocate extra sets twice; no volume configuration is required.
 
 ### Phase 4 — Explainable recovery and optional training blocks
 
-**Block/recovery scaffolding implemented; comparability and exit need fixes.**
+**Block/recovery scaffolding, comparability, and recovery exit implemented; recovery UX remains.**
 Require comparable loads, reps, set structures, equipment, and execution before
 using effort trends to infer deterioration. Separate local resets from broader
 recovery. Keep scheduled blocks opt-in and ensure the base recommendation flow
@@ -289,7 +289,7 @@ not earn progression; resumption establishes fresh evidence.
 
 ### Phase 5 — Outcome evaluation, phone validation, and optimization
 
-**Instrumentation implemented; evidence integrity and real outcomes remain.**
+**Instrumentation and evidence integrity implemented; automatic-flow outcomes remain.**
 Recommendation results is primarily for development/evaluation, not a required
 user workflow. Preserve the exact displayed proposal instead of recomputing it
 at acceptance. Track displayed prescriptions, automatic activation, explicit
@@ -310,20 +310,20 @@ the full phone flow passes; observed outcomes support any threshold change.
 
 ### Execution order and review regression gates
 
-First fix the seven review findings across the existing phases, then deliver the
+The seven review findings now have automated regressions. Next deliver the
 automatic workout workflow, validate it on the phone, and collect outcomes before
 tuning thresholds. Do not mark a phase complete merely because its UI or pure
 engine exists.
 
-| Review finding | Required regression / owning phase |
-|---|---|
-| Volume cap exceeded and sibling work omitted | Full candidate plus other remaining work fits every budget; phase 3 |
-| Pain ignored before first accepted plan | Legacy/no-plan pain history returns stop; phase 2 |
-| Incomparable work triggers adaptive fatigue | Load/rep/technique changes cannot establish decline; phase 4 |
-| Disabling blocks retains deload forever | Explicit recovery exit works with blocks off; phase 4 |
-| RPE edits leave stale provenance or coverage | Adding/removing RPE changes evidence and coverage correctly; phases 1 and 5 |
-| Live Activity repeats the prior set target | Logging and undo advance/restore the correct per-set target; phase 2 |
-| Stored proposal differs from displayed proposal | Snapshot the displayed proposal and distinguish actual overrides; phases 1 and 5 |
+| Review finding | Regression / owning phase | Status |
+|---|---|---|
+| Volume cap exceeded and sibling work omitted | Full candidate plus other remaining work fits every budget; phase 3 | Fixed |
+| Pain ignored before first accepted plan | Legacy/no-plan pain history returns stop; phase 2 | Fixed |
+| Incomparable work triggers adaptive fatigue | Load/rep/technique changes cannot establish decline; phase 4 | Fixed |
+| Disabling blocks retains deload forever | Explicit recovery exit works with blocks off; phase 4 | Fixed |
+| RPE edits leave stale provenance or coverage | Adding/removing RPE changes evidence and coverage correctly; phases 1 and 5 | Fixed |
+| Live Activity repeats the prior set target | Logging and undo advance/restore the correct per-set target; phase 2 | Fixed |
+| Stored proposal differs from displayed proposal | Snapshot the displayed proposal and distinguish actual overrides; phases 1 and 5 | Fixed |
 
 Required evaluation scenarios: two easy exposures; a single unusually good workout; a hard final set hidden by a low average RPE; partial completion for time versus fatigue; absent RPE; warmup-only history; changed machine or ROM; mixed loads; plate minimums; coarse dumbbell steps; kg/lb conversion; overlapping muscle budgets; an unfinished week; missed sessions; a long break; deload entry/exit; duplicates/imports; corrected/deleted logs; and sessions across midnight.
 

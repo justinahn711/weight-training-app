@@ -104,4 +104,31 @@ final class VolumeAllocationEngineTests: XCTestCase {
             base
         )
     }
+    func testFullProposedWorkoutMustFitSecondaryBudget() {
+        let base = recommendation()
+        let triceps = MuscleVolume(muscle: .triceps, sets: 15, target: 8...16)
+        XCTAssertEqual(VolumeAllocationEngine.applyingWeeklyVolume(
+            to: base, exercise: exercise, report: report(overrides: [.triceps: triceps])
+        ), base, "Four proposed press sets add two triceps credits, not half a credit")
+    }
+
+    func testAlreadyReservedWorkoutIsNotCountedTwice() {
+        let base = recommendation()
+        let triceps = MuscleVolume(muscle: .triceps, sets: 14, target: 8...16, plannedSets: 1.5)
+        let result = VolumeAllocationEngine.applyingWeeklyVolume(
+            to: base, exercise: exercise, report: report(overrides: [.triceps: triceps]),
+            reservedSetsForExercise: 3
+        )
+        XCTAssertEqual(result.action, .addSet)
+        XCTAssertEqual(result.sets.count, 4)
+    }
+
+    func testBaselineWorkoutMeetingMinimumDoesNotEarnExtraVolume() {
+        let base = recommendation()
+        let chest = MuscleVolume(muscle: .chest, sets: 3, target: 6...12)
+        XCTAssertEqual(VolumeAllocationEngine.applyingWeeklyVolume(
+            to: base, exercise: exercise, report: report(overrides: [.chest: chest])
+        ), base)
+    }
+
 }

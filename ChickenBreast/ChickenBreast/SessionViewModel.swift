@@ -593,6 +593,10 @@ final class SessionViewModel {
                 rest = nil
                 RestNotification.cancel()
             }
+            // A lock-screen log can advance a plan whose sets have different
+            // rep targets. Resume the next persisted set before republishing,
+            // or foregrounding would overwrite the activity with stale input.
+            seedNextPlannedSet()
             publishActivity()
         } catch {
             failure = "Couldn't refresh lock-screen changes: \(error.localizedDescription)"
@@ -617,7 +621,7 @@ final class SessionViewModel {
         let state = SessionActivityAttributes.ContentState(
             exerciseName: current.exercise.name,
             targetLine: pendingLoad > .zero
-                ? "\(pendingLoad.formatted(in: GymSettings.shared.unit)) × \(pendingReps) @ \(pendingRPE)"
+                ? activityTargetLine(for: current)
                 : current.prescription.displayLine(in: GymSettings.shared.unit),
             setsLogged: current.workingSets.count,
             exerciseID: current.exercise.id,
@@ -630,6 +634,13 @@ final class SessionViewModel {
         )
         isActivityEnded = false
         liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)
+    }
+
+    private func activityTargetLine(for exercise: SessionExercise) -> String {
+        let target = "\(pendingLoad.formatted(in: GymSettings.shared.unit)) × \(pendingReps) @ \(pendingRPE)"
+        guard let plan = exercise.acceptedPlan,
+              plan.sets.indices.contains(exercise.workingSets.count) else { return target }
+        return "Set \(exercise.workingSets.count + 1) of \(plan.sets.count) · \(target)"
     }
 
     /// Leaving the workout route pauses its glanceable surface without
@@ -883,9 +894,17 @@ final class SessionViewModel {
     }
 
     @discardableResult
-    func acceptPlan(_ plan: ExercisePlan) -> Bool {
+    func acceptPlan(
+        _ plan: ExercisePlan,
+        displayedRecommendation: ExerciseRecommendation? = nil
+    ) -> Bool {
         do {
-            try store.acceptExercisePlan(plan, workoutID: draftID, startedAt: session.startedAt)
+            try store.acceptExercisePlan(
+                plan,
+                workoutID: draftID,
+                startedAt: session.startedAt,
+                displayedRecommendation: displayedRecommendation
+            )
             if current?.id == plan.exercise.id {
                 refreshPlanContext()
                 seedNextPlannedSet()
@@ -915,9 +934,11 @@ final class SessionViewModel {
     }
 
     private func seedNextPlannedSet() {
-        guard let current, let plan = current.acceptedPlan,
-              plan.sets.indices.contains(current.workingSets.count) else { return }
-        let target = plan.sets[current.workingSets.count]
+        guard let current,
+              let target = SessionActivitySelection.nextPlannedSet(
+                  in: current.acceptedPlan,
+                  completedWorkingSets: current.workingSets.count
+              ) else { return }
         pendingLoad = target.load
         pendingReps = target.reps
         pendingRepsByExercise[current.id] = target.reps

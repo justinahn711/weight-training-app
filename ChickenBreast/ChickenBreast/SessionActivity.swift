@@ -25,8 +25,8 @@ struct SessionActivityAttributes: ActivityAttributes {
         /// line for a lift with no history.
         var targetLine: String
 
-        /// Working sets done today. Not "3 of 4" — the app prescribes a target,
-        /// never a set count, so there is no denominator to show.
+        /// Working sets done today. The target line adds "Set N of M" when an
+        /// accepted plan supplies a meaningful denominator.
         var setsLogged: Int
 
         /// What the lock-screen button would log, carried as values rather than

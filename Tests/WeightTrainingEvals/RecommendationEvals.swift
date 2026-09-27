@@ -133,10 +133,15 @@ final class RecommendationEvals: XCTestCase {
         }
 
         let room = VolumeAllocationEngine.applyingWeeklyVolume(
-            to: base, exercise: exercise, report: report(triceps: 15)
+            to: base, exercise: exercise, report: report(triceps: 14)
         )
         XCTAssertEqual(room.action, .addSet)
         XCTAssertEqual(room.sets.count, 4)
+
+        let nearlyFull = VolumeAllocationEngine.applyingWeeklyVolume(
+            to: base, exercise: exercise, report: report(triceps: 15)
+        )
+        XCTAssertEqual(nearlyFull, base, "The entire four-set workout must fit the secondary budget")
 
         let full = VolumeAllocationEngine.applyingWeeklyVolume(
             to: base, exercise: exercise, report: report(triceps: 16)

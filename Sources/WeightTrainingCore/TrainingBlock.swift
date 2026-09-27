@@ -122,7 +122,9 @@ public enum TrainingBlockEngine {
         adaptiveDeload: Bool,
         resumePlan: ExercisePlan? = nil
     ) -> ExerciseRecommendation {
-        guard !recommendation.sets.isEmpty else { return recommendation }
+        guard !recommendation.sets.isEmpty,
+              recommendation.action != .stop,
+              recommendation.action != .establish else { return recommendation }
         if plan.isDeload {
             if case .deload = phase { return recommendation }
             if adaptiveDeload { return recommendation }
@@ -146,7 +148,9 @@ public enum TrainingBlockEngine {
             guard adaptiveDeload else { return recommendation }
             reason = .programFatigue
         }
-        let source = recommendation.sets
+        // Recovery replaces progression. Reducing sets from an unaccepted
+        // heavier/higher-rep proposal would still raise demand during a deload.
+        let source = recommendation.action == .reduce ? recommendation.sets : plan.sets
         let reducedCount = max(1, Int(floor(Double(source.count) * 2 / 3)))
         let recoveryRPE = RPE(7)!
         let reduced = source.prefix(reducedCount).map {
@@ -173,14 +177,31 @@ public enum TrainingBlockEngine {
         now: Date = Date(),
         freshness: TimeInterval = 21 * 86_400
     ) -> Bool {
+        guard now.timeIntervalSince1970.isFinite, freshness.isFinite, freshness > 0 else {
+            return false
+        }
         let eligible = history.filter {
-            $0.completedAt <= now && now.timeIntervalSince($0.completedAt) <= freshness
+            $0.completedAt.timeIntervalSince1970.isFinite && $0.completedAt <= now
+                && now.timeIntervalSince($0.completedAt) <= freshness
         }
         let byExercise = Dictionary(grouping: eligible, by: \.exerciseID)
         let affected = byExercise.values.filter { exposures in
-            let ordered = exposures.sorted { $0.completedAt < $1.completedAt }
-            let lastTwo = ordered.suffix(2)
-            return lastTwo.count == 2 && lastTwo.allSatisfy(isFatigued)
+            var unique: [UUID: ExerciseExposure] = [:]
+            for exposure in exposures {
+                if let previous = unique[exposure.id], previous != exposure { return false }
+                unique[exposure.id] = exposure
+            }
+            let ordered = unique.values.sorted {
+                if $0.completedAt != $1.completedAt { return $0.completedAt < $1.completedAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            let lastTwo = Array(ordered.suffix(2))
+            guard lastTwo.count == 2,
+                  lastTwo[0].completedAt < lastTwo[1].completedAt,
+                  comparablePlans(lastTwo[0].plan, lastTwo[1].plan),
+                  lastTwo.allSatisfy(isFatigued) else { return false }
+            let setIDs = lastTwo.flatMap(\.workingSets).map { $0.record.id }
+            return Set(setIDs).count == setIDs.count
         }
         return affected.count >= 2
     }
@@ -229,14 +250,44 @@ public enum TrainingBlockEngine {
         }
     }
 
+    private static func comparablePlans(_ first: ExercisePlan?, _ second: ExercisePlan?) -> Bool {
+        guard let first, let second, !first.isDeload, !second.isDeload else { return false }
+        // Plan identity alone is not enough: execution and every demand
+        // variable must match before harder effort can imply deterioration.
+        return first.exercise == second.exercise && first.sets == second.sets
+            && first.restSeconds == second.restSeconds
+            && first.techniqueRevision == second.techniqueRevision
+    }
+
     private static func isFatigued(_ exposure: ExerciseExposure) -> Bool {
+        guard exposure.techniqueChanged != true,
+              let plan = exposure.plan, !plan.isDeload,
+              plan.exercise.id == exposure.exerciseID,
+              !plan.sets.isEmpty, !exposure.workingSets.isEmpty,
+              exposure.workingSets.count <= plan.sets.count,
+              plan.sets.allSatisfy({
+                  $0.load.pounds.isFinite && $0.load.pounds > 0 && $0.reps > 0
+                      && RPE.allowedValues.contains($0.rpe.value)
+              }) else { return false }
+        let working = exposure.workingSets
+        guard zip(working, plan.sets).allSatisfy({ performed, target in
+            performed.record.exerciseID == exposure.exerciseID
+                && performed.record.load == target.load
+                && performed.record.reps > 0 && performed.record.reps <= target.reps
+                && performed.record.performedAt.timeIntervalSince1970.isFinite
+                && performed.record.performedAt <= exposure.completedAt
+        }) else { return false }
+        // An explicit fatigue stop is useful at the same prescription, even
+        // when it prevents finishing the sets or supplying effort ratings.
         if exposure.completion == .stoppedForFatigue { return true }
         guard exposure.completion == .completed,
-              let plan = exposure.plan,
-              exposure.workingSets.count == plan.sets.count else { return false }
-        return zip(exposure.workingSets, plan.sets).allSatisfy { performed, target in
-            performed.effortSource == .reported
-                && performed.record.rpe.map { $0.value > target.rpe.value } == true
+              working.count == plan.sets.count else { return false }
+        return zip(working, plan.sets).allSatisfy { performed, target in
+            performed.record.reps == target.reps
+                && performed.effortSource == .reported
+                && performed.record.rpe.map {
+                    RPE.allowedValues.contains($0.value) && $0.value > target.rpe.value
+                } == true
         }
     }
 

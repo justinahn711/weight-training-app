@@ -13,13 +13,12 @@ and coordinating the whole workout are **planned, not implemented**.
 The review of commit `3d07d6d` found seven gaps: incomplete volume projections,
 pain bypass during legacy initialization, incomparable adaptive-fatigue evidence,
 recovery exit when blocks are disabled, stale RPE provenance/coverage after edits,
-Live Activity targets that do not advance per set, and proposal traces recomputed
-instead of captured from the displayed recommendation. Existing 752 tests passed;
-six isolated regression cases reproduced the volume, pain, fatigue, recovery-exit,
-and RPE defects. The remaining findings came from implementation tracing.
+Live Activity targets that did not advance per set, and proposal traces recomputed
+instead of captured from the displayed recommendation. These defects are fixed
+and covered by regressions. The remaining work is the automatic, low-friction
+workout flow and physical-phone validation described below.
 
-The sections below describe existing components and their intended behavior;
-these review gaps qualify the previous milestone claims. The revised
+The sections below describe existing components and their intended behavior. The revised
 [phase completion criteria](recommendation-engine-plan.md#delivery-and-evaluation)
 are authoritative. Correctness and normal-workout integration come before
 collecting outcomes for threshold tuning. Recommendation results in Settings is
@@ -33,7 +32,7 @@ Implemented in `WeightTrainingCore`:
 - `RecommendationEngine`: a pure function returning one explained recommendation, evidence status, supporting exposure IDs, and a rule version. Repeated reads do not consume evidence.
 - `RecommendationPolicy`: configurable rep range, repeated-workout threshold, RPE slack, maximum load increase, and history freshness.
 
-The policy increases one total rep after two consecutive easy workouts on the same accepted plan. At the rep ceiling it proposes the next achievable load within the configured increase limit and resets reps. It holds for missing effort, interrupted workouts, unexpectedly difficult sets, stale history, changed execution, and coarse equipment increments. It can suggest a local load reduction after two comparable full workouts miss the rep floor. The planned-history path checks pain; the no-plan/legacy bypass remains to be fixed. An accepted deload blocks increases, and deload history cannot earn progression after resuming.
+The policy increases one total rep after two consecutive easy workouts on the same accepted plan. At the rep ceiling it proposes the next achievable load within the configured increase limit and resets reps. It holds for missing effort, interrupted workouts, unexpectedly difficult sets, stale history, changed execution, and coarse equipment increments. It can suggest a local load reduction after two comparable full workouts miss the rep floor. Recorded pain takes precedence for both planned and legacy/no-plan history. An accepted deload blocks increases, and deload history cannot earn progression after resuming.
 
 The policy is currently for straight sets with external loads. Bodyweight, assistance, unmeasured plate-built equipment, and mixed top/back-off prescriptions require explicit policies before support. An unavailable reduction returns a hold with an explanation rather than forcing a large equipment step.
 
@@ -61,7 +60,8 @@ workout or effort provenance.
 RPE targets are displayed but never stored as actual effort until the lifter
 selects an RPE or speaks one. Live Activity logging records weight and reps with
 unknown effort. This prevents a one-tap target log from manufacturing an “easy”
-workout.
+workout. Correcting an RPE establishes explicit provenance, removing it withdraws
+that evidence, and edits to other fields preserve the existing provenance.
 
 The legacy progression engine remains active only for exercises that have never
 adopted an accepted plan. Planned exercises use the new engine for next-workout
@@ -88,9 +88,11 @@ the next achievable weight is unavailable or exceeds the load-increase limit,
 the weekly allocator may suggest one additional set. It requires consistent
 evidence, keeps the exercise below eight planned sets, requires a primary muscle
 to remain below its weekly minimum, and rejects the increase if any primary or
-secondary muscle would exceed its personalized maximum. Completed and accepted
-remaining work both count. The recommendation stays advisory and is persisted
-only if the lifter accepts it.
+secondary muscle would exceed its personalized maximum. The allocator validates
+the complete candidate prescription and retains remaining accepted work for
+sibling exercises in the same workout. Completed and accepted remaining work
+both count. The recommendation stays advisory and is persisted only if the
+lifter accepts it.
 
 Finishing a workout with unstarted exercises or an accepted plan that still has
 sets remaining now asks for a lightweight completion reason. Time and fatigue
@@ -111,15 +113,16 @@ It uses two or three consecutive, comparable tolerated weeks to calculate median
 baseline tonnage, then shows a configurable 5–10% build target and 70–80%
 recovery target. The recovery week proposes roughly one-third fewer working sets
 at RPE 7. An adaptive recovery proposal requires repeated fatigue across at least
-two exercises; time pressure, pain, wearable data, or one struggling movement do
-not become whole-program fatigue. A recovery proposal must be accepted, and the
-next build week offers the last non-deload plan again so the reduced plan does
-not become permanent.
+two exercises at the same load, reps, sets, rest, equipment, and technique;
+time pressure, pain, increased work, duplicate evidence, wearable data, or one
+struggling movement do not become whole-program fatigue. Recovery reduces the
+accepted workload rather than an unaccepted progression proposal. A recovery
+proposal must be accepted, and the next build week—or disabling blocks—offers
+the last non-deload plan again so the reduced plan does not become permanent.
 
-Each set-plan acceptance currently recomputes and stores a proposal, then records
-whether the plan matches it or was edited. This is not yet a reliable snapshot
-of what was shown: a cached displayed proposal may differ by acceptance time.
-**Settings → Recommendation
+Set-plan acceptance carries the displayed proposal into persistence, verifies
+that its decision inputs and outputs are still current, and records that exact
+snapshot plus whether it was accepted or edited. **Settings → Recommendation
 results** derives a rolling 28-day report from current logs: reviewed plans,
 edits, exact-plan completion, RPE coverage, and sets above target effort. It
 stores no mutable success counters, so correcting or deleting a set updates the
@@ -130,10 +133,11 @@ The same screen lists each recent reviewed exercise with its proposed action,
 accept/edit decision, completion outcome, and RPE coverage. This makes a real
 workout auditable without treating plan acceptance as a successful outcome.
 
-The next work is to fix the review findings and integrate automatic prescriptions
-into touch, voice, and lock-screen logging, then validate that flow on the phone.
-The report's snapshot and RPE-correction defects must be resolved before its
-outcomes inform threshold tuning. The redesigned metrics will distinguish
+Live Activity logging now advances through different per-set targets, undo
+restores the prior target, and foreground reconciliation reloads persisted plan
+state before publishing. The next work is to integrate automatic prescriptions
+into the default touch and voice workflow, then validate that flow on the phone.
+The redesigned metrics will distinguish
 automatic activation, explicit review, and overrides without requiring users to
 visit this screen.
 
@@ -176,11 +180,11 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
 
 Physical-device validation remains required for the integrated workout flow.
 
-Validation through the training-block milestone on 2026-09-19:
+Validation after the review-fix milestone on 2026-09-27:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including legacy-history baselines, personalized bands, block persistence, deload entry/exit, feedback derivation, and sync constraints (752 tests) | PASS |
+| Swift domain/store suite, including review regressions, legacy-history baselines, personalized bands, block persistence, deload entry/exit, feedback derivation, and sync constraints (772 tests) | PASS |
 | Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |

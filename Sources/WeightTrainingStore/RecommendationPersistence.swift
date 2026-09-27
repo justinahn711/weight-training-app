@@ -3,7 +3,7 @@ import SwiftData
 import WeightTrainingCore
 
 public enum PlanStoreError: Error, LocalizedError {
-    case workoutFinished, workingSetsAlreadyLogged, invalidPlan, exerciseChanged
+    case workoutFinished, workingSetsAlreadyLogged, invalidPlan, exerciseChanged, recommendationChanged
 
     public var errorDescription: String? {
         switch self {
@@ -11,6 +11,7 @@ public enum PlanStoreError: Error, LocalizedError {
         case .workingSetsAlreadyLogged: return "Working sets are already logged. Set a new plan before your next workout."
         case .invalidPlan: return "Choose achievable weights and reps within this exercise's range."
         case .exerciseChanged: return "This exercise changed. Reopen the plan and review its targets."
+        case .recommendationChanged: return "This recommendation changed. Reopen the plan and review its targets."
         }
     }
 }
@@ -56,7 +57,8 @@ extension TrainingStore {
     /// preserves its revision ID; any accepted edit creates a fresh segment.
     @discardableResult
     public func acceptExercisePlan(
-        _ proposed: ExercisePlan, workoutID: UUID, startedAt: Date, now: Date = Date()
+        _ proposed: ExercisePlan, workoutID: UUID, startedAt: Date,
+        displayedRecommendation: ExerciseRecommendation? = nil, now: Date = Date()
     ) throws -> ExercisePlan {
         guard let exercise = try exercise(id: proposed.exercise.id), exercise == proposed.exercise else {
             throw PlanStoreError.exerciseChanged
@@ -93,11 +95,19 @@ extension TrainingStore {
             if comparable == previous { accepted = previous }
         }
         if intent.recommendationTrace == nil {
-            let recommendation = try recommendation(
-                for: exercise, excluding: workoutID, now: now
-            )
-            if !recommendation.sets.isEmpty {
-                intent.recommendationTrace = RecommendationTrace(recommendation: recommendation)
+            let current = try recommendation(for: exercise, excluding: workoutID, now: now)
+            let reviewed: ExerciseRecommendation
+            if let displayedRecommendation {
+                guard displayedRecommendation.exerciseID == exercise.id,
+                      sameProposal(displayedRecommendation, current) else {
+                    throw PlanStoreError.recommendationChanged
+                }
+                reviewed = displayedRecommendation
+            } else {
+                reviewed = current
+            }
+            if !reviewed.sets.isEmpty {
+                intent.recommendationTrace = RecommendationTrace(recommendation: reviewed)
             }
         }
         intent.recommendationTrace?.recordDecision(for: accepted)
@@ -285,6 +295,9 @@ extension TrainingStore {
                history: try sets(forExercise: exercise.id).filter {
                    workoutID == nil || $0.workoutID != workoutID
                },
+               exposures: try exerciseExposures(
+                   for: exercise.id, excluding: workoutID
+               ),
                now: now
            ) {
             progression = baseline
@@ -295,12 +308,41 @@ extension TrainingStore {
                 policy: exercise.recommendationPolicy, now: now
             )
         }
+        var reservedSetsForExercise = 0
+        if let workoutID,
+           let active = try exerciseSession(workoutID: workoutID, exerciseID: exercise.id),
+           let activePlan = active.plan {
+            let completed = try sets(forExercise: exercise.id).filter {
+                $0.workoutID == workoutID && !$0.isWarmup
+            }.count
+            reservedSetsForExercise = max(0, activePlan.sets.count - completed)
+        }
         let allocated = VolumeAllocationEngine.applyingWeeklyVolume(
             to: progression,
             exercise: exercise,
-            report: try volumeReport(now: now, excludingWorkoutID: workoutID)
+            // Keep remaining plans for sibling exercises in this workout. The
+            // current exercise's own remaining plan is already represented by
+            // the candidate, so tell the allocator how much to replace rather
+            // than excluding the entire workout and losing sibling demand.
+            report: try volumeReport(now: now),
+            reservedSetsForExercise: reservedSetsForExercise
         )
-        guard let plan, let block = try gymConfig().trainingBlock else { return allocated }
+        guard let plan else { return allocated }
+        guard let block = try gymConfig().trainingBlock else {
+            // Disabling an optional block must also disable its accepted
+            // recovery prescription. Route the last deload through the normal
+            // recovery exit once, restoring the latest accumulation plan.
+            guard plan.isDeload else { return allocated }
+            return TrainingBlockEngine.applyingDeload(
+                to: allocated,
+                plan: plan,
+                phase: .accumulation(week: 1),
+                adaptiveDeload: false,
+                resumePlan: try latestNonDeloadExercisePlan(
+                    for: exercise.id, excluding: workoutID
+                )
+            )
+        }
         let history = try allExerciseExposures(excluding: workoutID)
         return TrainingBlockEngine.applyingDeload(
             to: allocated,
@@ -321,5 +363,21 @@ extension TrainingStore {
             first.update(from: intent)
             for duplicate in rows.dropFirst() { modelContext.delete(duplicate) }
         } else { modelContext.insert(StoredExerciseSession(intent)) }
+    }
+
+    /// Ignores only generation time: the snapshot may have been reviewed for
+    /// several seconds before acceptance, but every coaching input and output
+    /// must still describe the proposal that is current in the store.
+    private func sameProposal(
+        _ displayed: ExerciseRecommendation, _ current: ExerciseRecommendation
+    ) -> Bool {
+        displayed.exerciseID == current.exerciseID
+            && displayed.basedOnPlanID == current.basedOnPlanID
+            && displayed.action == current.action
+            && displayed.sets == current.sets
+            && displayed.reason == current.reason
+            && displayed.evidence == current.evidence
+            && displayed.supportingExposureIDs == current.supportingExposureIDs
+            && displayed.ruleVersion == current.ruleVersion
     }
 }

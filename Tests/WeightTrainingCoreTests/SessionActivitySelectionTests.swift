@@ -39,4 +39,33 @@ final class SessionActivitySelectionTests: XCTestCase {
             )
         )
     }
+
+    func testForegroundAndLiveActivityAdvanceThroughPerSetTargets() {
+        let exercise = Exercise(
+            name: "Press", muscles: [.primary(.chest)], equipment: .dumbbell,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        let plan = ExercisePlan(exercise: exercise, sets: [10, 10, 9].map {
+            PlannedWorkingSet(load: 50, reps: $0, rpe: .eight)
+        })
+
+        XCTAssertEqual(SessionActivitySelection.nextPlannedSet(
+            in: plan, completedWorkingSets: 0
+        )?.reps, 10)
+        XCTAssertEqual(SessionActivitySelection.nextPlannedSet(
+            in: plan, completedWorkingSets: 1
+        )?.reps, 10)
+        XCTAssertEqual(SessionActivitySelection.nextPlannedSet(
+            in: plan, completedWorkingSets: 2
+        )?.reps, 9)
+        XCTAssertNil(SessionActivitySelection.nextPlannedSet(
+            in: plan, completedWorkingSets: 3
+        ))
+
+        // Undoing set two returns the completed count to one and therefore
+        // restores the second row instead of repeating or skipping a target.
+        XCTAssertEqual(SessionActivitySelection.nextPlannedSet(
+            in: plan, completedWorkingSets: 1
+        ), plan.sets[1])
+    }
 }

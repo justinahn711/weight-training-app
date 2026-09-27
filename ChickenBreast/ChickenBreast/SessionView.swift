@@ -176,7 +176,9 @@ struct SessionView: View {
         }
         .sheet(item: $planning) { target in
             ExercisePlanEditor(plan: target.plan, recommendation: target.recommendation) { accepted in
-                if model.acceptPlan(accepted) { planning = nil }
+                if model.acceptPlan(accepted, displayedRecommendation: target.recommendation) {
+                    planning = nil
+                }
             }
         }
         .sheet(isPresented: $isChoosingExercise) {

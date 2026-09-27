@@ -131,6 +131,25 @@ final class RecommendationPersistenceTests: XCTestCase {
         XCTAssertTrue(recommendation.sets.isEmpty)
     }
 
+    func testPainWithoutAnAcceptedPlanStillStopsLegacyBootstrap() throws {
+        let exercise = try lift()
+        let workout = UUID()
+        try store.finishExerciseSessions(
+            workoutID: workout,
+            at: epoch,
+            earlyCompletion: .stoppedForPain,
+            focusedExerciseID: exercise.id,
+            workoutStartedAt: epoch.addingTimeInterval(-600)
+        )
+
+        let recommendation = try store.recommendation(
+            for: exercise, now: epoch.addingTimeInterval(60)
+        )
+
+        XCTAssertEqual(recommendation.action, .stop)
+        XCTAssertEqual(recommendation.reason, .pain)
+    }
+
     func testTwoAcceptedEasyWorkoutsEarnOneRep() throws {
         let exercise = try lift()
         let firstID = UUID()
@@ -242,6 +261,56 @@ final class RecommendationPersistenceTests: XCTestCase {
         XCTAssertEqual(recommendation.reason, .weeklyVolumeBelowBudget(muscles: [.chest]))
     }
 
+    func testWeeklyVolumeKeepsSiblingPlansInTheSameWorkout() throws {
+        let press = Exercise(
+            name: "Volume Press", muscles: [.primary(.chest), .secondary(.triceps)],
+            equipment: .dumbbell,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        let pushdown = Exercise(
+            name: "Pushdown", muscles: [.primary(.triceps)], equipment: .cable,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        try store.upsert(press)
+        try store.upsert(pushdown)
+
+        let ceiling = ceilingPlan(press)
+        for day in [0, 2] {
+            let start = epoch.addingTimeInterval(Double(day) * 86_400)
+            let workout = UUID()
+            let accepted = try store.acceptExercisePlan(
+                ceiling, workoutID: workout, startedAt: start, now: start
+            )
+            _ = try complete(plan: accepted, workoutID: workout, start: start)
+        }
+
+        var config = try store.gymConfig()
+        config.volumeBudgets = config.volumeBudgets.map {
+            $0.muscle == .triceps
+                ? MuscleSetBudget(muscle: .triceps, minimum: 0, maximum: 7)
+                : $0
+        }
+        try store.saveGymConfig(config)
+
+        let currentWorkout = UUID()
+        let currentStart = epoch.addingTimeInterval(2 * 86_400 + 2_000)
+        _ = try store.acceptExercisePlan(
+            ExercisePlan(
+                exercise: pushdown,
+                sets: Array(repeating: PlannedWorkingSet(load: 50, reps: 10), count: 3)
+            ),
+            workoutID: currentWorkout,
+            startedAt: currentStart,
+            now: currentStart
+        )
+
+        let recommendation = try store.recommendation(
+            for: press, excluding: currentWorkout, now: currentStart
+        )
+        XCTAssertEqual(recommendation.action, .hold)
+        XCTAssertEqual(recommendation.sets.count, 3)
+    }
+
     func testScheduledRecoveryWeekProducesAnAcceptableDeloadPlan() throws {
         let exercise = try lift()
         let workout = UUID()
@@ -277,6 +346,42 @@ final class RecommendationPersistenceTests: XCTestCase {
         XCTAssertEqual(resumed.action, .hold)
         XCTAssertEqual(resumed.reason, .resumeAfterDeload)
         XCTAssertEqual(resumed.sets, accepted.sets)
+    }
+
+    func testDisablingTrainingBlocksResumesTheLastAccumulationPlan() throws {
+        let exercise = try lift()
+        let firstWorkout = UUID()
+        let accumulation = try store.acceptExercisePlan(
+            plan(exercise), workoutID: firstWorkout, startedAt: epoch, now: epoch
+        )
+        _ = try complete(plan: accumulation, workoutID: firstWorkout, start: epoch)
+
+        var config = try store.gymConfig()
+        let recoveryDate = epoch.addingTimeInterval(2_000)
+        config.trainingBlock = TrainingBlockConfig(
+            startedAt: recoveryDate.addingTimeInterval(-3 * 7 * 86_400),
+            accumulationWeeks: 3
+        )
+        try store.saveGymConfig(config)
+        let offered = try store.recommendation(for: exercise, now: recoveryDate)
+        XCTAssertEqual(offered.action, .deload)
+
+        let recoveryPlan = try store.acceptExercisePlan(
+            ExercisePlan(exercise: exercise, sets: offered.sets, isDeload: true),
+            workoutID: UUID(), startedAt: recoveryDate,
+            displayedRecommendation: offered, now: recoveryDate
+        )
+        XCTAssertTrue(recoveryPlan.isDeload)
+
+        config.trainingBlock = nil
+        try store.saveGymConfig(config)
+        let resumed = try store.recommendation(
+            for: exercise, now: recoveryDate.addingTimeInterval(60)
+        )
+
+        XCTAssertEqual(resumed.action, .hold)
+        XCTAssertEqual(resumed.reason, .resumeAfterDeload)
+        XCTAssertEqual(resumed.sets, accumulation.sets)
     }
 
     func testVolumeReportProjectsOnlyRemainingAcceptedWork() throws {
@@ -408,6 +513,97 @@ final class RecommendationPersistenceTests: XCTestCase {
         XCTAssertTrue(try store.deleteSet(id: corrected.id))
         XCTAssertEqual(try store.recommendation(for: exercise, now: secondStart.addingTimeInterval(2_000)).reason,
                        .incompleteExposure)
+    }
+
+    func testRemovingCorrectedRPEDropsReportedEffortCoverage() throws {
+        let exercise = try lift()
+        let firstWorkout = UUID()
+        let first = try store.acceptExercisePlan(
+            plan(exercise), workoutID: firstWorkout, startedAt: epoch, now: epoch
+        )
+        _ = try complete(plan: first, workoutID: firstWorkout, start: epoch)
+
+        let secondStart = epoch.addingTimeInterval(2 * 86_400)
+        let recommendation = try store.recommendation(for: exercise, now: secondStart)
+        let secondWorkout = UUID()
+        let second = try store.acceptExercisePlan(
+            ExercisePlan(exercise: exercise, sets: recommendation.sets),
+            workoutID: secondWorkout, startedAt: secondStart,
+            displayedRecommendation: recommendation, now: secondStart
+        )
+        let records = try complete(plan: second, workoutID: secondWorkout, start: secondStart)
+        XCTAssertEqual(
+            try store.recommendationFeedbackReport(now: secondStart.addingTimeInterval(2_000)).effortCoverage,
+            1
+        )
+
+        var corrected = records[0]
+        corrected.rpe = nil
+        XCTAssertTrue(try store.updateSet(corrected))
+
+        let stored = try XCTUnwrap(try store.allSets().first { $0.id == corrected.id })
+        XCTAssertNil(stored.rpe)
+        XCTAssertEqual(stored.effortWasReported, false)
+        let report = try store.recommendationFeedbackReport(
+            now: secondStart.addingTimeInterval(2_000)
+        )
+        XCTAssertEqual(report.reportedEffortSets, 2)
+        XCTAssertEqual(report.acceptedWorkingSets, 3)
+        XCTAssertEqual(report.effortCoverage ?? -1, 2.0 / 3.0, accuracy: 0.000_001)
+    }
+
+    func testAcceptanceStoresTheDisplayedRecommendationSnapshot() throws {
+        let exercise = try lift()
+        let firstWorkout = UUID()
+        let first = try store.acceptExercisePlan(
+            plan(exercise), workoutID: firstWorkout, startedAt: epoch, now: epoch
+        )
+        _ = try complete(plan: first, workoutID: firstWorkout, start: epoch)
+
+        let shownAt = epoch.addingTimeInterval(2 * 86_400)
+        let displayed = try store.recommendation(for: exercise, now: shownAt)
+        let workout = UUID()
+        _ = try store.acceptExercisePlan(
+            ExercisePlan(exercise: exercise, sets: displayed.sets),
+            workoutID: workout, startedAt: shownAt,
+            displayedRecommendation: displayed, now: shownAt.addingTimeInterval(60)
+        )
+
+        let saved = try XCTUnwrap(
+            store.exerciseSession(workoutID: workout, exerciseID: exercise.id)?.recommendationTrace
+        )
+        XCTAssertEqual(saved.generatedAt, displayed.generatedAt)
+        XCTAssertEqual(saved.action, displayed.action)
+        XCTAssertEqual(saved.proposedSets, displayed.sets)
+        XCTAssertEqual(saved.ruleVersion, displayed.ruleVersion)
+    }
+
+    func testAcceptanceRejectsADisplayedRecommendationThatIsNoLongerCurrent() throws {
+        let exercise = try lift()
+        let firstWorkout = UUID()
+        let first = try store.acceptExercisePlan(
+            plan(exercise), workoutID: firstWorkout, startedAt: epoch, now: epoch
+        )
+        _ = try complete(plan: first, workoutID: firstWorkout, start: epoch)
+
+        let shownAt = epoch.addingTimeInterval(2 * 86_400)
+        let displayed = try store.recommendation(for: exercise, now: shownAt)
+        var config = try store.gymConfig()
+        config.trainingBlock = TrainingBlockConfig(
+            startedAt: shownAt.addingTimeInterval(-3 * 7 * 86_400),
+            accumulationWeeks: 3
+        )
+        try store.saveGymConfig(config)
+
+        XCTAssertThrowsError(try store.acceptExercisePlan(
+            ExercisePlan(exercise: exercise, sets: displayed.sets),
+            workoutID: UUID(), startedAt: shownAt,
+            displayedRecommendation: displayed, now: shownAt
+        )) { error in
+            guard case PlanStoreError.recommendationChanged = error else {
+                return XCTFail("expected recommendationChanged, got \(error)")
+            }
+        }
     }
 
     func testDisplayedTargetRPEIsNotStoredAsReportedEffort() throws {

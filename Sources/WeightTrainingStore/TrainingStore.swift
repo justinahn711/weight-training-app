@@ -260,7 +260,7 @@ public final class TrainingStore {
         )
         descriptor.fetchLimit = 1
         guard let stored = try context.fetch(descriptor).first else { return false }
-        stored.update(from: record)
+        stored.update(from: correctedSet(record, replacing: stored))
         try commit()
         return true
     }
@@ -284,10 +284,32 @@ public final class TrainingStore {
         )
         descriptor.fetchLimit = 1
         guard let stored = try context.fetch(descriptor).first else { return false }
-        stored.update(from: record)
+        let corrected = correctedSet(record, replacing: stored)
+        guard preview.correctSet(corrected) else { return false }
+        stored.update(from: corrected)
         try commit()
         session = preview
         return true
+    }
+
+    /// Reconciles the corrected RPE with the provenance used by planned
+    /// progression and feedback. Changing an RPE is an explicit report;
+    /// removing it withdraws that report. Corrections to other fields preserve
+    /// the provenance already on disk, including `nil` on legacy rows.
+    private func correctedSet(_ record: SetRecord, replacing stored: StoredSetLog) -> SetRecord {
+        var corrected = record
+        let storedRPE = stored.toDomain().rpe
+        if corrected.isWarmup {
+            corrected.rpe = nil
+            corrected.effortWasReported = false
+        } else if corrected.rpe != storedRPE {
+            corrected.effortWasReported = corrected.rpe != nil
+        } else if corrected.rpe == nil, corrected.effortWasReported == true {
+            // Repair an impossible legacy combination while the row is being
+            // edited: a missing RPE cannot be reported effort.
+            corrected.effortWasReported = false
+        }
+        return corrected
     }
 
     /// Removes a set. Backs the one-gesture undo in #8, where a mislogged set

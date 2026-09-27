@@ -29,6 +29,9 @@ public enum RecommendationEngine {
         }
 
         if context.painReported { return result(.stop, .pain) }
+        if let pain = latestPainExposure(exerciseID: exercise.id, history: history, now: now) {
+            return result(.stop, .pain, exposures: [pain])
+        }
         guard now.timeIntervalSince1970.isFinite, policy.isValid else {
             return result(.establish, .invalidInput)
         }
@@ -71,9 +74,6 @@ public enum RecommendationEngine {
         let ordered = byID.values.sorted {
             if $0.completedAt != $1.completedAt { return $0.completedAt < $1.completedAt }
             return $0.id.uuidString < $1.id.uuidString
-        }
-        if let latest = ordered.last, latest.completion == .stoppedForPain {
-            return result(.stop, .pain, exposures: [latest])
         }
         if plan.isDeload { return result(.deload, .acceptedDeload, sets: targets) }
         if context.recovery == .poor { return result(.hold, .poorRecovery, sets: targets) }
@@ -168,6 +168,21 @@ public enum RecommendationEngine {
         }
         let increased = targets.map { PlannedWorkingSet(load: next, reps: policy.repRange.bottom, rpe: $0.rpe) }
         return result(.addLoad, .addedLoad, sets: increased, evidence: .consistent, exposures: easy)
+    }
+
+    /// Pain on the latest exposure takes precedence even before a plan exists
+    /// or equipment can be validated. Tied/conflicting copies cannot hide it.
+    static func latestPainExposure(
+        exerciseID: UUID, history: [ExerciseExposure], now: Date
+    ) -> ExerciseExposure? {
+        let eligible = history.filter {
+            $0.exerciseID == exerciseID && $0.completedAt.timeIntervalSince1970.isFinite
+                && $0.completedAt <= now
+        }
+        guard let latestDate = eligible.map(\.completedAt).max() else { return nil }
+        return eligible.filter {
+            $0.completedAt == latestDate && $0.completion == .stoppedForPain
+        }.min { $0.id.uuidString < $1.id.uuidString }
     }
 
     private enum Assessment: Equatable {

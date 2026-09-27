@@ -9,10 +9,22 @@ public enum LegacyPlanBootstrapEngine {
     public static func recommend(
         exercise: Exercise,
         history: [SetRecord],
+        exposures: [ExerciseExposure] = [],
+        context: RecommendationContext = RecommendationContext(),
         now: Date = Date(),
         freshness: TimeInterval = 21 * 86_400,
         calendar: Calendar = .current
     ) -> ExerciseRecommendation? {
+        let pain = RecommendationEngine.latestPainExposure(
+            exerciseID: exercise.id, history: exposures, now: now
+        )
+        if context.painReported || pain != nil {
+            return ExerciseRecommendation(
+                exerciseID: exercise.id, basedOnPlanID: nil, generatedAt: now,
+                action: .stop, sets: [], reason: .pain, evidence: .insufficient,
+                supportingExposureIDs: pain.map { [$0.id] } ?? [], ruleVersion: ruleVersion
+            )
+        }
         guard exercise.supportsPlannedProgression,
               now.timeIntervalSince1970.isFinite,
               freshness.isFinite,

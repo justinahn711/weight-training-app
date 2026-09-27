@@ -49,4 +49,37 @@ final class LegacyPlanBootstrapTests: XCTestCase {
             exercise: exercise, history: [stale, warmup], now: now
         ))
     }
+    func testLegacyBaselinePausesForLatestRecordedPain() throws {
+        let exercise = Exercise(
+            name: "Press", muscles: [.primary(.chest)], equipment: .dumbbell,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        let record = SetRecord(exerciseID: exercise.id, load: 50, reps: 10,
+                               performedAt: now.addingTimeInterval(-86_400))
+        let painful = ExerciseExposure(
+            id: UUID(), exerciseID: exercise.id, plan: nil,
+            sets: [ExposureSet(record: record)], completion: .stoppedForPain,
+            completedAt: record.performedAt
+        )
+        let result = try XCTUnwrap(LegacyPlanBootstrapEngine.recommend(
+            exercise: exercise, history: [record], exposures: [painful], now: now
+        ))
+        XCTAssertEqual(result.action, .stop)
+        XCTAssertEqual(result.reason, .pain)
+        XCTAssertTrue(result.sets.isEmpty)
+        XCTAssertEqual(result.supportingExposureIDs, [painful.id])
+    }
+
+    func testExplicitPainPrecedesBaselineAvailability() throws {
+        let exercise = Exercise(
+            name: "Press", muscles: [.primary(.chest)], equipment: .bodyweight,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        let result = try XCTUnwrap(LegacyPlanBootstrapEngine.recommend(
+            exercise: exercise, history: [], context: RecommendationContext(painReported: true), now: now
+        ))
+        XCTAssertEqual(result.action, .stop)
+        XCTAssertTrue(result.sets.isEmpty)
+    }
+
 }

@@ -161,4 +161,70 @@ final class TrainingBlockTests: XCTestCase {
             history: pressFatigue + timeLimited, now: now
         ))
     }
+    func testAdaptiveFatigueRequiresComparablePrescriptionAndPerformance() {
+        let exercises = [lift(), lift("Row", muscle: .lats)]
+        let history = exercises.flatMap { exercise in
+            [date(14), date(18)].map { exposure(exercise, on: $0, rpe: .nine) }
+        }
+        XCTAssertTrue(TrainingBlockEngine.adaptiveDeloadNeeded(history: history, now: date(21)))
+        let changes: [(inout ExerciseExposure) -> Void] = [
+            { $0.techniqueChanged = true },
+            { $0.plan?.restSeconds = 60 },
+            { $0.plan?.techniqueRevision = "new ROM" },
+            { $0.plan?.isDeload = true },
+            { $0.plan?.sets[0].reps += 1 },
+            { $0.sets[0].record.load = 105 },
+            { $0.sets[0].record.reps += 1 },
+            { $0.sets[0].effortSource = .unknown }
+        ]
+        for change in changes {
+            var changed = history
+            change(&changed[3])
+            XCTAssertFalse(TrainingBlockEngine.adaptiveDeloadNeeded(history: changed, now: date(21)))
+        }
+    }
+
+    func testFatigueStopsStillRequireComparableWorkAndTechnique() {
+        let exercises = [lift(), lift("Row", muscle: .lats)]
+        let history = exercises.flatMap { exercise in
+            [date(14), date(18)].map {
+                exposure(exercise, on: $0, completion: .stoppedForFatigue)
+            }
+        }
+        for altered in 0..<3 {
+            var changed = history
+            if altered == 0 { changed[3].techniqueChanged = true }
+            if altered == 1 { changed[3].sets[0].record.load = 105 }
+            if altered == 2 { changed[3].sets = [] }
+            XCTAssertFalse(TrainingBlockEngine.adaptiveDeloadNeeded(history: changed, now: date(21)))
+        }
+    }
+
+    func testDuplicateFatigueExposureCannotBecomeRepeatedEvidence() {
+        let first = exposure(lift(), on: date(14), rpe: .nine)
+        let second = exposure(lift("Row", muscle: .lats), on: date(14), rpe: .nine)
+        XCTAssertFalse(TrainingBlockEngine.adaptiveDeloadNeeded(
+            history: [first, first, second, second], now: date(21)
+        ))
+    }
+
+    func testRecoveryDiscardsUnacceptedLoadRepAndSetIncreases() {
+        let press = lift()
+        let plan = ExercisePlan(exercise: press, sets: Array(repeating:
+            PlannedWorkingSet(load: 100, reps: 10, rpe: .eight), count: 3))
+        for action in [ExerciseRecommendation.Action.addLoad, .addReps, .addSet] {
+            let proposed = Array(repeating: PlannedWorkingSet(load: 105, reps: 11, rpe: .eight), count: 4)
+            let base = ExerciseRecommendation(
+                exerciseID: press.id, basedOnPlanID: plan.id, generatedAt: date(28),
+                action: action, sets: proposed, reason: .addedLoad,
+                evidence: .consistent, supportingExposureIDs: [], ruleVersion: "test"
+            )
+            let result = TrainingBlockEngine.applyingDeload(
+                to: base, plan: plan, phase: .deload(week: 4), adaptiveDeload: false
+            )
+            XCTAssertEqual(result.sets.count, 2)
+            XCTAssertTrue(result.sets.allSatisfy { $0.load == 100 && $0.reps == 10 && $0.rpe == .seven })
+        }
+    }
+
 }
