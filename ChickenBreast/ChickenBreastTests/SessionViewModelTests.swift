@@ -170,6 +170,19 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.current?.exercise.name, "First")
     }
 
+    func test_anExtraSetAfterTheMatch_disarms() throws {
+        let vm = try autoAdvanceViewModel(lastSets: 1)
+        vm.logSet()
+        XCTAssertNotNil(vm.pendingAdvance)
+        vm.logSet()
+        XCTAssertNil(vm.pendingAdvance, "one more set means still on this lift (#212)")
+        vm.restDidComplete()
+        XCTAssertEqual(vm.current?.exercise.name, "First", "the extra set's rest must not move you on")
+        vm.skipRest()
+        XCTAssertEqual(vm.current?.exercise.name, "First", "nor must skipping it")
+        XCTAssertNil(vm.autoAdvancedFrom)
+    }
+
     func test_undoingTheArmingSet_disarms() throws {
         let vm = try autoAdvanceViewModel(lastSets: 1)
         vm.logSet()
