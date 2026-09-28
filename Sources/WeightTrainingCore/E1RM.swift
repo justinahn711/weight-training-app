@@ -39,3 +39,24 @@ extension Collection where Element == SetRecord {
         compactMap(\.e1RM).max()
     }
 }
+
+extension Load {
+
+    /// An estimated max as the lifter reads it: `216 lb`, `119.6 kg` (#244).
+    ///
+    /// Rounded in the display unit, never in stored pounds. Trends used to
+    /// round to whole pounds and then convert, which in a kilogram gym left
+    /// a decimal that meant nothing — 100 kg × 6 read "120.2 kg" there and
+    /// "120 kg" on the completion screen and in the digest.
+    ///
+    /// - Pounds: whole pounds. A tenth of a pound on an estimate implies a
+    ///   precision it doesn't have.
+    /// - Kilograms: exactly `formatted(in:)`, the path the completion screen
+    ///   and digest already use, so one set shows one max everywhere.
+    public func formattedEstimate(in unit: MassUnit) -> String {
+        switch unit {
+        case .pounds:     return unit.format(pounds: pounds.rounded())
+        case .kilograms:  return formatted(in: unit)
+        }
+    }
+}
