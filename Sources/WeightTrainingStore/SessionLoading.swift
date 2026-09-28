@@ -68,7 +68,7 @@ extension TrainingStore {
             startingAt: split.startedAt, calendar: calendar
         )
 
-        let sessionExercises = try template.slots.compactMap { slot -> SessionExercise? in
+        let roster = template.slots.compactMap { slot -> (Exercise, Slot)? in
             // Fall back through the slot's candidates so a lift the user
             // deleted leaves the slot working rather than empty.
             let dueID = slot.dueCandidate(completionCount: completed)
@@ -77,11 +77,13 @@ extension TrainingStore {
                 return nil
             }
 
-            return try sessionExercise(
-                for: exercise, slot: slot, startedAt: startedAt, calendar: calendar
-            )
+            return (exercise, slot)
         }
-
+        let recommendations = try workoutRecommendations(for: roster.map { $0.0 }, now: startedAt)
+        let sessionExercises = try roster.map { exercise, slot in
+            try sessionExercise(for: exercise, slot: slot, startedAt: startedAt,
+                                calendar: calendar, recommendations: recommendations)
+        }
         return Session(kind: kind, exercises: sessionExercises, startedAt: startedAt)
     }
 
@@ -102,7 +104,8 @@ extension TrainingStore {
         slot: Slot?,
         startedAt: Date,
         calendar: Calendar = .current,
-        workoutID: UUID? = nil
+        workoutID: UUID? = nil,
+        recommendations: [UUID: ExerciseRecommendation]? = nil
     ) throws -> SessionExercise {
         let state = try progressState(forExercise: exercise.id)
         let history = try sets(forExercise: exercise.id)
@@ -114,7 +117,8 @@ extension TrainingStore {
         let earlier = history.filter { !todayIDs.contains($0.id) }
         let accepted = try workoutID.flatMap { try exerciseSession(workoutID: $0, exerciseID: exercise.id)?.plan }
         let advice = exercise.supportsPlannedProgression
-            ? try recommendation(for: exercise, excluding: workoutID)
+            ? try recommendations?[exercise.id]
+                ?? recommendation(for: exercise, excluding: workoutID, now: startedAt)
             : nil
         let prescription: Prescription
         if let target = accepted?.sets.first {
@@ -150,7 +154,7 @@ extension TrainingStore {
     /// per-person choice (#136) rather than always push/pull/legs: an edit
     /// saved before a split existed, or against one day of it, is looked up by
     /// id and preferred over the split's own baseline shape for that day.
-    private func storedTemplatesOrLibrary() throws -> [DayTemplate] {
+    func storedTemplatesOrLibrary() throws -> [DayTemplate] {
         let split = try gymConfig().effectiveTrainingSplit
         let overrides = Dictionary(
             uniqueKeysWithValues: try dayTemplates().map { ($0.id, $0) }

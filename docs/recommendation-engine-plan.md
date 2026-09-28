@@ -1,11 +1,9 @@
 # Progressive overload recommendation engine
 
 Status: revised after the implementation review and product clarification on
-2026-09-27. All five phases have implementation on `feat/recommendation-engine`,
-but none is considered finished against the revised completion criteria below.
-Correctness fixes and automatic workout integration precede outcome collection
-and threshold tuning. This document specifies the intended behavior; it does
-not claim that the revised workflow is already installed.
+2026-09-27. Phases 1–4 are implemented on `feat/recommendation-engine`; phase 5
+instrumentation is implemented and real-workout outcome collection remains.
+Threshold tuning follows phone validation and observed outcomes.
 
 Provisional audience: healthy adult recreational lifters seeking muscle growth with steady strength gains. Offer a goal and equipment choice during first use, reusing any existing setup. Experience, frequency, and exercise priorities are optional refinements; reuse the chosen routine and observed schedule without treating an inferred preference as user-confirmed. Strength and general fitness can use different exercise prescriptions without replacing the decision pipeline.
 
@@ -261,7 +259,7 @@ correctly through every logging surface; recorded pain always pauses guidance.
 
 ### Phase 3 — Automatic workout-wide muscle-volume coordination
 
-**Reporting, adjustable ranges, and review regression gates implemented; workout-wide selection remains.**
+**Implemented.**
 Reuse routine/history with editable default set ranges. Coordinate candidates
 together, counting the full proposed prescription, remaining sibling work,
 secondary muscles, and known upcoming sessions. Enforce one extra set on one
@@ -274,7 +272,7 @@ reads cannot allocate extra sets twice; no volume configuration is required.
 
 ### Phase 4 — Explainable recovery and optional training blocks
 
-**Block/recovery scaffolding, comparability, and recovery exit implemented; recovery UX remains.**
+**Implemented; physical-phone validation remains.**
 Require comparable loads, reps, set structures, equipment, and execution before
 using effort trends to infer deterioration. Separate local resets from broader
 recovery. Keep scheduled blocks opt-in and ensure the base recommendation flow
@@ -310,10 +308,10 @@ the full phone flow passes; observed outcomes support any threshold change.
 
 ### Execution order and review regression gates
 
-The seven review findings and automatic prescription lifecycle have automated
-regressions. Next coordinate the full workout before candidates are activated,
-validate the flow on the phone, and collect outcomes before tuning thresholds.
-Do not mark a phase complete merely because its UI or pure engine exists.
+The seven review findings, automatic prescription lifecycle, full-workout
+allocation, and recovery decision boundary have automated regressions. Next
+validate the integrated flow on the phone and collect outcomes before tuning
+thresholds.
 
 | Review finding | Regression / owning phase | Status |
 |---|---|---|

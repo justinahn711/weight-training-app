@@ -76,7 +76,8 @@ extension TrainingStore {
             guard session.completedAt == nil else { throw PlanStoreError.workoutFinished }
             if let active = session.plan { return active }
         }
-        guard displayedRecommendation.action != .stop, !displayedRecommendation.sets.isEmpty else { return nil }
+        guard displayedRecommendation.action != .stop, displayedRecommendation.action != .deload,
+              !displayedRecommendation.sets.isEmpty else { return nil }
         guard let exercise = try exercise(id: displayedRecommendation.exerciseID),
               exercise.supportsPlannedProgression else { throw PlanStoreError.exerciseChanged }
         let previous = try latestExercisePlan(for: exercise.id, excluding: workoutID)
@@ -325,70 +326,8 @@ extension TrainingStore {
 
     public func recommendation(for exercise: Exercise, excluding workoutID: UUID? = nil,
                                now: Date = Date()) throws -> ExerciseRecommendation {
-        let plan = try latestExercisePlan(for: exercise.id, excluding: workoutID)
-        let progression: ExerciseRecommendation
-        if plan == nil,
-           let baseline = LegacyPlanBootstrapEngine.recommend(
-               exercise: exercise,
-               history: try sets(forExercise: exercise.id).filter {
-                   workoutID == nil || $0.workoutID != workoutID
-               },
-               exposures: try exerciseExposures(
-                   for: exercise.id, excluding: workoutID
-               ),
-               now: now
-           ) {
-            progression = baseline
-        } else {
-            progression = RecommendationEngine.recommend(
-                exercise: exercise, plan: plan,
-                history: try exerciseExposures(for: exercise.id, excluding: workoutID),
-                policy: exercise.recommendationPolicy, now: now
-            )
-        }
-        var reservedSetsForExercise = 0
-        if let workoutID,
-           let active = try exerciseSession(workoutID: workoutID, exerciseID: exercise.id),
-           let activePlan = active.plan {
-            let completed = try sets(forExercise: exercise.id).filter {
-                $0.workoutID == workoutID && !$0.isWarmup
-            }.count
-            reservedSetsForExercise = max(0, activePlan.sets.count - completed)
-        }
-        let allocated = VolumeAllocationEngine.applyingWeeklyVolume(
-            to: progression,
-            exercise: exercise,
-            // Keep remaining plans for sibling exercises in this workout. The
-            // current exercise's own remaining plan is already represented by
-            // the candidate, so tell the allocator how much to replace rather
-            // than excluding the entire workout and losing sibling demand.
-            report: try volumeReport(now: now),
-            reservedSetsForExercise: reservedSetsForExercise
-        )
-        guard let plan else { return allocated }
-        guard let block = try gymConfig().trainingBlock else {
-            // Disabling an optional block must also disable its accepted
-            // recovery prescription. Route the last deload through the normal
-            // recovery exit once, restoring the latest accumulation plan.
-            guard plan.isDeload else { return allocated }
-            return TrainingBlockEngine.applyingDeload(
-                to: allocated,
-                plan: plan,
-                phase: .accumulation(week: 1),
-                adaptiveDeload: false,
-                resumePlan: try latestNonDeloadExercisePlan(
-                    for: exercise.id, excluding: workoutID
-                )
-            )
-        }
-        let history = try allExerciseExposures(excluding: workoutID)
-        return TrainingBlockEngine.applyingDeload(
-            to: allocated,
-            plan: plan,
-            phase: TrainingBlockEngine.phase(for: block, now: now),
-            adaptiveDeload: TrainingBlockEngine.adaptiveDeloadNeeded(history: history, now: now),
-            resumePlan: try latestNonDeloadExercisePlan(for: exercise.id, excluding: workoutID)
-        )
+        let roster = try recommendationRoster(for: exercise, workoutID: workoutID)
+        return try workoutRecommendations(for: roster, workoutID: workoutID, now: now)[exercise.id]!
     }
 
     /// Internal for archive merge and deduplication; callers own the transaction.

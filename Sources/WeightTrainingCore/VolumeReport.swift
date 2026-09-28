@@ -85,7 +85,7 @@ public struct MuscleVolume: Hashable, Sendable, Identifiable {
         return min(1, sets / Double(target.upperBound))
     }
 
-    public var projectedSets: Double { sets + plannedSets }
+    public var projectedSets: Double { totalWorkingSets + plannedSets }
     public var remainingToMinimum: Double {
         max(0, Double(target.lowerBound) - projectedSets)
     }

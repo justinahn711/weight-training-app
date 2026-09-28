@@ -33,6 +33,12 @@ final class SessionViewModel {
     private(set) var session: Session
     private(set) var failure: String?
 
+    /// Recovery changes the whole intent of a workout, so it stays a proposal
+    /// until the lifter explicitly uses or adjusts it. Ordinary progression
+    /// recommendations still activate automatically.
+    private var dismissedRecoveryExercises: Set<UUID> = []
+    private var recoveryFallbackPlans: [UUID: ExercisePlan] = [:]
+
     /// The weight for the next set, seeded from the target and adjusted with
     /// the stepper. Held here rather than in the view so it survives the view
     /// being rebuilt as the day advances.
@@ -81,6 +87,24 @@ final class SessionViewModel {
     }
 
     var current: SessionExercise? { session.current }
+
+    var recoveryProposal: ExerciseRecommendation? {
+        guard let current,
+              current.acceptedPlan == nil,
+              current.workingSets.isEmpty,
+              current.recommendation?.action == .deload,
+              !dismissedRecoveryExercises.contains(current.id)
+        else { return nil }
+        return current.recommendation
+    }
+
+    /// The standing accumulation target shown beneath a recovery proposal and
+    /// restored when it is dismissed. The store already owns which historical
+    /// plan is safe to resume; the view model only presents that answer.
+    var recoveryFallbackPlan: ExercisePlan? {
+        guard let id = current?.id else { return nil }
+        return recoveryFallbackPlans[id]
+    }
 
     /// Position in the day, e.g. "3 of 7".
     var progressLabel: String {
@@ -622,6 +646,14 @@ final class SessionViewModel {
             liveActivity.end()
             return
         }
+        // A recovery proposal requires an explicit choice in the workout.
+        // Do not leave a lock-screen Log action capable of bypassing that
+        // boundary while Use / Adjust / Dismiss is still pending.
+        if recoveryProposal != nil {
+            liveActivity.end()
+            isActivityEnded = true
+            return
+        }
         if liveActivityExerciseID != current.exercise.id {
             liveActivityExerciseID = current.exercise.id
             liveLogActionID = UUID()
@@ -925,6 +957,64 @@ final class SessionViewModel {
         }
     }
 
+    /// Explicitly accepts the unchanged recovery proposal. This deliberately
+    /// bypasses the automatic activation path used by normal recommendations.
+    @discardableResult
+    func useRecoveryProposal() -> Bool {
+        guard let current, let recommendation = recoveryProposal else { return false }
+        let plan = ExercisePlan(
+            exercise: current.exercise,
+            sets: recommendation.sets,
+            restSeconds: Int(current.exercise.restTarget),
+            isDeload: true
+        )
+        do {
+            try store.acceptExercisePlan(
+                plan,
+                workoutID: draftID,
+                startedAt: session.startedAt,
+                displayedRecommendation: recommendation
+            )
+            guard refreshPlanContext() else { return false }
+            seedNextPlannedSet()
+            publishActivity()
+            return true
+        } catch {
+            failure = "Couldn't start the recovery plan: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Declines recovery for this workout and returns the controls to the most
+    /// recent non-recovery prescription. No durable preference is inferred
+    /// from a one-workout decision, so a future proposal can still appear.
+    @discardableResult
+    func dismissRecoveryProposal() -> Bool {
+        guard let current, let recommendation = recoveryProposal else { return false }
+        guard let fallback = recoveryFallbackPlans[current.id] else {
+            failure = "There isn't a previous normal target to restore. Adjust the recovery plan to choose today's work."
+            return false
+        }
+        do {
+            try store.acceptExercisePlan(
+                fallback,
+                workoutID: draftID,
+                startedAt: session.startedAt,
+                displayedRecommendation: recommendation
+            )
+            guard refreshPlanContext() else { return false }
+            // Keep the proposal blocking until the accepted fallback has been
+            // persisted and the current exercise has been rebuilt successfully.
+            dismissedRecoveryExercises.insert(current.id)
+            seedNextPlannedSet()
+            publishActivity()
+            return true
+        } catch {
+            failure = "Couldn't restore the normal target: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     func noteCompletion(_ completion: ExerciseExposure.Completion) {
         guard let current else { return }
         do {
@@ -938,7 +1028,17 @@ final class SessionViewModel {
     /// begun while making Review set plan an optional editor.
     private func prepareCurrentExercise() {
         guard refreshPlanContext() else { return }
-        seedPendingFromCurrent()
+        if recoveryProposal != nil,
+           let target = recoveryFallbackPlan?.sets.first,
+           let current {
+            pendingLoad = target.load
+            pendingReps = target.reps
+            pendingRepsByExercise[current.id] = target.reps
+            pendingRPE = target.rpe
+            pendingRPEWasReported = false
+        } else {
+            seedPendingFromCurrent()
+        }
         _ = activateCurrentRecommendationIfNeeded(seedControls: true)
     }
 
@@ -959,6 +1059,12 @@ final class SessionViewModel {
         guard current.workingSets.isEmpty,
               let recommendation = current.recommendation,
               !recommendation.sets.isEmpty else { return true }
+        // A deload is a recovery proposal, not an ordinary next-target update.
+        // It must remain visible with Use / Adjust / Dismiss choices and may
+        // never silently become the workout's active prescription.
+        if recommendation.action == .deload {
+            return dismissedRecoveryExercises.contains(current.id)
+        }
         do {
             _ = try store.activateExerciseRecommendation(
                 recommendation,
@@ -981,6 +1087,14 @@ final class SessionViewModel {
             let rebuilt = try store.sessionExercise(for: current.exercise, slot: current.slot,
                 startedAt: session.startedAt, workoutID: draftID)
             session.reconfigureCurrent(with: rebuilt)
+            if rebuilt.acceptedPlan == nil, rebuilt.recommendation?.action == .deload {
+                recoveryFallbackPlans[rebuilt.id] = try store.latestNonDeloadExercisePlan(
+                    for: rebuilt.id,
+                    excluding: draftID
+                )
+            } else {
+                recoveryFallbackPlans.removeValue(forKey: rebuilt.id)
+            }
             return true
         } catch {
             failure = "Couldn't load the set plan: \(error.localizedDescription)"

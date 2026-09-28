@@ -96,6 +96,28 @@ public struct ExerciseRecommendation: Hashable, Codable, Sendable {
     public let supportingExposureIDs: [UUID]
     public let ruleVersion: String
 
+    public init(
+        exerciseID: UUID,
+        basedOnPlanID: UUID?,
+        generatedAt: Date,
+        action: Action,
+        sets: [PlannedWorkingSet],
+        reason: Reason,
+        evidence: Evidence,
+        supportingExposureIDs: [UUID],
+        ruleVersion: String
+    ) {
+        self.exerciseID = exerciseID
+        self.basedOnPlanID = basedOnPlanID
+        self.generatedAt = generatedAt
+        self.action = action
+        self.sets = sets
+        self.reason = reason
+        self.evidence = evidence
+        self.supportingExposureIDs = supportingExposureIDs
+        self.ruleVersion = ruleVersion
+    }
+
     public var suggestedSetCount: Int? { sets.isEmpty ? nil : sets.count }
 
     public var summary: String {

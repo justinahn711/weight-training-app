@@ -131,4 +131,97 @@ final class VolumeAllocationEngineTests: XCTestCase {
         ), base)
     }
 
+    func testNineLoggedChestSetsPlusAFullFourSetProposalCannotExceedTwelve() {
+        let base = recommendation()
+        let chest = MuscleVolume(
+            muscle: .chest, sets: 9, target: 6...12, totalWorkingSets: 9
+        )
+
+        XCTAssertEqual(
+            VolumeAllocationEngine.applyingWeeklyVolume(
+                to: base, exercise: exercise, report: report(overrides: [.chest: chest])
+            ),
+            base,
+            "the ceiling applies to all four proposed sets, not only the added set"
+        )
+    }
+
+    func testCoordinationReservesAnUnopenedOverlappingSiblingProposal() {
+        let first = exercise
+        let second = Exercise(
+            name: "Machine chest press", muscles: [.primary(.chest)], equipment: .machineStack,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        let logged = MuscleVolume(muscle: .chest, sets: 6, target: 10...12, totalWorkingSets: 6)
+        let snapshot = report(overrides: [.chest: logged])
+        let firstRecommendation = recommendation(for: first)
+
+        XCTAssertEqual(
+            VolumeAllocationEngine.applyingWeeklyVolume(
+                to: firstRecommendation, exercise: first, report: snapshot
+            ).action,
+            .addSet,
+            "the first proposal is eligible when considered by itself"
+        )
+
+        let coordinated = VolumeAllocationEngine.coordinating([
+            .init(exercise: first, recommendation: firstRecommendation, routineOrder: 0),
+            .init(exercise: second, recommendation: recommendation(for: second), routineOrder: 1),
+        ], report: snapshot)
+
+        XCTAssertEqual(coordinated[first.id]?.action, .hold)
+        XCTAssertEqual(coordinated[second.id]?.action, .hold)
+    }
+
+    func testCoordinationSelectsOnlyOneWinnerByPriorityThenRoutineOrderThenStableID() throws {
+        let lowID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let highID = try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+        let chest = candidateExercise(id: highID, name: "Chest", muscle: .chest)
+        let lats = candidateExercise(id: lowID, name: "Lats", muscle: .lats)
+        let quads = candidateExercise(name: "Quads", muscle: .quads)
+
+        func winner(_ candidates: [VolumeAllocationEngine.Candidate]) -> UUID? {
+            let result = VolumeAllocationEngine.coordinating(candidates, report: report())
+            let winners = result.filter { $0.value.action == .addSet }.map(\.key)
+            XCTAssertEqual(winners.count, 1)
+            return winners.first
+        }
+
+        XCTAssertEqual(winner([
+            .init(exercise: chest, recommendation: recommendation(for: chest), routineOrder: 0),
+            .init(exercise: lats, recommendation: recommendation(for: lats), routineOrder: 2, priority: 1),
+            .init(exercise: quads, recommendation: recommendation(for: quads), routineOrder: 1),
+        ]), lats.id, "explicit priority ranks first")
+
+        XCTAssertEqual(winner([
+            .init(exercise: chest, recommendation: recommendation(for: chest), routineOrder: 2),
+            .init(exercise: lats, recommendation: recommendation(for: lats), routineOrder: 0),
+            .init(exercise: quads, recommendation: recommendation(for: quads), routineOrder: 1),
+        ]), lats.id, "routine order breaks equal priority")
+
+        XCTAssertEqual(winner([
+            .init(exercise: chest, recommendation: recommendation(for: chest), routineOrder: 0),
+            .init(exercise: lats, recommendation: recommendation(for: lats), routineOrder: 0),
+        ]), lats.id, "the stable exercise ID is the final tie breaker")
+    }
+
+    private func candidateExercise(
+        id: UUID = UUID(), name: String, muscle: Muscle
+    ) -> Exercise {
+        Exercise(
+            id: id, name: name, muscles: [.primary(muscle)], equipment: .machineStack,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+    }
+
+    private func recommendation(for candidate: Exercise) -> ExerciseRecommendation {
+        let target = PlannedWorkingSet(load: 50, reps: 12, rpe: .eight)
+        return ExerciseRecommendation(
+            exerciseID: candidate.id, basedOnPlanID: UUID(), generatedAt: now,
+            action: .hold, sets: Array(repeating: target, count: 3),
+            reason: .loadStepTooLarge, evidence: .consistent,
+            supportingExposureIDs: [UUID(), UUID()], ruleVersion: "test"
+        )
+    }
+
 }

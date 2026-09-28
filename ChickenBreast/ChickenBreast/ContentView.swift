@@ -607,8 +607,11 @@ struct ContentView: View {
             let session = plan.starting()
             let draft = WorkoutDraft(session: session)
             try store.saveWorkoutDraft(draft)
+            // Rebuild from the saved final roster so coordinated workout
+            // recommendations see preview reordering, removals and swaps.
+            let coordinatedSession = try store.resumeSession(draft)
             workoutDraft = draft
-            activeSession = SessionViewModel(store: store, session: session, draftID: draft.id)
+            activeSession = SessionViewModel(store: store, session: coordinatedSession, draftID: draft.id)
             plannedSession = nil
             previewLibrary = []
             sessionStartFailure = nil

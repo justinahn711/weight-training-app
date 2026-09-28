@@ -8,8 +8,8 @@ The phased plan was revised on 2026-09-27 to make recommendations part of normal
 workout logging with minimal configuration. An eligible recommendation now
 becomes the active prescription when its exercise enters the normal workout.
 The exact displayed proposal is stored before the first working set; Review set
-plan remains an optional editor. Coordinating candidates for every not-yet-opened
-exercise across the entire workout remains planned.
+plan remains an optional editor. Workout preparation now evaluates the final
+roster together before any exercise activates.
 
 The review of commit `3d07d6d` found seven gaps: incomplete volume projections,
 pain bypass during legacy initialization, incomparable adaptive-fatigue evidence,
@@ -140,9 +140,16 @@ workout auditable without treating plan acceptance as a successful outcome.
 Live Activity logging advances through different per-set targets, undo restores
 the prior target, and foreground reconciliation reloads persisted plan state
 before publishing. Touch and voice share the same activate-before-log boundary.
-The next work is workout-wide allocation, physical-phone validation, and outcome
-collection before tuning thresholds. Users never need to visit Recommendation
-results to receive targets.
+Workout-wide allocation reserves every unopened sibling prescription, primary
+and secondary muscle credit, and other represented active/upcoming work before
+selecting at most one deterministic add-set winner. Repeated reads remain pure;
+persisting the winning prescription consumes that allocation period.
+
+Recovery remains an explicit exception to automatic activation. A recovery card
+offers Use, Adjust, and Dismiss; dismissal persists the prior normal prescription.
+The Log action and Live Activity stay unavailable until that decision is stored.
+The next work is physical-phone validation and outcome collection before tuning
+thresholds. Users never need to visit Recommendation results to receive targets.
 
 ## Calling convention
 
@@ -181,19 +188,19 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
-Physical-device validation remains required for the integrated workout flow.
+Physical-device hands-on validation remains required for the integrated workout flow.
 
 Validation after the review-fix milestone on 2026-09-27:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including automatic activation, review regressions, legacy-history baselines, personalized bands, block persistence, deload entry/exit, feedback derivation, and sync constraints (779 tests) | PASS |
+| Swift domain/store suite, including automatic activation, workout-wide allocation, review regressions, conservative legacy baselines, personalized bands, explicit recovery decisions, deload entry/exit, feedback derivation, and sync constraints (786 tests) | PASS |
 | Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | App and widget build for iOS Simulator | PASS |
 | Focused iPhone UI through the early-completion milestone | PASS |
 | Signed iPhone build | PASS |
-| Install of the feedback and per-exercise results milestones over existing phone data | PASS |
+| Install of the workout-wide allocation and recovery-choice milestone over existing phone data | PASS |
 | Read-only replay against the phone's 101-set history | PASS — T-Bar Row now receives an 80 lb × 12, 12 baseline; Incline DB Press holds for missing RPE |
 | Physical-device hands-on volume and recommendation review | PENDING |
 

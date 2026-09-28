@@ -551,6 +551,10 @@ struct SessionView: View {
             // below, which are read every set and are not controls at all.
             Divider()
 
+            if let proposal = model.recoveryProposal {
+                recoveryProposal(proposal)
+            }
+
             if isCompact {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 20) {
@@ -574,7 +578,7 @@ struct SessionView: View {
 
     private func targetSummary(_ exercise: SessionExercise) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(exercise.acceptedPlan == nil ? "Target" : "Set plan")
+            Text(targetHeading(exercise))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
@@ -606,6 +610,12 @@ struct SessionView: View {
     }
 
     private func planTargetLine(_ exercise: SessionExercise) -> String {
+        if exercise.acceptedPlan == nil,
+           exercise.recommendation?.action == .deload,
+           let plan = model.recoveryFallbackPlan,
+           let target = plan.sets.first {
+            return "\(target.load.formatted(in: gym.unit)) × \(target.reps) @ \(target.rpe)"
+        }
         guard let plan = exercise.acceptedPlan, !plan.sets.isEmpty else {
             return exercise.prescription.displayLine(in: gym.unit)
         }
@@ -619,13 +629,92 @@ struct SessionView: View {
             if exercise.workingSets.count >= plan.sets.count {
                 return "Planned work complete. Extra sets still count as training, but do not earn this progression."
             }
+            if !plan.isDeload, exercise.recommendation?.action == .deload {
+                return "Recovery dismissed — follow your normal plan today."
+            }
             // Automatic activation must not make the engine's explanation
             // disappear. The reason belongs beside the target in the normal
             // workout; the sheet is only for details and edits.
             return exercise.recommendation?.summary
                 ?? "RPE is optional to log; every planned set needs a reported RPE to earn progression."
         }
+        if exercise.recommendation?.action == .deload {
+            return model.recoveryFallbackPlan == nil
+                ? "Adjust the controls below to keep training normally."
+                : "Your regular target stays available unless you choose recovery."
+        }
         return exercise.recommendation?.summary
+    }
+
+    private func targetHeading(_ exercise: SessionExercise) -> String {
+        if exercise.acceptedPlan?.isDeload == true { return "Recovery plan" }
+        if exercise.acceptedPlan != nil { return "Set plan" }
+        if exercise.recommendation?.action == .deload { return "Normal target" }
+        return "Target"
+    }
+
+    private func recoveryProposal(_ proposal: ExerciseRecommendation) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Recovery proposed", systemImage: "arrow.down.heart")
+                .font(.headline)
+                .foregroundStyle(.orange)
+
+            Text(proposal.summary)
+                .font(.subheadline)
+
+            if let first = proposal.sets.first {
+                let reps = proposal.sets.map(\.reps)
+                let repText = Set(reps).count == 1
+                    ? "\(first.reps) reps"
+                    : reps.map(String.init).joined(separator: "/") + " reps"
+                Text("\(proposal.sets.count) sets · \(first.load.formatted(in: gym.unit)) · \(repText) · target \(first.rpe)")
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+            }
+
+            Text("Use the lighter plan, adjust it first, or dismiss it to keep your normal target.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { recoveryActions(proposal) }
+                VStack(spacing: 8) { recoveryActions(proposal) }
+            }
+        }
+        .padding(14)
+        .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("session.recovery.proposal")
+    }
+
+    @ViewBuilder
+    private func recoveryActions(_ proposal: ExerciseRecommendation) -> some View {
+        Button("Use") { model.useRecoveryProposal() }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            .frame(minHeight: 44)
+            .accessibilityLabel("Use recovery plan")
+            .accessibilityIdentifier("session.recovery.use")
+
+        Button("Adjust") {
+            if let plan = model.planProposal() {
+                planning = PlanningTarget(
+                    plan: plan,
+                    recommendation: proposal,
+                    isEditing: false
+                )
+            }
+        }
+        .buttonStyle(.bordered)
+        .frame(minHeight: 44)
+        .accessibilityLabel("Adjust recovery plan")
+        .accessibilityIdentifier("session.recovery.adjust")
+
+        Button("Dismiss") { model.dismissRecoveryProposal() }
+            .buttonStyle(.borderless)
+            .frame(minHeight: 44)
+            .accessibilityLabel("Dismiss recovery plan and keep normal target")
+            .accessibilityIdentifier("session.recovery.dismiss")
     }
 
     private func lastTimeSummary(_ exercise: SessionExercise) -> some View {
@@ -814,12 +903,13 @@ struct SessionView: View {
             Button {
                 model.logSet()
             } label: {
-                Text("Log Set")
+                Text(model.recoveryProposal == nil ? "Log Set" : "Choose a recovery option")
                     .font(.title3.bold())
                     .frame(maxWidth: .infinity)
                     .frame(height: isCompact ? 50 : 56)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(model.recoveryProposal != nil)
             .accessibilityIdentifier("session.log-set")
 
             HStack {

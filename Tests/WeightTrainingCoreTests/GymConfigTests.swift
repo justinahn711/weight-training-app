@@ -195,6 +195,14 @@ final class GymConfigTests: XCTestCase {
         XCTAssertEqual(decoded.volumeBudgets, MuscleSetBudget.defaults)
     }
 
+    func testDefaultGymConfigIsImmediatelyReadyForVolumeAllocation() {
+        let gym = GymConfig()
+
+        XCTAssertEqual(gym.volumeBudgets, MuscleSetBudget.defaults)
+        XCTAssertEqual(gym.volumeBudgets.count, Muscle.allCases.count)
+        XCTAssertTrue(Muscle.allCases.allSatisfy { gym.volumeTarget(for: $0) == $0.weeklySetTarget })
+    }
+
     func testLegacyConfigDefaultsToThreeTrainingDays() throws {
         let json = """
         {"unit":"pounds","availablePlates":[45,25,10,5,2.5],

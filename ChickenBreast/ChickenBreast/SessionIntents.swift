@@ -80,6 +80,21 @@ struct LogTargetSetIntent: LiveActivityIntent {
             performedAt: Date()
         )
         guard let draft = try store.workoutDraft(), draft.id == workoutUUID else { return .result() }
+        if let exercise = try store.exercise(id: id) {
+            let refreshed = try store.sessionExercise(
+                for: exercise,
+                slot: nil,
+                startedAt: draft.startedAt,
+                workoutID: workoutUUID
+            )
+            // Recovery targets are proposals until the lifter chooses Use,
+            // Adjust, or Dismiss in the workout. A stale Live Activity from a
+            // prior process must not log one without an active prescription.
+            if refreshed.acceptedPlan == nil,
+               refreshed.recommendation?.action == .deload {
+                return .result()
+            }
+        }
         let saved = try store.logWorkoutSet(
             record, workoutID: workoutUUID, startedAt: draft.startedAt, effortReported: false
         )

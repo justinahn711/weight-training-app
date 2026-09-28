@@ -32,6 +32,8 @@ extension TrainingStore {
             ?? DayTemplateLibrary.template(for: draft.kind)
         let exercisesByID = Dictionary(uniqueKeysWithValues: try exercises().map { ($0.id, $0) })
 
+        let recommendations = try workoutRecommendations(
+            for: draft.exerciseIDs.compactMap { exercisesByID[$0] }, workoutID: draft.id)
         let rebuilt = try draft.exerciseIDs.enumerated().compactMap { index, id -> SessionExercise? in
             guard let exercise = exercisesByID[id] else { return nil }
             // New drafts preserve the slot attached to each exact roster row.
@@ -39,7 +41,7 @@ extension TrainingStore {
             let slot = draft.slots.indices.contains(index)
                 ? draft.slots[index]
                 : (template.slots.indices.contains(index) ? template.slots[index] : nil)
-            return try sessionExercise(for: exercise, slot: slot, startedAt: draft.startedAt, workoutID: draft.id)
+            return try sessionExercise(for: exercise, slot: slot, startedAt: draft.startedAt, workoutID: draft.id, recommendations: recommendations)
         }
 
         var session = Session(kind: draft.kind, exercises: rebuilt, startedAt: draft.startedAt)
