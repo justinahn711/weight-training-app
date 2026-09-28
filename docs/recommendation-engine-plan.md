@@ -287,7 +287,7 @@ not earn progression; resumption establishes fresh evidence.
 
 ### Phase 5 — Outcome evaluation, phone validation, and optimization
 
-**Instrumentation, evidence integrity, and automatic-origin tracking implemented; real outcomes remain.**
+**Instrumentation, evidence integrity, automatic-origin tracking, and request-scoped history indexing implemented; real outcomes remain.**
 Recommendation results is primarily for development/evaluation, not a required
 user workflow. Preserve the exact displayed proposal instead of recomputing it
 at acceptance. Track displayed prescriptions, automatic activation, explicit
@@ -299,12 +299,18 @@ exists. Activation, acceptance, and completion are distinct metrics.
 Validate the normal phone flow, including lock-screen logging, corrections,
 relaunches, and recovery exit. Replay multiweek scenarios and inspect per-exercise
 holds/overrides before tuning the two-workout gate, load cap, freshness window,
-or volume ranges. Measure history-fetch and calculation costs; share summaries
-without changing decisions or allowing stale advice.
+or volume ranges. History fetches now build one value snapshot per request,
+indexed by exercise and workout. Exact-equivalence tests compare the optimized
+batch against the prior implementation across a representative two-year history,
+while correction and deletion tests ensure the next request sees current rows.
+The snapshot is never retained across requests, so optimization cannot serve
+stale advice.
 
 **Complete when:** displayed proposals match evaluation records; editing RPE
 updates coverage correctly; automatic targets require no evaluation-screen use;
 the full phone flow passes; observed outcomes support any threshold change.
+The first three conditions and the performance-equivalence gate are automated;
+phone validation and observed outcome collection remain.
 
 ### Execution order and review regression gates
 

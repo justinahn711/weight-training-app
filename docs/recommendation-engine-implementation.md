@@ -16,8 +16,8 @@ pain bypass during legacy initialization, incomparable adaptive-fatigue evidence
 recovery exit when blocks are disabled, stale RPE provenance/coverage after edits,
 Live Activity targets that did not advance per set, and proposal traces recomputed
 instead of captured from the displayed recommendation. These defects are fixed
-and covered by regressions. The remaining work is the automatic, low-friction
-workout flow and physical-phone validation described below.
+and covered by regressions. The automatic, low-friction workout flow is now
+implemented. Physical-phone validation and real outcome collection remain.
 
 The sections below describe existing components and their intended behavior. The revised
 [phase completion criteria](recommendation-engine-plan.md#delivery-and-evaluation)
@@ -137,6 +137,14 @@ The same screen lists each recent reviewed exercise with its proposed action,
 accept/edit decision, completion outcome, and RPE coverage. This makes a real
 workout auditable without treating plan acceptance as a successful outcome.
 
+Recommendation reads now create one request-scoped history snapshot and index
+sets by exercise and workout. Workout coordination, exposure reports, and
+feedback reuse that snapshot instead of repeatedly scanning or fetching the
+same rows. It is rebuilt on every public request, so corrections and deletions
+refresh unstarted advice while an already active prescription stays frozen.
+Equivalence tests retain the previous batch implementation as a test-only oracle
+and compare every recommendation over canonical and edge-case histories.
+
 Live Activity logging advances through different per-set targets, undo restores
 the prior target, and foreground reconciliation reloads persisted plan state
 before publishing. Touch and voice share the same activate-before-log boundary.
@@ -148,8 +156,8 @@ persisting the winning prescription consumes that allocation period.
 Recovery remains an explicit exception to automatic activation. A recovery card
 offers Use, Adjust, and Dismiss; dismissal persists the prior normal prescription.
 The Log action and Live Activity stay unavailable until that decision is stored.
-The next work is physical-phone validation and outcome collection before tuning
-thresholds. Users never need to visit Recommendation results to receive targets.
+The remaining work is physical-phone validation and outcome collection before
+tuning thresholds. Users never need to visit Recommendation results to receive targets.
 
 ## Calling convention
 
@@ -190,13 +198,14 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
 
 Physical-device hands-on validation remains required for the integrated workout flow.
 
-Validation after the review-fix milestone on 2026-09-27:
+Validation after the history-indexing and outcome-integrity milestone on 2026-09-28:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including automatic activation, workout-wide allocation, review regressions, conservative legacy baselines, personalized bands, explicit recovery decisions, deload entry/exit, feedback derivation, and sync constraints (786 tests) | PASS |
+| Swift domain/store suite, including automatic activation, workout-wide allocation, review regressions, conservative legacy baselines, personalized bands, explicit recovery decisions, deload entry/exit, feedback derivation, history equivalence, correction/relaunch integrity, and sync constraints (791 tests) | PASS |
 | Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
 | Foundation-only core check | PASS |
+| Two-year synthetic history equivalence (312 workouts, 1,872 exercise sessions, 7,386 sets) | PASS — identical decisions; shared exposure read about 6× faster in the measured local run |
 | App and widget build for iOS Simulator | PASS |
 | Focused iPhone UI through the early-completion milestone | PASS |
 | Signed iPhone build | PASS |

@@ -1,29 +1,37 @@
+// Frozen pre-indexing implementation: independent decision-equivalence oracle.
+// Keep this read-only reference separate from production snapshot helpers.
+@testable import WeightTrainingStore
 import Foundation
 import WeightTrainingCore
 
 extension TrainingStore {
     /// Builds one shared evidence snapshot and coordinates the entire roster
     /// before any exercise is activated. Reads never persist an allocation.
-    public func workoutRecommendations(
+    func referenceWorkoutRecommendations(
         for roster: [Exercise], workoutID: UUID? = nil, now: Date = Date(),
         priorities: [UUID: Int] = [:]
     ) throws -> [UUID: ExerciseRecommendation] {
-        try workoutRecommendations(
-            for: roster, workoutID: workoutID, now: now, priorities: priorities,
-            history: RecommendationHistory(sets: allSets(), sessions: exerciseSessions()),
-            library: exercises(), config: gymConfig())
-    }
-
-    func workoutRecommendations(
-        for roster: [Exercise], workoutID: UUID?, now: Date,
-        priorities: [UUID: Int] = [:], history snapshot: RecommendationHistory,
-        library: [Exercise], config: GymConfig
-    ) throws -> [UUID: ExerciseRecommendation] {
-        let history = snapshot.sets
-        let sessions = snapshot.sessions
-        let setsByExercise = snapshot.setsByExercise
-        let sessionsByExercise = snapshot.sessionsByExercise
-        let exposures = snapshot.exposures(excluding: workoutID)
+        let history = try allSets()
+        let sessions = try exerciseSessions()
+        let library = try exercises()
+        let config = try gymConfig()
+        let setsByExercise = Dictionary(grouping: history, by: \.exerciseID)
+        let sessionsByExercise = Dictionary(grouping: sessions, by: \.exerciseID)
+        let exposures = sessions.filter { $0.workoutID != workoutID }.map { intent in
+            let records = (setsByExercise[intent.exerciseID] ?? []).filter { $0.workoutID == intent.workoutID }
+                .sorted {
+                    if $0.performedAt != $1.performedAt { return $0.performedAt < $1.performedAt }
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+            return ExerciseExposure(
+                id: intent.workoutID, exerciseID: intent.exerciseID, plan: intent.plan,
+                sets: records.map {
+                    ExposureSet(record: $0, effortSource:
+                        $0.effortWasReported == true && $0.acceptedPlanID == intent.plan?.id ? .reported : .unknown)
+                },
+                completion: intent.completedAt == nil ? .unknown : intent.completion,
+                completedAt: intent.completedAt ?? max(intent.updatedAt, records.map(\.performedAt).max() ?? intent.updatedAt))
+        }
         let exposuresByExercise = Dictionary(grouping: exposures, by: \.exerciseID)
         let adaptiveDeload = config.trainingBlock != nil
             && TrainingBlockEngine.adaptiveDeloadNeeded(history: exposures, now: now)
@@ -81,8 +89,9 @@ extension TrainingStore {
         var planned = sessions.compactMap { session -> PlannedExerciseWork? in
             guard session.completedAt == nil, session.startedAt >= from,
                   session.startedAt <= upcomingThrough, let plan = session.plan else { return nil }
-            let completed = snapshot.records(exerciseID: session.exerciseID, workoutID: session.workoutID)
-                .filter { !$0.isWarmup }.count
+            let completed = (setsByExercise[session.exerciseID] ?? []).filter {
+                $0.workoutID == session.workoutID && !$0.isWarmup
+            }.count
             return PlannedExerciseWork(exerciseID: session.exerciseID,
                                        remainingSets: max(0, plan.sets.count - completed))
         }
@@ -93,7 +102,7 @@ extension TrainingStore {
             for id in draft.exerciseIDs {
                 if sessions.contains(where: { $0.workoutID == draft.id && $0.exerciseID == id && $0.plan != nil }) { continue }
                 if let plan = sessionsByExercise[id]?.last(where: { $0.plan != nil })?.plan {
-                    let done = snapshot.records(exerciseID: id, workoutID: draft.id).filter { !$0.isWarmup }.count
+                    let done = (setsByExercise[id] ?? []).filter { $0.workoutID == draft.id && !$0.isWarmup }.count
                     planned.append(.init(exerciseID: id, remainingSets: max(0, plan.sets.count - done)))
                 } else { workloadIsKnown = false }
             }
@@ -105,33 +114,4 @@ extension TrainingStore {
         return coordinated.merging(active, uniquingKeysWith: { _, frozen in frozen })
     }
 
-    /// A draft owns its precise order and substitutions. Before a draft exists,
-    /// use the selected routine's due candidates; ad-hoc lifts stand alone.
-    func recommendationRoster(
-        for exercise: Exercise, workoutID: UUID?, library: [Exercise],
-        history: [SetRecord], config: GymConfig
-    ) throws -> [Exercise] {
-        let byID = Dictionary(uniqueKeysWithValues: library.map { ($0.id, $0) })
-        if let workoutID, let draft = try workoutDraft(), draft.id == workoutID {
-            var roster = draft.exerciseIDs.compactMap { byID[$0] }
-            if !roster.contains(where: { $0.id == exercise.id }) { roster.append(exercise) }
-            return roster
-        }
-        let templates = try storedTemplatesOrLibrary()
-        if workoutID == nil, let template = templates.first(where: {
-            $0.slots.contains { $0.candidateExerciseIDs.contains(exercise.id) }
-        }) {
-            let split = config.effectiveTrainingSplit
-            let completed = CycleEngine.completedSessions(of: template.kind, history: history,
-                                                           templates: templates, startingAt: split.startedAt)
-            var roster = template.slots.compactMap { slot -> Exercise? in
-                if slot.candidateExerciseIDs.contains(exercise.id) { return exercise }
-                let candidates = [slot.dueCandidate(completionCount: completed)].compactMap { $0 } + slot.candidateExerciseIDs
-                return candidates.lazy.compactMap { byID[$0] }.first
-            }
-            if !roster.contains(where: { $0.id == exercise.id }) { roster.append(exercise) }
-            return roster
-        }
-        return [exercise]
-    }
 }

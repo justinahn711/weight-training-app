@@ -158,8 +158,9 @@ final class AccessibilityAuditTests: XCTestCase {
         XCTAssertTrue(chips.firstMatch.isSelected, "tapping RPE reports and selects it")
     }
 
-    /// The recommendation is advisory: the lifter reviews a concrete set plan
-    /// and explicitly accepts it before any set can count toward progression.
+    /// A cold-start lift still needs one explicit starting prescription. Once
+    /// history can produce a recommendation, the app activates it before this
+    /// editor opens and this same route becomes "Edit set plan".
     func testSetPlanCanBeReviewedAndAccepted() throws {
         let app = launch()
         try openPushDay(app)

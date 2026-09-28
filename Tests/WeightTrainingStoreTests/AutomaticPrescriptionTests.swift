@@ -170,4 +170,136 @@ final class AutomaticPrescriptionTests: XCTestCase {
         XCTAssertNil(decoded.automaticallyActivatedAt)
         XCTAssertEqual(decoded.proposedSets, displayed.sets)
     }
+
+    func testAutomaticOutcomeFollowsMissingAddedAndWithdrawnRPEAndSeparatesOverride() throws {
+        let (store, exercise, displayed) = try fixture()
+        let workout = UUID()
+        let active = try XCTUnwrap(store.activateExerciseRecommendation(
+            displayed, workoutID: workout, startedAt: now, now: now))
+        var logged: [SetRecord] = []
+        for (index, target) in active.sets.enumerated() {
+            logged.append(try store.logWorkoutSet(
+                SetRecord(exerciseID: exercise.id, load: target.load, reps: target.reps,
+                          performedAt: now.addingTimeInterval(Double(index + 1) * 60)),
+                workoutID: workout, startedAt: now, effortReported: false).record)
+        }
+        try store.finishExerciseSessions(workoutID: workout, at: now.addingTimeInterval(600))
+        let reportAt = now.addingTimeInterval(2 * 86_400)
+        func outcome() throws -> RecommendationFeedbackEntry {
+            try XCTUnwrap(store.recommendationFeedbackReport(now: reportAt).entries.first {
+                $0.id == "\(workout.uuidString)/\(exercise.id.uuidString)"
+            })
+        }
+        let missing = try outcome()
+        XCTAssertTrue(missing.finished)
+        XCTAssertTrue(missing.completedAsPlanned)
+        XCTAssertEqual(missing.decision, .automaticallyActivated)
+        XCTAssertEqual(missing.workingSets, 3)
+        XCTAssertEqual(missing.effortCoverage, 0)
+        XCTAssertEqual(missing.aboveTargetEffortSets, 0)
+
+        var corrected = logged[2]
+        corrected.rpe = .ten
+        XCTAssertTrue(try store.updateSet(corrected))
+        let reported = try outcome()
+        XCTAssertEqual(reported.reportedEffortSets, 1)
+        XCTAssertEqual(reported.effortCoverage, 1.0 / 3)
+        XCTAssertEqual(reported.aboveTargetEffortSets, 1)
+        XCTAssertTrue(reported.completedAsPlanned)
+
+        corrected.rpe = nil
+        XCTAssertTrue(try store.updateSet(corrected))
+        XCTAssertEqual(try outcome(), missing)
+        XCTAssertEqual(try store.exerciseSession(workoutID: workout, exerciseID: exercise.id)?.plan, active)
+        XCTAssertEqual(try store.exerciseSession(workoutID: workout, exerciseID: exercise.id)?
+            .recommendationTrace?.displayedRecommendation, displayed)
+
+        let overrideWorkout = UUID(), overrideStart = now.addingTimeInterval(86_400)
+        let next = try store.recommendation(for: exercise, excluding: overrideWorkout, now: overrideStart)
+        var override = try XCTUnwrap(store.activateExerciseRecommendation(
+            next, workoutID: overrideWorkout, startedAt: overrideStart, now: overrideStart))
+        override.sets[0].reps -= 1
+        override = try store.acceptExercisePlan(override, workoutID: overrideWorkout,
+                                                startedAt: overrideStart, now: overrideStart)
+        for (index, target) in override.sets.enumerated() {
+            _ = try store.logWorkoutSet(
+                SetRecord(exerciseID: exercise.id, load: target.load, reps: target.reps, rpe: .seven,
+                          performedAt: overrideStart.addingTimeInterval(Double(index + 1) * 60)),
+                workoutID: overrideWorkout, startedAt: overrideStart, effortReported: true)
+        }
+        try store.finishExerciseSessions(workoutID: overrideWorkout, at: overrideStart.addingTimeInterval(600))
+        let report = try store.recommendationFeedbackReport(now: reportAt)
+        XCTAssertEqual(report.automaticActivations, 2)
+        XCTAssertEqual(report.reviewedPlans, 1)
+        XCTAssertEqual(report.editedBeforeUse, 1)
+        XCTAssertEqual(report.acceptedAsSuggested, 0)
+        let edited = try XCTUnwrap(report.entries.first { $0.decision == .edited })
+        XCTAssertTrue(edited.finished)
+        XCTAssertFalse(edited.completedAsPlanned)
+        XCTAssertEqual(edited.workingSets, 0, "an override is not evidence that the suggested targets were followed")
+        XCTAssertNil(edited.effortCoverage)
+        XCTAssertEqual(try outcome(), missing)
+    }
+
+    func testCorrectionAndDiskRelaunchFreezeActiveProposalButRefreshUnstartedProposal() throws {
+        let directory = URL.temporaryDirectory.appending(path: "automatic-correction-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "training.store")
+        let exercises = ["Active press", "Unstarted press"].map {
+            Exercise(name: $0, muscles: [.primary(.chest)], equipment: .dumbbell,
+                     progressionRule: .doubleProgression(range: RepRange(8, 12)))
+        }
+        let currentWorkout = UUID()
+        var frozen: ExerciseRecommendation!
+        var frozenPlan: ExercisePlan!
+        var refreshed: ExerciseRecommendation!
+        do {
+            let store = try TrainingStore(url: url)
+            var latestSets: [SetRecord] = []
+            for exercise in exercises {
+                try store.upsert(exercise)
+                for index in 0..<3 {
+                    try store.log(SetRecord(exerciseID: exercise.id, load: 100, reps: 10,
+                        performedAt: now.addingTimeInterval(-6 * 86_400 + Double(index) * 60)))
+                }
+                for daysAgo in [4, 2] {
+                    let start = now.addingTimeInterval(-Double(daysAgo) * 86_400), workout = UUID()
+                    let proposal = try store.recommendation(for: exercise, excluding: workout, now: start)
+                    let plan = try XCTUnwrap(store.activateExerciseRecommendation(
+                        proposal, workoutID: workout, startedAt: start, now: start))
+                    for (index, target) in plan.sets.enumerated() {
+                        let record = try store.logWorkoutSet(
+                            SetRecord(exerciseID: exercise.id, load: target.load, reps: target.reps, rpe: .seven,
+                                      performedAt: start.addingTimeInterval(Double(index + 1) * 60)),
+                            workoutID: workout, startedAt: start, effortReported: true).record
+                        if daysAgo == 2 && index == plan.sets.count - 1 { latestSets.append(record) }
+                    }
+                    try store.finishExerciseSessions(workoutID: workout, at: start.addingTimeInterval(600))
+                }
+            }
+            let before = try store.workoutRecommendations(for: exercises, workoutID: currentWorkout, now: now)
+            XCTAssertTrue(before.values.allSatisfy { $0.action == .addReps })
+            frozen = try XCTUnwrap(before[exercises[0].id])
+            frozenPlan = try XCTUnwrap(store.activateExerciseRecommendation(
+                frozen, workoutID: currentWorkout, startedAt: now, now: now))
+            for var record in latestSets {
+                record.rpe = .ten
+                XCTAssertTrue(try store.updateSet(record))
+            }
+            let after = try store.workoutRecommendations(for: exercises, workoutID: currentWorkout, now: now)
+            XCTAssertEqual(after[exercises[0].id], frozen)
+            refreshed = try XCTUnwrap(after[exercises[1].id])
+            XCTAssertEqual(refreshed.action, .hold)
+            XCTAssertNotEqual(refreshed, before[exercises[1].id])
+            XCTAssertNil(try store.exerciseSession(workoutID: currentWorkout, exerciseID: exercises[1].id))
+        }
+        let reopened = try TrainingStore(url: url)
+        let afterRelaunch = try reopened.workoutRecommendations(for: exercises, workoutID: currentWorkout, now: now)
+        XCTAssertEqual(afterRelaunch[exercises[0].id], frozen)
+        XCTAssertEqual(afterRelaunch[exercises[1].id], refreshed)
+        XCTAssertEqual(try reopened.exerciseSession(workoutID: currentWorkout, exerciseID: exercises[0].id)?.plan, frozenPlan)
+        XCTAssertEqual(try reopened.activateExerciseRecommendation(
+            frozen, workoutID: currentWorkout, startedAt: now, now: now), frozenPlan)
+    }
 }

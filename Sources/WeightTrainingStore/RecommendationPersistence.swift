@@ -276,9 +276,8 @@ extension TrainingStore {
     }
 
     public func allExerciseExposures(excluding workoutID: UUID? = nil) throws -> [ExerciseExposure] {
-        try exercises().flatMap {
-            try exerciseExposures(for: $0.id, excluding: workoutID)
-        }
+        let history = try RecommendationHistory(sets: allSets(), sessions: exerciseSessions())
+        return history.exposures(for: try exercises(), excluding: workoutID)
     }
 
     /// Optional starting bands derived from the last two or three fully
@@ -316,9 +315,10 @@ extension TrainingStore {
     public func recommendationFeedbackReport(
         now: Date = Date(), days: Int = 28
     ) throws -> RecommendationFeedbackReport {
-        RecommendationFeedbackEngine.report(
-            sessions: try exerciseSessions(),
-            exposures: try allExerciseExposures(),
+        let history = try RecommendationHistory(sets: allSets(), sessions: exerciseSessions())
+        return RecommendationFeedbackEngine.report(
+            sessions: history.sessions,
+            exposures: history.exposures(for: try exercises()),
             now: now,
             days: days
         )
@@ -326,8 +326,13 @@ extension TrainingStore {
 
     public func recommendation(for exercise: Exercise, excluding workoutID: UUID? = nil,
                                now: Date = Date()) throws -> ExerciseRecommendation {
-        let roster = try recommendationRoster(for: exercise, workoutID: workoutID)
-        return try workoutRecommendations(for: roster, workoutID: workoutID, now: now)[exercise.id]!
+        let history = try RecommendationHistory(sets: allSets(), sessions: exerciseSessions())
+        let library = try exercises()
+        let config = try gymConfig()
+        let roster = try recommendationRoster(for: exercise, workoutID: workoutID,
+                                               library: library, history: history.sets, config: config)
+        return try workoutRecommendations(for: roster, workoutID: workoutID, now: now,
+                                          history: history, library: library, config: config)[exercise.id]!
     }
 
     /// Internal for archive merge and deduplication; callers own the transaction.
