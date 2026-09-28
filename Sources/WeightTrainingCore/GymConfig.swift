@@ -164,13 +164,31 @@ public struct GymConfig: Hashable, Codable, Sendable {
     /// The plates and the unit describe the room and are the gym's to change;
     /// what a chest-supported T-bar's lever weighs is a fact about that machine
     /// that somebody went and measured (#20), and no unit change makes it
-    /// untrue. Only a base that is still just the old world's bar — inherited,
-    /// never measured — gets swapped for this gym's.
-    public func applied(to style: LoadingStyle) -> LoadingStyle {
+    /// untrue. Only a base that is still just a bar it inherited — never
+    /// measured — gets swapped for this gym's.
+    ///
+    /// "A bar it inherited" is either the standard bar of the lift's own unit,
+    /// or the bar of the gym being replaced (#242). The second is what lets a
+    /// follower keep following through more than one change: the Settings
+    /// stepper saves on every tap, so 45 → 35 lb arrives as 45 → 40 then
+    /// 40 → 35, and after the first the lift reads 40 — not a standard bar,
+    /// but exactly what the gym said a moment ago. Without `previous` that 40
+    /// looked measured and every barbell was stranded on it. No flag is stored
+    /// for this: a base equal to the bar the gym already had carries no
+    /// information that following the gym would lose, which is the same
+    /// argument the standard-bar case has always made. The one thing it
+    /// cannot tell apart is a lift somebody measured at *exactly* the gym's
+    /// current bar — and the lift list already labels that one "(default)".
+    ///
+    /// - Parameter previous: the gym this one replaces, when the caller knows
+    ///   it. `reconcileGym()` at launch doesn't, and falls back to the
+    ///   standard-bar rule alone.
+    public func applied(to style: LoadingStyle, replacing previous: GymConfig? = nil) -> LoadingStyle {
         guard style.usesGymRack else { return style }
 
         var updated = style
-        if let base = style.baseWeight, base == style.unit.standardBar {
+        if let base = style.baseWeight,
+           base == style.unit.standardBar || base == previous?.barWeight {
             updated.baseWeight = barWeight
         }
         updated.availablePlates = availablePlates
