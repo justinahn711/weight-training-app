@@ -38,12 +38,17 @@ extension TrainingStore {
     ///   silently.
     @discardableResult
     public func saveGymConfig(_ config: GymConfig, at date: Date = Date()) throws -> Int {
+        // Read before overwriting: a lift still on the bar the gym had a
+        // moment ago was following it, not measured (#242). An unreadable
+        // row must not block writing a good one over it, so it counts as
+        // "previous unknown" rather than an error.
+        let previous = try? gymConfig()
         if let existing = try storedGymConfig() {
             existing.update(from: config, at: date)
         } else {
             modelContext.insert(StoredGymConfig(config, updatedAt: date))
         }
-        let changed = try applyGym(config)
+        let changed = try applyGym(config, replacing: previous)
         try saveChanges()
         return changed
     }
@@ -81,8 +86,10 @@ extension TrainingStore {
             .count
     }
 
+    /// - Parameter previous: the gym being replaced, when known — see
+    ///   `GymConfig.applied(to:replacing:)`.
     /// - Returns: the number of stored exercises actually rewritten.
-    private func applyGym(_ config: GymConfig) throws -> Int {
+    private func applyGym(_ config: GymConfig, replacing previous: GymConfig? = nil) throws -> Int {
         var changed = 0
         for stored in try modelContext.fetch(FetchDescriptor<StoredExercise>()) {
             var exercise: Exercise
@@ -96,7 +103,7 @@ extension TrainingStore {
 
             var updated = exercise
             if let loading = exercise.loading {
-                updated.loading = config.applied(to: loading)
+                updated.loading = config.applied(to: loading, replacing: previous)
             }
             updated.increment = config.applied(
                 to: exercise.increment, for: exercise.equipment
