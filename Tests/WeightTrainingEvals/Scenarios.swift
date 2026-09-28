@@ -14,7 +14,8 @@ public enum Scenarios {
     }
 
     public static var all: [EvalScenario] {
-        [consistent, plateau, plateauIgnored, creep, grinding, benchByFeel]
+        [consistent, plateau, plateauIgnored, creep, grinding, benchByFeel,
+         rowWithoutSmallestPlateLB, rowWithoutSmallestPlateKG]
     }
 
     /// Thirty sessions of doing exactly what was asked has to produce real
@@ -120,6 +121,64 @@ public enum Scenarios {
             lifter: .reportsEffort(7),
             expectations: [
                 .gains(atLeast: Load(10)),
+                .alwaysKnowsWhatToDoNext
+            ]
+        )
+    }
+    /// A custom double-progression lift, placed in a gym the way the app does
+    /// it: the gym's rack and unit applied to the loading, the increment
+    /// re-marked only if it was still the equipment's default.
+    static func customLift(
+        _ name: String,
+        equipment: Equipment,
+        rule: ProgressionRule,
+        in gym: GymConfig
+    ) -> Exercise {
+        var lift = Exercise(name: name, muscles: [.primary(.lats)],
+                            equipment: equipment, progressionRule: rule)
+        if let loading = lift.loading { lift.loading = gym.applied(to: loading) }
+        lift.increment = gym.applied(to: lift.increment, for: equipment)
+        return lift
+    }
+
+    /// A rack without 2.5 lb plates still has to move a bar up (#241).
+    ///
+    /// The 5 lb increment asks for 140 after 135, which `[45, 35, 25, 10, 5]`
+    /// cannot build; the screen snaps it back to 135 and the lifter redoes the
+    /// rep ladder at the same weight forever — "Earned it: 135 → 140" every six
+    /// sessions, 0 lb gained in thirty. The smallest step this rack can make is
+    /// 10 lb, and that is the step double progression has to take.
+    public static var rowWithoutSmallestPlateLB: EvalScenario {
+        let gym = GymConfig(unit: .pounds, availablePlates: [45, 35, 25, 10, 5])
+        return EvalScenario(
+            "barbell row, lb rack without 2.5s",
+            exercise: customLift("Barbell Row", equipment: .barbell,
+                                 rule: .doubleProgression(range: RepRange(8, 12)), in: gym),
+            startingLoad: Load(135),
+            sessions: 30,
+            lifter: .consistent(at: 8),
+            expectations: [
+                .gains(atLeast: Load(20)),
+                .neverDeloads,
+                .alwaysKnowsWhatToDoNext
+            ]
+        )
+    }
+
+    /// The same loop in a kilogram gym without 1.25 kg plates: 60 → 62.5 is
+    /// unbuildable, so the smallest real step is 5 kg.
+    public static var rowWithoutSmallestPlateKG: EvalScenario {
+        let gym = GymConfig(unit: .kilograms, availablePlates: [25, 20, 15, 10, 5, 2.5])
+        return EvalScenario(
+            "barbell row, kg rack without 1.25s",
+            exercise: customLift("Barbell Row", equipment: .barbell,
+                                 rule: .doubleProgression(range: RepRange(8, 12)), in: gym),
+            startingLoad: Load(60, .kilograms),
+            sessions: 30,
+            lifter: .consistent(at: 8),
+            expectations: [
+                .gains(atLeast: Load(10, .kilograms)),
+                .neverDeloads,
                 .alwaysKnowsWhatToDoNext
             ]
         )

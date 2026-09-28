@@ -76,6 +76,58 @@ final class GymConfigTests: XCTestCase {
         XCTAssertEqual(updated.baseWeight, Load(62), "but what it weighs is unchanged")
     }
 
+    /// #242. The Settings stepper saves on every tap, so 45 → 35 arrives as
+    /// two gym changes. Recognising a follower only by "still reads the
+    /// standard bar" let the first tap re-rack it and the second tap mistake
+    /// that 40 for a measurement — every barbell stayed on 40, and the plate
+    /// line under a 135 read "45 · 2.5 per side", 5 lb out on the real bar.
+    func testABarFollowsTheGymAcrossEveryStep() {
+        for (unit, steps) in [
+            (MassUnit.pounds, [45.0, 40, 35, 40, 45]),
+            (.kilograms, [20.0, 17.5, 15, 17.5, 20]),
+        ] {
+            var gym = GymConfig.standard(in: unit)
+            var bar = gym.inheritedLoading()
+            for value in steps.dropFirst() {
+                let previous = gym
+                gym.barWeight = Load(value, unit)
+                bar = gym.applied(to: bar, replacing: previous)
+                XCTAssertEqual(
+                    bar.baseWeight, gym.barWeight,
+                    "\(unit): after stepping to \(value) the bar should be the gym's"
+                )
+            }
+        }
+    }
+
+    /// The other half of #242: following the gym's bar across steps must not
+    /// turn into overwriting a lever somebody weighed.
+    func testAMeasuredBaseSurvivesEveryBarStep() {
+        var gym = GymConfig.standard
+        var tbar = LoadingStyle(baseWeight: Load(62), sleeves: 1)
+        for value in [40.0, 35, 40, 45] {
+            let previous = gym
+            gym.barWeight = Load(value)
+            tbar = gym.applied(to: tbar, replacing: previous)
+            XCTAssertEqual(tbar.baseWeight, Load(62))
+        }
+    }
+
+    /// A bar that followed a 40 lb gym bar into a kg switch lands on the new
+    /// gym's bar, rather than staying 40 lb in a room marked in kilograms.
+    func testABarFollowsAChangedGymBarThroughAUnitSwitch() {
+        var gym = GymConfig.standard
+        var bar = gym.inheritedLoading()
+        var previous = gym
+        gym.barWeight = Load(40)
+        bar = gym.applied(to: bar, replacing: previous)
+
+        previous = gym
+        gym = GymConfig.standard(in: .kilograms)
+        bar = gym.applied(to: bar, replacing: previous)
+        XCTAssertEqual(bar.baseWeight?.value(in: .kilograms) ?? 0, 20, accuracy: 0.0001)
+    }
+
     func testApplyingTheSameGymTwiceChangesNothing() {
         let gym = GymConfig.standard(in: .kilograms)
         let once = gym.applied(to: LoadingStyle.olympicBarbell)

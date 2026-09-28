@@ -201,6 +201,27 @@ extension Exercise {
         return max(minimumLoad, increment.snapToNearest(floored))
     }
 
+    /// The load one step above `load`, for a lift that has earned it.
+    ///
+    /// One increment up, echoed as gently as `achievableTarget` echoes a
+    /// lifted weight — an odd dumbbell goes up from where it was, not onto the
+    /// increment's grid. A measured plate-built lift then answers from its
+    /// plates, as `nearestAchievable` does, because the increment is a scalar
+    /// and the rack is a set: without 2.5 lb plates, 135 + 5 is a load nobody
+    /// can make, and the screen would snap it straight back to 135 (#241).
+    /// When the nearest buildable load is not above where the lift already
+    /// is, the step is the next load the plates *can* build.
+    ///
+    /// Never lower than `load`: a rack that can build nothing heavier holds.
+    public func raisedTarget(above load: Load) -> Load {
+        let stepped = achievableTarget(echoing: Load(load.pounds + increment.pounds))
+        guard let loading, loading.isMeasured else { return stepped }
+
+        let built = loading.nearestBuildable(stepped)
+        if built > load { return built }
+        return loading.nextBuildable(after: load) ?? load
+    }
+
     /// The lightest load this exercise can be set to and still be a set.
     ///
     /// Below one increment there is nothing to load, so a proposal that lands
