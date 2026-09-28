@@ -185,8 +185,16 @@ private struct CountdownRing: View {
     let duration: TimeInterval
     let onElapsed: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1 / 30)) { context in
+        // Under Reduce Motion the ring drops a whole second at a time, in step
+        // with the number inside it, rather than sweeping. It still says how
+        // long is left — only the continuous motion goes. Either way the ticks
+        // are counted back from the deadline, so the last one lands on it and
+        // the commit fires on time rather than up to a tick late.
+        TimelineView(CountdownSchedule(deadline: deadline,
+                                       interval: reduceMotion ? 1 : 1 / 30)) { context in
             let remaining = max(0, deadline.timeIntervalSince(context.date))
             ZStack {
                 Circle().stroke(.quaternary, lineWidth: 4)
@@ -201,6 +209,24 @@ private struct CountdownRing: View {
             .onChange(of: remaining <= 0) { _, elapsed in
                 if elapsed { onElapsed() }
             }
+        }
+    }
+}
+
+/// Ticks counted back from `deadline` in steps of `interval`, ending exactly
+/// on it. A `.periodic` schedule counts forward from whenever the view
+/// appeared, so at one tick a second its last tick could land most of a
+/// second past the deadline — and the commit waits for a tick to notice.
+struct CountdownSchedule: TimelineSchedule {
+    let deadline: Date
+    let interval: TimeInterval
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> [Date] {
+        let remaining = deadline.timeIntervalSince(startDate)
+        guard remaining > 0 else { return [startDate] }
+        let steps = Int((remaining / interval).rounded(.up))
+        return [startDate] + (0..<steps).reversed().map {
+            deadline.addingTimeInterval(-Double($0) * interval)
         }
     }
 }
