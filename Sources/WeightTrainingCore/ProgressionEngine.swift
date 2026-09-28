@@ -269,7 +269,17 @@ public enum ProgressionEngine {
 
         // Easier than target (positive delta) means the load can rise.
         let scaled = Load(reference.load.pounds * (1 + delta * percentPerRPEPoint))
-        let proposed = exercise.nearestAchievable(scaled)
+        var proposed = exercise.nearestAchievable(scaled)
+
+        // A light lift or a coarse rack can make 3% smaller than half a step,
+        // and the snap then lands back on the weight just lifted — a 75 lb
+        // bench, or 80 kg without 1.25s, never moved again (#240). Easier is
+        // easier: take the smallest step the equipment can build. Still
+        // routed through `nearestAchievable`, which is idempotent on a
+        // buildable load.
+        if delta > 0, proposed <= reference.load {
+            proposed = exercise.nearestAchievable(exercise.raisedTarget(above: proposed))
+        }
 
         next.targetLoad = proposed
         // A set that came in harder than target isn't a stall on its own —
@@ -277,7 +287,11 @@ public enum ProgressionEngine {
         next.stallCount = 0
 
         guard proposed != reference.load else {
-            return ProgressionResult(state: next, change: .onTarget(proposed))
+            // Off target but holding — harder by less than a step (the
+            // symmetric case is out of scope for #240), or nothing heavier to
+            // build. Never "on target": that is a claim about effort.
+            return ProgressionResult(state: next,
+                                     change: .heldOffTarget(proposed, rpeDelta: delta))
         }
         return ProgressionResult(
             state: next,
