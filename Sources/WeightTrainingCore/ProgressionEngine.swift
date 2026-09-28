@@ -173,9 +173,9 @@ public enum ProgressionEngine {
 
             let hits = state.consecutiveTopHits + 1
             if hits >= required {
-                let raised = exercise.achievableTarget(
-                    echoing: Load(load.pounds + exercise.increment.pounds)
-                )
+                // Raised to a load the equipment can build, so "Earned it:
+                // A → B" names the number the screen will show (#241).
+                let raised = exercise.raisedTarget(above: load)
                 next.targetLoad = raised
                 next.targetReps = range.bottom
                 next.consecutiveTopHits = 0
