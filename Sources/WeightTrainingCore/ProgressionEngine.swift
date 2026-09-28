@@ -32,6 +32,13 @@ public enum ProgressionChange: Hashable, Sendable {
     /// RPE-targeted lift landed on its target effort — nothing to change.
     case onTarget(Load)
 
+    /// RPE-targeted lift was off its target effort, but the load holds: the
+    /// adjustment was smaller than one step down, or there is nothing heavier
+    /// to build. Kept apart from `onTarget` because "on target" is a claim
+    /// about effort, and telling a lifter who just reported RPE 7 against a
+    /// target of 8 that they were on target is false (#240).
+    case heldOffTarget(Load, rpeDelta: Double)
+
     /// An RPE-targeted lift logged with no RPE. There's nothing to steer by, so
     /// the load holds rather than being guessed at.
     case noEffortReported
@@ -75,6 +82,11 @@ public struct ProgressionResult: Hashable, Sendable {
                 + "\(from.formatted(in: unit)) → \(to.formatted(in: unit))"
         case .onTarget(let load):
             return "On target — stay at \(load.formatted(in: unit))"
+        case .heldOffTarget(let load, let delta):
+            let why = delta > 0 ? "easier than target — nothing heavier to load"
+                                : "harder than target — under one step"
+            return "\(String(format: "%.1f", abs(delta))) RPE \(why), "
+                + "stay at \(load.formatted(in: unit))"
         case .noEffortReported:
             return "No RPE logged — holding steady"
         case .noWorkingSets:

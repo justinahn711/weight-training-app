@@ -37,6 +37,26 @@ final class ProgressionEvals: XCTestCase {
     func testDoubleProgressionClimbsOnAKgRackWithoutItsSmallestPlate() {
         Evaluator.assertPasses(Scenarios.rowWithoutSmallestPlateKG)
     }
+
+    func testALightRPEBenchClimbsOnAStandardLbRack() {
+        Evaluator.assertPasses(Scenarios.lightBenchByFeelLB)
+    }
+
+    func testALightRPEBenchClimbsOnAStandardKgRack() {
+        Evaluator.assertPasses(Scenarios.lightBenchByFeelKG)
+    }
+
+    func testAnRPEBenchClimbsOnALbRackWithoutItsSmallestPlate() {
+        Evaluator.assertPasses(Scenarios.benchByFeelWithoutSmallestPlateLB)
+    }
+
+    func testAnRPEBenchClimbsOnAKgRackWithoutItsSmallestPlate() {
+        Evaluator.assertPasses(Scenarios.benchByFeelWithoutSmallestPlateKG)
+    }
+
+    func testAnRPEHingeClimbsOnAKgRackWithoutItsSmallestPlate() {
+        Evaluator.assertPasses(Scenarios.rdlByFeelWithoutSmallestPlateKG)
+    }
 }
 
 /// Prints every scenario's session-by-session trace, and the scoreboard.

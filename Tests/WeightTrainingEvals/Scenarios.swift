@@ -15,7 +15,10 @@ public enum Scenarios {
 
     public static var all: [EvalScenario] {
         [consistent, plateau, plateauIgnored, creep, grinding, benchByFeel,
-         rowWithoutSmallestPlateLB, rowWithoutSmallestPlateKG]
+         rowWithoutSmallestPlateLB, rowWithoutSmallestPlateKG,
+         lightBenchByFeelLB, lightBenchByFeelKG,
+         benchByFeelWithoutSmallestPlateLB, benchByFeelWithoutSmallestPlateKG,
+         rdlByFeelWithoutSmallestPlateKG]
     }
 
     /// Thirty sessions of doing exactly what was asked has to produce real
@@ -178,6 +181,107 @@ public enum Scenarios {
             lifter: .consistent(at: 8),
             expectations: [
                 .gains(atLeast: Load(10, .kilograms)),
+                .neverDeloads,
+                .alwaysKnowsWhatToDoNext
+            ]
+        )
+    }
+
+    // MARK: - RPE-targeted lifts on a coarse step (#240)
+
+    /// A library lift placed in a gym the way the app does it.
+    static func libraryLift(_ name: String, in gym: GymConfig) -> Exercise {
+        var lift = exercise(name)
+        if let loading = lift.loading { lift.loading = gym.applied(to: loading) }
+        lift.increment = gym.applied(to: lift.increment, for: lift.equipment)
+        return lift
+    }
+
+    /// Three percent of 75 lb is 2.25 lb — under half the 5 lb step, so the
+    /// proposal snapped back to 75 and the chip said "On target" to a lifter a
+    /// full point under target. A novice bench on a standard rack stalled from
+    /// the first session and never moved.
+    public static var lightBenchByFeelLB: EvalScenario {
+        EvalScenario(
+            "light bench under target effort, standard lb rack",
+            exercise: exercise("Flat Bench"),
+            startingLoad: Load(75),
+            sessions: 10,
+            lifter: .reportsEffort(7),
+            expectations: [
+                .gains(atLeast: Load(25)),
+                .neverDeloads,
+                .alwaysKnowsWhatToDoNext
+            ]
+        )
+    }
+
+    /// The same stall in kilograms: 3% of 40 kg is 1.2 kg against a 2.5 kg
+    /// step, even with 1.25s on the rack.
+    public static var lightBenchByFeelKG: EvalScenario {
+        EvalScenario(
+            "light bench under target effort, standard kg rack",
+            exercise: libraryLift("Flat Bench", in: GymConfig(unit: .kilograms)),
+            startingLoad: Load(40, .kilograms),
+            sessions: 10,
+            lifter: .reportsEffort(7),
+            expectations: [
+                .gains(atLeast: Load(12.5, .kilograms)),
+                .neverDeloads,
+                .alwaysKnowsWhatToDoNext
+            ]
+        )
+    }
+
+    /// Without 2.5 lb plates the bar moves 10 lb, and 3% stays under half of
+    /// that until ~167 lb — an ordinary intermediate bench stalled at 155.
+    public static var benchByFeelWithoutSmallestPlateLB: EvalScenario {
+        EvalScenario(
+            "bench under target effort, lb rack without 2.5s",
+            exercise: libraryLift("Flat Bench",
+                                  in: GymConfig(unit: .pounds, availablePlates: [45, 35, 25, 10, 5])),
+            startingLoad: Load(155),
+            sessions: 10,
+            lifter: .reportsEffort(7),
+            expectations: [
+                .gains(atLeast: Load(40)),
+                .neverDeloads,
+                .alwaysKnowsWhatToDoNext
+            ]
+        )
+    }
+
+    /// A kg gym without fractional plates moves a bar 5 kg, and 3% stays under
+    /// half of that until ~83 kg: an 80 kg bench stalled permanently.
+    public static var benchByFeelWithoutSmallestPlateKG: EvalScenario {
+        EvalScenario(
+            "bench under target effort, kg rack without 1.25s",
+            exercise: libraryLift("Flat Bench",
+                                  in: GymConfig(unit: .kilograms,
+                                                availablePlates: [25, 20, 15, 10, 5, 2.5])),
+            startingLoad: Load(80, .kilograms),
+            sessions: 10,
+            lifter: .reportsEffort(7),
+            expectations: [
+                .gains(atLeast: Load(20, .kilograms)),
+                .neverDeloads,
+                .alwaysKnowsWhatToDoNext
+            ]
+        )
+    }
+
+    /// The same rack under an 8-rep hinge: a 70 kg RDL stalled from session one.
+    public static var rdlByFeelWithoutSmallestPlateKG: EvalScenario {
+        EvalScenario(
+            "RDL under target effort, kg rack without 1.25s",
+            exercise: libraryLift("RDL",
+                                  in: GymConfig(unit: .kilograms,
+                                                availablePlates: [25, 20, 15, 10, 5, 2.5])),
+            startingLoad: Load(70, .kilograms),
+            sessions: 10,
+            lifter: .reportsEffort(7),
+            expectations: [
+                .gains(atLeast: Load(20, .kilograms)),
                 .neverDeloads,
                 .alwaysKnowsWhatToDoNext
             ]
