@@ -73,8 +73,15 @@ struct ExerciseConfigView: View {
     /// Kept alongside `baseValue` rather than replacing it, because a field
     /// mid-edit is not always a number — "", "7." and whatever a paste leaves
     /// all have to be displayable while none of them is a weight. `baseValue`
-    /// holds the last text that *was* one, and that is what Save writes.
+    /// holds the last text that *was* one; Save resolves through
+    /// `resolveConfigBaseWeight`, which keeps the stored base when the field
+    /// was not edited (#243).
     @State private var baseText = ""
+
+    /// What `seed()` put in `baseText`. Save compares against it so a field
+    /// nobody edited writes the stored base back untouched rather than a
+    /// re-parse of its rounded display (#243).
+    @State private var seededBaseText = ""
 
     /// Whether the empty-weight field currently holds the keyboard.
     ///
@@ -146,6 +153,7 @@ struct ExerciseConfigView: View {
         // correction to a figure the app already holds, and an empty box would
         // make it look like the app had forgotten it.
         baseText = format(baseValue)
+        seededBaseText = baseText
         sleeves = exercise.loading?.sleeves ?? 2
         plates = Set(exercise.loading?.availablePlates ?? unit.standardPlates)
         overridesRest = exercise.restOverride != nil
@@ -426,7 +434,12 @@ struct ExerciseConfigView: View {
         // for a cable stack.
         let loading: LoadingStyle? = isPlateBuilt
             ? LoadingStyle(
-                baseWeight: isMeasured ? Load(TypedWeight.parse(baseText) ?? baseValue, unit) : nil,
+                baseWeight: isMeasured
+                    ? resolveConfigBaseWeight(
+                        text: baseText, seededText: seededBaseText,
+                        stored: exercise.loading?.baseWeight, unit: unit
+                    )
+                    : nil,
                 sleeves: sleeves,
                 availablePlates: chosen,
                 unit: unit,
@@ -458,4 +471,28 @@ struct ExerciseConfigView: View {
     ) -> String {
         (unit ?? self.unit).format(value, withSymbol: withSymbol)
     }
+}
+
+/// The empty weight Save writes for the lift config sheet (#243).
+///
+/// `stored` is the lift's base as it sits on disk, and `seededText` is what
+/// `seed()` put in the field for it — `stored` converted to `unit` and
+/// rounded for display. The field is re-parsed only when it says something
+/// else. Re-parsing the seeded text is lossy whenever the base was measured
+/// in the other unit: a T-bar measured at 35 lb in a gym since switched to
+/// kg shows "15.88", and writing that back stored 35.0094 lb — a no-op Save
+/// that left the empty bar unbuildable and every plate line off it gone.
+///
+/// Text that is not a weight (cleared, half-typed) also keeps `stored`
+/// rather than the rounded figure on screen. Anything else is stored exactly
+/// as typed, in `unit` (#99).
+///
+/// A free function, like `resolveHistoryWeightEdit`, so `ChickenBreastTests`
+/// can check it without instantiating the view.
+func resolveConfigBaseWeight(
+    text: String, seededText: String, stored: Load?, unit: MassUnit
+) -> Load {
+    let standing = stored ?? unit.standardBar
+    guard text != seededText, let typed = TypedWeight.parse(text) else { return standing }
+    return Load(typed, unit)
 }
