@@ -245,6 +245,81 @@ final class DoubleProgressionTests: XCTestCase {
         XCTAssertEqual(result.state.targetLoad, Load(70), "heaviest set is the reference")
     }
 
+    // MARK: - A rack that cannot make the increment (#241)
+
+    /// A barbell in a gym, the way the app places one: the gym's plates on the
+    /// loading, the increment re-marked only while it is still the default.
+    private func barbell(in gym: GymConfig, required: Int = 1) -> Exercise {
+        var bar = lift(required: required, equipment: .barbell)
+        if let loading = bar.loading { bar.loading = gym.applied(to: loading) }
+        bar.increment = gym.applied(to: bar.increment, for: .barbell)
+        return bar
+    }
+
+    private func earn(_ exercise: Exercise, at load: Load) -> ProgressionResult {
+        let performed = (0..<3).map { index in
+            SetRecord(exerciseID: exercise.id, load: load, reps: 12, rpe: RPE(8),
+                      performedAt: now.addingTimeInterval(Double(index) * 180))
+        }
+        let before = ProgressState(exerciseID: exercise.id, targetLoad: load, targetReps: 12)
+        return ProgressionEngine.advance(exercise: exercise, state: before, performed: performed)
+    }
+
+    /// Without 2.5 lb plates, 135 + 5 = 140 is a load no plates make. The
+    /// engine stored it and said "Earned it: 135 → 140"; the screen snapped it
+    /// back to 135, and the lift looped on the rep ladder forever. The raise
+    /// has to be the next load the rack can actually build, and the sentence
+    /// has to name the number the screen will show.
+    func testARackWithoutTwoAndAHalvesRaisesToTheNextBuildableLoad() {
+        let row = barbell(in: GymConfig(unit: .pounds, availablePlates: [45, 35, 25, 10, 5]))
+        let result = earn(row, at: Load(135))
+
+        XCTAssertEqual(result.change, .addedLoad(from: Load(135), to: Load(145)))
+        XCTAssertTrue(row.canBuild(result.state.targetLoad!), "the rack can build the raise")
+        XCTAssertEqual(Prescription(exercise: row, state: result.state).load, Load(145),
+                       "the screen shows the load the sentence names")
+        XCTAssertEqual(result.summary(in: .pounds), "Earned it: 135 lb → 145 lb")
+    }
+
+    /// The same loop in kilograms: without 1.25 kg plates the bar moves 5 kg.
+    func testAKilogramRackWithoutItsSmallestPlateRaisesByWhatItCanBuild() {
+        let row = barbell(in: GymConfig(unit: .kilograms,
+                                        availablePlates: [25, 20, 15, 10, 5, 2.5]))
+        let result = earn(row, at: Load(60, .kilograms))
+
+        XCTAssertEqual(result.change, .addedLoad(from: Load(60, .kilograms), to: Load(65, .kilograms)))
+        XCTAssertEqual(Prescription(exercise: row, state: result.state).load, Load(65, .kilograms))
+        XCTAssertEqual(result.summary(in: .kilograms), "Earned it: 60 kg → 65 kg")
+    }
+
+    /// A rack that can make the increment still takes it: the fix is a floor
+    /// under the step, not a bigger step.
+    func testAFullRackStillStepsByTheIncrement() {
+        let row = barbell(in: GymConfig(unit: .pounds))
+        XCTAssertEqual(earn(row, at: Load(135)).change,
+                       .addedLoad(from: Load(135), to: Load(140)))
+
+        let kgRow = barbell(in: GymConfig(unit: .kilograms))
+        XCTAssertEqual(earn(kgRow, at: Load(60, .kilograms)).change,
+                       .addedLoad(from: Load(60, .kilograms), to: Load(62.5, .kilograms)))
+    }
+
+    /// The reason the echo is gentle: a rack having 52s is likelier than the
+    /// set being imaginary. An odd dumbbell weight is held and raised as
+    /// logged, not rounded onto the increment's grid.
+    func testAnOddDumbbellIsStillEchoedAndRaisedAsLogged() {
+        let press = lift(required: 1)
+        let held = ProgressionEngine.advance(
+            exercise: press, state: state(press, load: 52, reps: 10),
+            performed: sets(press, load: 52, reps: [10, 10, 10])
+        )
+        XCTAssertEqual(held.state.targetLoad, Load(52), "held as logged")
+
+        let raised = earn(press, at: Load(52))
+        XCTAssertEqual(raised.change, .addedLoad(from: Load(52), to: Load(57)),
+                       "one increment above what was lifted, not snapped to 55")
+    }
+
     // MARK: - Across the library's rep ranges
 
     /// The done-when, checked against the real seeded ranges rather than
