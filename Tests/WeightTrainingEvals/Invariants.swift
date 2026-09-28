@@ -15,7 +15,8 @@ public enum Invariants {
             nothingBelowTheLightestUsableLoad(trace),
             loadClimbsOneIncrementAtATime(trace),
             deloadsGoDownAndStayPositive(trace),
-            repTargetsStayInRange(trace)
+            repTargetsStayInRange(trace),
+            onTargetMeansOnTarget(trace)
         ]
     }
 
@@ -29,18 +30,20 @@ public enum Invariants {
 
     /// Every weight the app proposes has to be one the equipment can make.
     ///
-    /// `achievableTarget` is idempotent on a buildable load, so a target that
-    /// changes when passed through it is a target that came from somewhere
-    /// other than `nearestAchievable` — the one place a computed weight is
-    /// allowed to become a real one (#39).
+    /// Asked of `canBuild`, which reads the plates on a measured apparatus and
+    /// the increment everywhere else. It used to be asked of
+    /// `achievableTarget` — the same function that produced most targets, so
+    /// the check agreed with itself by construction. On a rack without 2.5 lb
+    /// plates that snaps to a 5 lb increment and passes 140 lb, which no plate
+    /// set on that rack can make (#241).
     static func everyProposalIsBuildable(_ trace: Trace) -> CheckResult {
         let name = "every proposal is buildable"
         for session in trace.sessions {
             guard let target = session.stateAfter.targetLoad else { continue }
-            let snapped = trace.exercise.achievableTarget(echoing: target)
-            if snapped != target {
+            if !trace.exercise.canBuild(target) {
                 return fail(name, "session \(session.index) proposed \(target), "
-                            + "which snaps to \(snapped)")
+                            + "which this equipment cannot build — the screen "
+                            + "would show \(trace.exercise.nearestAchievable(target))")
             }
         }
         return pass(name)
@@ -74,10 +77,19 @@ public enum Invariants {
     static func loadClimbsOneIncrementAtATime(_ trace: Trace) -> CheckResult {
         let name = "load climbs one increment at a time"
         guard case .doubleProgression = trace.exercise.progressionRule else { return pass(name) }
-        let step = trace.exercise.increment.pounds
+        let exercise = trace.exercise
         for session in trace.sessions {
             guard let target = session.stateAfter.targetLoad else { continue }
             let jump = target.pounds - session.prescribed.pounds
+            // One step is the increment, or — on a measured apparatus whose
+            // plates can't make the increment — the next load the rack can
+            // actually build. A rack without 2.5 lb plates steps a bar by 10 lb
+            // no matter what the increment says (#241).
+            var step = exercise.increment.pounds
+            if let loading = exercise.loading, loading.isMeasured,
+               let next = loading.nextBuildable(after: session.prescribed) {
+                step = max(step, next.pounds - session.prescribed.pounds)
+            }
             // A hair of slack for plate snapping on a measured apparatus, where
             // one increment up may land a fraction past the nominal step.
             if jump > step + 0.001 {
@@ -119,6 +131,29 @@ public enum Invariants {
                 return fail(name, "session \(session.index) targets \(reps) reps, "
                             + "range is \(range.bottom)–\(range.top)")
             }
+        }
+        return pass(name)
+    }
+
+    /// "On target" is a claim about the effort the lifter reported, not about
+    /// the load. A rule that holds because its step is too coarse and calls
+    /// that "on target" tells a lifter who just reported RPE 7 against a
+    /// target of 8 that they hit it — every session, while the lift never
+    /// moves (#240).
+    static func onTargetMeansOnTarget(_ trace: Trace) -> CheckResult {
+        let name = "on target only when the effort was"
+        guard case .rpeTargetedLoad(_, let target) = trace.exercise.progressionRule else {
+            return pass(name)
+        }
+        for session in trace.sessions {
+            guard case .onTarget = session.change else { continue }
+            // The set the rule steers by: the heaviest one carrying an RPE.
+            let reference = session.performed
+                .filter { !$0.isWarmup && $0.rpe != nil }
+                .max { $0.load < $1.load }
+            guard let reported = reference?.rpe, reported != target else { continue }
+            return fail(name, "session \(session.index) reported \(reported) against "
+                        + "\(target) and was told it was on target")
         }
         return pass(name)
     }

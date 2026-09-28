@@ -88,6 +88,48 @@ final class GymConfigurationTests: XCTestCase {
         XCTAssertEqual(after.increment.formatted, "2.5 kg")
     }
 
+    /// #242, end to end: each Settings stepper tap is its own save, and every
+    /// barbell that follows the gym has to end up on the bar last chosen —
+    /// including the way back up.
+    func testSteppingTheBarMoreThanOnceReracksEveryFollower() throws {
+        var gym = try store.gymConfig()
+        for value in [40.0, 35] {
+            gym.barWeight = Load(value)
+            try store.saveGymConfig(gym)
+        }
+        let bench = try XCTUnwrap(try store.exercises().first { $0.name == "Flat Bench" })
+        XCTAssertEqual(bench.loading?.baseWeight, Load(35))
+        XCTAssertEqual(
+            bench.loading?.breakdown(for: Load(135))?.perSide.map(\.plate), [45, 5],
+            "135 on a 35 lb bar is 50 a side"
+        )
+
+        for value in [40.0, 45] {
+            gym.barWeight = Load(value)
+            try store.saveGymConfig(gym)
+        }
+        let back = try XCTUnwrap(try store.exercise(id: bench.id))
+        XCTAssertEqual(back.loading?.baseWeight, Load(45))
+        XCTAssertEqual(try store.reconcileGym(), 0, "and a relaunch finds nothing to fix")
+    }
+
+    /// A lift whose empty weight was typed in by hand keeps it through the
+    /// same sequence of bar steps.
+    func testAMeasuredBaseSurvivesSteppingTheBar() throws {
+        var lift = try XCTUnwrap(try store.exercises().first { $0.name == "Flat Bench" })
+        lift.loading?.baseWeight = Load(33)
+        try store.upsert(lift)
+
+        var gym = try store.gymConfig()
+        for value in [40.0, 35, 40, 45] {
+            gym.barWeight = Load(value)
+            try store.saveGymConfig(gym)
+        }
+        let after = try XCTUnwrap(try store.exercise(id: lift.id))
+        XCTAssertEqual(after.loading?.baseWeight, Load(33))
+        XCTAssertEqual(after.loading?.usesGymRack, true)
+    }
+
     /// Safe to run on every launch, which is what a second device needs: the
     /// gym record syncs, the propagation has to be re-derived locally.
     func testReconcilingAnAlreadyAgreeingStoreWritesNothing() throws {

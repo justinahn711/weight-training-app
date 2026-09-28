@@ -30,7 +30,7 @@ struct TrendSummaryRow: View {
                 Text(trend.exercise.name)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     if let latest = trend.latest {
-                        Text(latest.e1RM.rounded.formatted(in: gym.unit))
+                        Text(latest.e1RM.formattedEstimate(in: gym.unit))
                             .font(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -120,7 +120,7 @@ struct TrendDetailView: View {
 
                 HStack(alignment: .firstTextBaseline) {
                     if let latest = trend.latest {
-                        Text(latest.e1RM.rounded.formatted(in: gym.unit))
+                        Text(latest.e1RM.formattedEstimate(in: gym.unit))
                             .font(.title2.bold().monospacedDigit())
                     }
                     Text(trend.summary(in: gym.unit))
@@ -187,7 +187,7 @@ struct TrendDetailView: View {
                 .symbolSize(90)
                 .foregroundStyle(Theme.record)
                 .accessibilityLabel("Estimated max record, \(point.date.formatted(.dateTime.month(.abbreviated).day()))")
-                .accessibilityValue(point.e1RM.rounded.formatted(in: gym.unit))
+                .accessibilityValue(point.e1RM.formattedEstimate(in: gym.unit))
             }
             if scrubbed == nil, let newest = trend.recordPoints.last {
                 PointMark(
@@ -315,7 +315,7 @@ struct TrendDetailView: View {
     private func callout(for point: TrendPoint) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(point.e1RM.rounded.formatted(in: gym.unit))
+                Text(point.e1RM.formattedEstimate(in: gym.unit))
                     .font(.footnote.bold().monospacedDigit())
                 // Month and day, matching the axis. No weekday, for the reason
                 // the axis gives.
@@ -346,7 +346,7 @@ struct TrendDetailView: View {
 
     /// What a point says, in one phrase — the callout, read aloud.
     private func readout(for point: TrendPoint) -> String {
-        "\(point.e1RM.rounded.formatted(in: gym.unit)), \(origin(of: point.topSet))"
+        "\(point.e1RM.formattedEstimate(in: gym.unit)), \(origin(of: point.topSet))"
     }
 
     private var sparse: some View {
@@ -359,10 +359,4 @@ struct TrendDetailView: View {
         }
         .padding(.vertical, 8)
     }
-}
-
-private extension Load {
-    /// Whole pounds for display — an estimate carrying a decimal implies a
-    /// precision it doesn't have.
-    var rounded: Load { Load(pounds.rounded()) }
 }

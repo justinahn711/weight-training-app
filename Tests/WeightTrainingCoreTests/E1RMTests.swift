@@ -180,3 +180,53 @@ final class E1RMProgressionIntegrationTests: XCTestCase {
         XCTAssertEqual(result.state.lastE1RM, Load(100), "untouched")
     }
 }
+
+/// #244: Trends rounded an estimate to whole pounds before converting, so a
+/// kilogram gym saw a different max there than on the completion screen and
+/// in the digest.
+final class E1RMDisplayTests: XCTestCase {
+    private let exerciseID = UUID()
+
+    private func set(_ load: Double, _ reps: Int, _ rpe: RPE? = nil) -> SetRecord {
+        SetRecord(exerciseID: exerciseID, load: Load(load), reps: reps, rpe: rpe,
+                  isWarmup: false, performedAt: Date())
+    }
+
+    private func kilos(_ kg: Double, _ reps: Int) throws -> Load {
+        try XCTUnwrap(set(MassUnit.kilograms.pounds(from: kg), reps).e1RM)
+    }
+
+    /// The issue's two repros: Trends rounded to whole pounds before
+    /// converting, so these read "120.2 kg" and "98.9 kg" there while the
+    /// completion screen and digest read "120 kg" and "99 kg".
+    func testAKilogramEstimateReadsTheSameAsEverywhereElse() throws {
+        let hundredBySix = try kilos(100, 6)
+        XCTAssertEqual(hundredBySix.formattedEstimate(in: .kilograms), "120 kg")
+        XCTAssertEqual(hundredBySix.formattedEstimate(in: .kilograms),
+                       hundredBySix.formatted(in: .kilograms),
+                       "the completion screen and digest format through formatted(in:)")
+
+        let ninetyByThree = try kilos(90, 3)
+        XCTAssertEqual(ninetyByThree.formattedEstimate(in: .kilograms), "99 kg")
+        XCTAssertEqual(ninetyByThree.formattedEstimate(in: .kilograms),
+                       ninetyByThree.formatted(in: .kilograms))
+    }
+
+    /// Not only the round examples: an estimate with a real tenth keeps it,
+    /// exactly as the completion screen shows it. 102.5 × (1 + 5/30) = 119.58.
+    func testAKilogramEstimateKeepsTheTenthTheRestOfTheAppShows() throws {
+        let estimate = try kilos(102.5, 5)
+        XCTAssertEqual(estimate.formattedEstimate(in: .kilograms), "119.6 kg")
+        XCTAssertEqual(estimate.formattedEstimate(in: .kilograms),
+                       estimate.formatted(in: .kilograms))
+    }
+
+    /// A pound gym's Trends text doesn't change: whole pounds, as before.
+    func testAPoundEstimateIsWholePounds() throws {
+        // 185 × (1 + 5/30) = 215.83
+        XCTAssertEqual(try XCTUnwrap(set(185, 5).e1RM).formattedEstimate(in: .pounds), "216 lb")
+        // 185 × (1 + 8.5/30) = 237.42
+        XCTAssertEqual(try XCTUnwrap(set(185, 5, RPE(6.5)).e1RM).formattedEstimate(in: .pounds), "237 lb")
+        XCTAssertEqual(Load(270).formattedEstimate(in: .pounds), "270 lb")
+    }
+}

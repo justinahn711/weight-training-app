@@ -31,6 +31,10 @@ final class ProgressionSummaryTests: XCTestCase {
             (.adjustedLoad(from: 70, to: 75, rpeDelta: 1),
              "1.0 RPE easier than target: 70 lb → 75 lb"),
             (.onTarget(70), "On target — stay at 70 lb"),
+            (.heldOffTarget(70, rpeDelta: -0.5),
+             "0.5 RPE harder than target — under one step, stay at 70 lb"),
+            (.heldOffTarget(70, rpeDelta: 1),
+             "1.0 RPE easier than target — nothing heavier to load, stay at 70 lb"),
         ]
 
         for (change, reason) in cases {

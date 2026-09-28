@@ -225,14 +225,19 @@ public enum EvalRunner {
         var state = ProgressState(exerciseID: exercise.id)
         var history: [SetRecord] = []
         var traces: [SessionTrace] = []
-        var pendingStart = exercise.achievableTarget(echoing: scenario.startingLoad)
+        var pendingStart = exercise.nearestAchievable(scenario.startingLoad)
 
         for index in 0..<scenario.sessions {
             let when = date(forSession: index)
 
-            // What the app would put on screen: the engine's target, or the
-            // cold-start load on the very first visit.
-            var load = state.targetLoad ?? pendingStart
+            // What the app would put on screen: the engine's target as
+            // `Prescription` shows it, or the cold-start load on the very first
+            // visit. Read through `Prescription` rather than off the state,
+            // because the screen snaps a stored target to what the equipment
+            // can make — a runner that hands the lifter the raw target has
+            // them lift a weight the app never asks for, and a loop between
+            // the two is invisible in the trace (#241).
+            var load = Prescription(exercise: exercise, state: state).load ?? pendingStart
             let reps = state.targetReps ?? exercise.progressionRule.displayRepTarget
 
             // The deload chip is offered before the set is performed, which is

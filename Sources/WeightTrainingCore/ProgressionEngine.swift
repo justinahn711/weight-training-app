@@ -32,6 +32,13 @@ public enum ProgressionChange: Hashable, Sendable {
     /// RPE-targeted lift landed on its target effort — nothing to change.
     case onTarget(Load)
 
+    /// RPE-targeted lift was off its target effort, but the load holds: the
+    /// adjustment was smaller than one step down, or there is nothing heavier
+    /// to build. Kept apart from `onTarget` because "on target" is a claim
+    /// about effort, and telling a lifter who just reported RPE 7 against a
+    /// target of 8 that they were on target is false (#240).
+    case heldOffTarget(Load, rpeDelta: Double)
+
     /// An RPE-targeted lift logged with no RPE. There's nothing to steer by, so
     /// the load holds rather than being guessed at.
     case noEffortReported
@@ -75,6 +82,11 @@ public struct ProgressionResult: Hashable, Sendable {
                 + "\(from.formatted(in: unit)) → \(to.formatted(in: unit))"
         case .onTarget(let load):
             return "On target — stay at \(load.formatted(in: unit))"
+        case .heldOffTarget(let load, let delta):
+            let why = delta > 0 ? "easier than target — nothing heavier to load"
+                                : "harder than target — under one step"
+            return "\(String(format: "%.1f", abs(delta))) RPE \(why), "
+                + "stay at \(load.formatted(in: unit))"
         case .noEffortReported:
             return "No RPE logged — holding steady"
         case .noWorkingSets:
@@ -173,9 +185,9 @@ public enum ProgressionEngine {
 
             let hits = state.consecutiveTopHits + 1
             if hits >= required {
-                let raised = exercise.achievableTarget(
-                    echoing: Load(load.pounds + exercise.increment.pounds)
-                )
+                // Raised to a load the equipment can build, so "Earned it:
+                // A → B" names the number the screen will show (#241).
+                let raised = exercise.raisedTarget(above: load)
                 next.targetLoad = raised
                 next.targetReps = range.bottom
                 next.consecutiveTopHits = 0
@@ -257,7 +269,17 @@ public enum ProgressionEngine {
 
         // Easier than target (positive delta) means the load can rise.
         let scaled = Load(reference.load.pounds * (1 + delta * percentPerRPEPoint))
-        let proposed = exercise.nearestAchievable(scaled)
+        var proposed = exercise.nearestAchievable(scaled)
+
+        // A light lift or a coarse rack can make 3% smaller than half a step,
+        // and the snap then lands back on the weight just lifted — a 75 lb
+        // bench, or 80 kg without 1.25s, never moved again (#240). Easier is
+        // easier: take the smallest step the equipment can build. Still
+        // routed through `nearestAchievable`, which is idempotent on a
+        // buildable load.
+        if delta > 0, proposed <= reference.load {
+            proposed = exercise.nearestAchievable(exercise.raisedTarget(above: proposed))
+        }
 
         next.targetLoad = proposed
         // A set that came in harder than target isn't a stall on its own —
@@ -265,7 +287,11 @@ public enum ProgressionEngine {
         next.stallCount = 0
 
         guard proposed != reference.load else {
-            return ProgressionResult(state: next, change: .onTarget(proposed))
+            // Off target but holding — harder by less than a step (the
+            // symmetric case is out of scope for #240), or nothing heavier to
+            // build. Never "on target": that is a claim about effort.
+            return ProgressionResult(state: next,
+                                     change: .heldOffTarget(proposed, rpeDelta: delta))
         }
         return ProgressionResult(
             state: next,
