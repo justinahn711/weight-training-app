@@ -109,10 +109,9 @@ public enum SuggestionEngine {
 
             if rpe.value <= target.value - rpeSlack {
                 // Easier than intended, and the weight on the stepper hasn't
-                // already been moved up in response.
-                let proposed = exercise.achievableTarget(
-                    echoing: Load(pendingLoad.pounds + exercise.increment.pounds)
-                )
+                // already been moved up in response. One step the equipment
+                // can build: on a rack without 2.5s, 135 + 5 is not one (#240).
+                let proposed = exercise.raisedTarget(above: pendingLoad)
                 if proposed > pendingLoad {
                     chips.append(Suggestion(
                         kind: .load(proposed),
@@ -120,9 +119,7 @@ public enum SuggestionEngine {
                     ))
                 }
             } else if rpe.value >= target.value + rpeSlack {
-                let proposed = exercise.achievableTarget(
-                    echoing: Load(pendingLoad.pounds - exercise.increment.pounds)
-                )
+                let proposed = exercise.loweredTarget(below: pendingLoad)
                 if proposed < pendingLoad {
                     chips.append(Suggestion(
                         kind: .load(proposed),

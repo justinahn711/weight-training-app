@@ -222,6 +222,23 @@ extension Exercise {
         return loading.nextBuildable(after: load) ?? load
     }
 
+    /// The load one step below `load` — `raisedTarget(above:)` in reverse.
+    ///
+    /// For a lift that should come down a notch: one increment down, echoed as
+    /// gently, then answered from the plates on a measured apparatus. Without
+    /// 2.5 lb plates, 145 − 5 is 140, which nothing on that rack builds (#240).
+    ///
+    /// Never higher than `load`, and never under the empty apparatus: a lift
+    /// already at its floor holds.
+    public func loweredTarget(below load: Load) -> Load {
+        let stepped = achievableTarget(echoing: Load(load.pounds - increment.pounds))
+        guard let loading, loading.isMeasured else { return stepped }
+
+        let built = loading.nearestBuildable(stepped)
+        if built < load { return built }
+        return loading.previousBuildable(before: load) ?? load
+    }
+
     /// The lightest load this exercise can be set to and still be a set.
     ///
     /// Below one increment there is nothing to load, so a proposal that lands

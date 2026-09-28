@@ -15,7 +15,8 @@ public enum Invariants {
             nothingBelowTheLightestUsableLoad(trace),
             loadClimbsOneIncrementAtATime(trace),
             deloadsGoDownAndStayPositive(trace),
-            repTargetsStayInRange(trace)
+            repTargetsStayInRange(trace),
+            onTargetMeansOnTarget(trace)
         ]
     }
 
@@ -130,6 +131,29 @@ public enum Invariants {
                 return fail(name, "session \(session.index) targets \(reps) reps, "
                             + "range is \(range.bottom)–\(range.top)")
             }
+        }
+        return pass(name)
+    }
+
+    /// "On target" is a claim about the effort the lifter reported, not about
+    /// the load. A rule that holds because its step is too coarse and calls
+    /// that "on target" tells a lifter who just reported RPE 7 against a
+    /// target of 8 that they hit it — every session, while the lift never
+    /// moves (#240).
+    static func onTargetMeansOnTarget(_ trace: Trace) -> CheckResult {
+        let name = "on target only when the effort was"
+        guard case .rpeTargetedLoad(_, let target) = trace.exercise.progressionRule else {
+            return pass(name)
+        }
+        for session in trace.sessions {
+            guard case .onTarget = session.change else { continue }
+            // The set the rule steers by: the heaviest one carrying an RPE.
+            let reference = session.performed
+                .filter { !$0.isWarmup && $0.rpe != nil }
+                .max { $0.load < $1.load }
+            guard let reported = reference?.rpe, reported != target else { continue }
+            return fail(name, "session \(session.index) reported \(reported) against "
+                        + "\(target) and was told it was on target")
         }
         return pass(name)
     }
