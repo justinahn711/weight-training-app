@@ -580,6 +580,19 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
                       "the volume card's filter row should be on the Progress tab")
         XCTAssertTrue(chest.waitForExistence(timeout: 5))
 
+        // Every chip, not just these two, meets the 44pt floor (#251). The
+        // capsule still draws at 36; the tappable frame around it is what
+        // XCUI measures and what a thumb hits.
+        let chips = relaunched.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "progress.volume.filter.")
+        ).allElementsBoundByIndex
+        XCTAssertFalse(chips.isEmpty)
+        for chip in chips {
+            print("Progress filter chip \(chip.identifier) frame=\(chip.frame)")
+            XCTAssertGreaterThanOrEqual(chip.frame.height, 44,
+                                        "\(chip.identifier) is below the 44pt tap target")
+        }
+
         XCTAssertTrue(all.isSelected, "All is the filter row's default selection")
         XCTAssertFalse(chest.isSelected)
 

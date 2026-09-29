@@ -589,7 +589,12 @@ private struct RegionFilterRow: View {
                 isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
                 in: Capsule()
             )
-            .contentShape(Capsule())
+            // The capsule stays 36pt — a row of 44pt pills read as buttons
+            // shouting — but the tap target around it is the full 44 (#251).
+            // `.contentShape(Capsule())` was clipping the hit area to the
+            // drawn shape, which is how the chips measured 36 in XCUI.
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
