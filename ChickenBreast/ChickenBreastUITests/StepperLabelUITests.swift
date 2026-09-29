@@ -50,6 +50,35 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
         try assertStackedStepper(in: app, title: "Bar", valuePattern: "[0-9.]+ (lb|kg)")
     }
 
+    /// The other half of #250's contract: below accessibility sizes the row
+    /// is the plain system stepper it always was — label and value on the
+    /// control's own line, one 32pt row (the frames #250's audit recorded on
+    /// `main`: an SE's Weekly goal stepper was 311 × 32).
+    func testSettingsStepperRowsKeepOneLineAtDefaultText() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        XCTAssertTrue(try reachTrainScreen(app))
+
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable)
+        settings.tap()
+
+        for title in ["Weekly goal", "Bar"] {
+            let stepper = app.steppers
+                .matching(NSPredicate(format: "label BEGINSWITH %@", "\(title), "))
+                .firstMatch
+            XCTAssertTrue(stepper.waitForExistence(timeout: 10), "\(title) should be on Settings")
+            let increment = app.buttons["\(stepper.label), Increment"]
+            let decrement = app.buttons["\(stepper.label), Decrement"]
+            let controls = decrement.frame.union(increment.frame)
+            print("STEPPER-FRAME|default \(title): stepper=\(stepper.frame) controls=\(controls)")
+            XCTAssertGreaterThan(stepper.frame.width, controls.width * 2,
+                                 "\(title)'s label should share the control's line at default size")
+            XCTAssertEqual(stepper.frame.height, controls.height, accuracy: 1,
+                           "\(title) should stay one control-height row at default size")
+        }
+    }
+
     func testCorrectSetStepperRowsStackAtAccessibilityText() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = launch(arguments: Self.accessibilityXXXL)
