@@ -76,12 +76,10 @@ final class VoicePhraseTableTests: XCTestCase {
             Row("185 for two", load: 185, reps: 2, auto: true),
             Row("185 for 5 at eight and a half", load: 185, reps: 5, rpe: 8.5, auto: true),
             Row("185 for 5 at eight point five", load: 185, reps: 5, rpe: 8.5, auto: true),
-            Row("185 pounds", load: 185, auto: true),
             Row("185 pounds for 5", load: 185, reps: 5, auto: true),
             Row("185 for 5 reps", load: 185, reps: 5, auto: true),
             Row("185 x 5 @ 8", load: 185, reps: 5, rpe: 8, auto: true),
             Row("one 85 for 8", load: 185, reps: 8, auto: true),
-            Row("one eighty five", load: 185, auto: true),
         ])
     }
 
@@ -104,6 +102,35 @@ final class VoicePhraseTableTests: XCTestCase {
             Row("1080 for 5", load: 1_080, reps: 5, auto: false),
             Row("185 for 40", load: 185, reps: 40, auto: false),
             Row("forty five for 10", load: 45, reps: 10, auto: false),
+        ])
+    }
+
+    // MARK: - #274: a weight with no reps waits, however it was said
+
+    /// Only a weight, and the app would log it with whatever reps are dialled
+    /// in. Bare `185` always waited; the same weight in words auto-committed,
+    /// because "bare" was decided by counting words rather than by what was
+    /// heard.
+    func testAWeightWithNoRepsWaits() {
+        check([
+            Row("185", load: 185, auto: false),
+            Row("one eighty five", load: 185, auto: false),
+            Row("a hundred and five", load: 105, auto: false),
+            Row("two twenty five", load: 225, auto: false),
+            Row("log 185", load: 185, auto: false),
+            Row("185 pounds", load: 185, auto: false),
+            Row("185 at 8", load: 185, rpe: 8, auto: false),
+        ])
+    }
+
+    /// The same weights with reps heard are complete, and still commit.
+    func testAWeightWithRepsStillAutoCommits() {
+        check([
+            Row("one eighty five for five", load: 185, reps: 5, auto: true),
+            Row("one eighty five for five at eight", load: 185, reps: 5, rpe: 8, auto: true),
+            Row("a hundred and five for eight", load: 105, reps: 8, auto: true),
+            Row("two twenty five for 5", load: 225, reps: 5, auto: true),
+            Row("185 pounds 8 reps", load: 185, reps: 8, auto: true),
         ])
     }
 

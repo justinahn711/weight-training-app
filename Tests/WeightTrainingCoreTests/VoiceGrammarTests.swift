@@ -441,11 +441,14 @@ final class VoiceUnitTests: XCTestCase {
         XCTAssertEqual(by.value(in: .kilograms), 5, accuracy: 0.0001)
     }
 
-    /// Naming the unit is grammar, so it lifts the utterance out of the
-    /// shown-but-never-committed case a bare number falls into (#22).
-    func testNamingTheUnitMakesABareNumberConfident() throws {
+    /// Naming the unit settles what the number *is* — a weight in kilos —
+    /// but not that a set was said: the reps would still come from the form.
+    /// So it's still shown, never committed (#274, which narrowed #67's rule).
+    /// With reps heard, the unit is grammar like any other.
+    func testNamingTheUnitDoesNotMakeAWeightAloneASet() throws {
         XCTAssertFalse(try XCTUnwrap(VoiceGrammar.parse("sixty")).isConfident)
-        XCTAssertTrue(try XCTUnwrap(VoiceGrammar.parse("sixty kilos")).isConfident)
+        XCTAssertFalse(try XCTUnwrap(VoiceGrammar.parse("sixty kilos")).isConfident)
+        XCTAssertTrue(try XCTUnwrap(VoiceGrammar.parse("sixty kilos for eight")).isConfident)
     }
 
     /// "rep" and "lb" must not collide: reps still win.

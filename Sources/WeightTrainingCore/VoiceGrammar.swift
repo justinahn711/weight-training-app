@@ -211,7 +211,6 @@ public enum VoiceGrammar {
         /// What the load was said in. Starts as the gym's and is overridden the
         /// moment a unit is spoken.
         var loadUnit = unit
-        var namedUnit = false
 
         // Walk the phrase, letting each marker say which field the *next*
         // number belongs to. Markers come in two shapes and both are used:
@@ -276,10 +275,7 @@ public enum VoiceGrammar {
                 // A unit ends the number it follows, and says what it meant.
                 // "reps" is checked first below, so "rep"/"lb" can't collide.
                 if expecting == .load {
-                    if load == nil {
-                        loadUnit = spoken
-                        namedUnit = true
-                    }
+                    if load == nil { loadUnit = spoken }
                     flush(into: .load)
                 }
                 continue
@@ -319,10 +315,14 @@ public enum VoiceGrammar {
 
         guard load != nil || reps != nil || rpe != nil else { return nil }
 
-        // A bare number with no grammar around it is the ambiguous case: it
-        // could be a weight, reps, or a misheard word. Shown, never committed.
-        // Naming the unit *is* grammar, so "sixty kilos" is not bare.
-        let isBare = words.count == 1 && load != nil && !namedUnit
+        // A weight with no reps is the ambiguous case: it could be a weight,
+        // reps, or a misheard word, and even when it plainly is a weight the
+        // set would take its reps from whatever the form had. Shown, never
+        // committed. Decided on what was heard, not how many words it took —
+        // counting words let "one eighty five" auto-commit while "185"
+        // waited (#274). A named unit settles that it's a weight, not that a
+        // set was said, so "sixty kilos" waits too.
+        let isBare = load != nil && reps == nil
 
         return VoiceParse(
             command: .logSet(
