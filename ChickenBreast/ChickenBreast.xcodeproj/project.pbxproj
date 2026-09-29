@@ -66,6 +66,9 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				AppStore.swift,
+				PermissionQueue.swift,
+				RestAlertSettings.swift,
+				RestNotification.swift,
 				SessionActivity.swift,
 				SessionIntents.swift,
 			);
