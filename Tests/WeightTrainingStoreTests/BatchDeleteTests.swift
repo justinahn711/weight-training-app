@@ -104,6 +104,15 @@ final class BatchDeleteTests: XCTestCase {
                                 performedAt: Date())
         try first.log(earlySet)
         try first.log(lateSet)
+        // The state both sessions earned, as `applyProgression` would have
+        // stored it — the batch only rewrites state the replay authored (#269).
+        var earned = ProgressState(exerciseID: flyExercise.id)
+        for set in [earlySet, lateSet] {
+            earned = ProgressionEngine.advance(
+                exercise: flyExercise, state: earned, performed: [set], now: set.performedAt
+            ).state
+        }
+        try first.save(earned)
         _ = try first.deleteSets(ids: [lateSet.id])
 
         let second = try TrainingStore(url: url)
