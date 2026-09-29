@@ -839,7 +839,61 @@ final class SessionViewModel {
     /// than tapping. Anything uncertain never starts the clock at all.
     static let autoCommitDelay: TimeInterval = 3
 
-    func beginVoiceUtterance() {}
+    /// The load a spoken adjustment is measured from, for the utterance in
+    /// progress (#266).
+    ///
+    /// The recogniser reports partial transcripts, and each prefix of one
+    /// phrase can parse to a different adjustment — "drop 20", then "drop 25".
+    /// Applying each to whatever is dialled in stacked them (-45). Instead the
+    /// first adjustment of an utterance captures the load it started from, and
+    /// every later partial replaces the earlier one against that base.
+    ///
+    /// Final results alone would not do: stopping the microphone by hand
+    /// cancels the task, and a cancelled task never delivers a final result.
+    private struct VoiceAdjustment {
+        let exerciseID: UUID
+        let base: Load
+        /// What voice last set, so an edit by hand is recognisable.
+        let applied: Load
+    }
+
+    private var voiceAdjustment: VoiceAdjustment?
+
+    /// Set once the lifter has changed the weight by hand mid-utterance, so the
+    /// rest of that utterance's partials leave their edit alone.
+    private var voiceAdjustmentOverridden = false
+
+    /// Marks the start of a new utterance: the next spoken adjustment is a new
+    /// decision, measured from whatever is dialled in at that moment.
+    func beginVoiceUtterance() {
+        voiceAdjustment = nil
+        voiceAdjustmentOverridden = false
+    }
+
+    private func applyVoiceAdjustment(_ delta: Load, to current: SessionExercise) {
+        guard !voiceAdjustmentOverridden else { return }
+
+        let base: Load
+        if let adjustment = voiceAdjustment, adjustment.exerciseID == current.id {
+            // Something other than voice moved the weight since the last
+            // partial — the lifter's tap. Theirs wins for the rest of this
+            // utterance, rather than being re-based over or stacked on.
+            guard pendingLoad == adjustment.applied else {
+                voiceAdjustmentOverridden = true
+                voiceAdjustment = nil
+                return
+            }
+            base = adjustment.base
+        } else {
+            base = pendingLoad
+        }
+
+        let exercise = current.exercise
+        let target = max(exercise.minimumLoad, Load(base.pounds + delta.pounds))
+        let landed = exercise.nearestAchievable(target)
+        pendingLoad = landed
+        voiceAdjustment = VoiceAdjustment(exerciseID: current.id, base: base, applied: landed)
+    }
 
     /// Applies a heard command.
     ///
@@ -861,8 +915,9 @@ final class SessionViewModel {
             // this becoming a third independent way to start a rest (#173).
             beginRest(duration: seconds, setID: nil, at: now, for: current)
         case .adjustLoad(let delta):
-            pendingLoad = max(current.exercise.minimumLoad,
-                              Load(pendingLoad.pounds + delta.pounds))
+            // Partials of one utterance replace each other, and the result
+            // lands on the equipment's grid like any other proposal (#266).
+            applyVoiceAdjustment(delta, to: current)
         case .repeatLast:
             if let last = current.loggedSets.last(where: { !$0.isWarmup }) {
                 pendingLoad = last.load
