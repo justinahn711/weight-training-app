@@ -73,8 +73,10 @@ class ChickenBreastUITestCase: XCTestCase {
     ///   colour decision rather than a swap, and on the lift library's last
     ///   rows, under the floating tab bar. It cannot be held per element: on
     ///   repeat runs of one build the audit reported the same failures with
-    ///   `issue.element == nil`. Time was not the reason — enabling it moved
-    ///   an audit from ~0.5-2s to ~2-7s locally, nowhere near the -56 budget.
+    ///   `issue.element == nil`. Time was not the reason: on an iPhone 17
+    ///   simulator an audit took 0.5-0.9s with all three held, 2.0-2.4s with
+    ///   only `.contrast` held, and 2.0-6.6s with nothing held — nowhere
+    ///   near where -56 was seen (#193).
     static let knownIssues: XCUIAccessibilityAuditType = [
         .contrast,
     ]
