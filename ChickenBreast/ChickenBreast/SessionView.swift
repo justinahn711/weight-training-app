@@ -582,14 +582,17 @@ struct SessionView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
+                .accessibilityIdentifier("session.target.heading")
             Text(planTargetLine(exercise))
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(exercise.prescription.isColdStart ? .secondary : .primary)
+                .accessibilityIdentifier("session.target.line")
             if let explanation = planExplanation(exercise) {
                 Text(explanation)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("session.target.reason")
             }
             if model.canPlanCurrentExercise, model.current?.id == exercise.id {
                 Button(exercise.acceptedPlan == nil ? "Review set plan" : "Edit set plan") {
@@ -607,6 +610,8 @@ struct SessionView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("session.target.card")
     }
 
     private func planTargetLine(_ exercise: SessionExercise) -> String {

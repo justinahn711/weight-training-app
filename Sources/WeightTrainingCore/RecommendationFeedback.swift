@@ -56,6 +56,16 @@ public struct RecommendationFeedbackReport: Hashable, Sendable {
     public let reportedEffortSets: Int
     public let acceptedWorkingSets: Int
     public let aboveTargetEffortSets: Int
+    /// Outcome cohorts use the final decision. An automatically activated plan
+    /// later reviewed belongs to the reviewed cohort; its origin is still
+    /// counted by automaticActivations.
+    public let finishedAutomaticPlans: Int
+    public let automaticCompletedAsPlanned: Int
+    public let automaticWorkingSets: Int
+    public let automaticReportedEffortSets: Int
+    public let automaticAboveTargetEffortSets: Int
+    public let completedBelowTargetEffort: Int
+    public let automaticCompletedBelowTargetEffort: Int
     /// Newest-first detail for every proposal included in the aggregate. This
     /// makes shadow evaluation actionable without storing another result row.
     public let entries: [RecommendationFeedbackEntry]
@@ -71,7 +81,14 @@ public struct RecommendationFeedbackReport: Hashable, Sendable {
         acceptedWorkingSets: Int,
         aboveTargetEffortSets: Int,
         entries: [RecommendationFeedbackEntry] = [],
-        automaticActivations: Int = 0
+        automaticActivations: Int = 0,
+        finishedAutomaticPlans: Int = 0,
+        automaticCompletedAsPlanned: Int = 0,
+        automaticWorkingSets: Int = 0,
+        automaticReportedEffortSets: Int = 0,
+        automaticAboveTargetEffortSets: Int = 0,
+        completedBelowTargetEffort: Int = 0,
+        automaticCompletedBelowTargetEffort: Int = 0
     ) {
         self.days = days
         self.reviewedPlans = reviewedPlans
@@ -83,6 +100,13 @@ public struct RecommendationFeedbackReport: Hashable, Sendable {
         self.reportedEffortSets = reportedEffortSets
         self.acceptedWorkingSets = acceptedWorkingSets
         self.aboveTargetEffortSets = aboveTargetEffortSets
+        self.finishedAutomaticPlans = finishedAutomaticPlans
+        self.automaticCompletedAsPlanned = automaticCompletedAsPlanned
+        self.automaticWorkingSets = automaticWorkingSets
+        self.automaticReportedEffortSets = automaticReportedEffortSets
+        self.automaticAboveTargetEffortSets = automaticAboveTargetEffortSets
+        self.completedBelowTargetEffort = completedBelowTargetEffort
+        self.automaticCompletedBelowTargetEffort = automaticCompletedBelowTargetEffort
         self.entries = entries
     }
 
@@ -91,6 +115,32 @@ public struct RecommendationFeedbackReport: Hashable, Sendable {
             ? Double(reportedEffortSets) / Double(acceptedWorkingSets)
             : nil
     }
+
+    public var automaticEffortCoverage: Double? {
+        automaticWorkingSets > 0
+            ? Double(automaticReportedEffortSets) / Double(automaticWorkingSets)
+            : nil
+    }
+
+    /// Counts recorded proposals once per exercise session, including edits
+    /// and unfinished sessions. These are not completion or success rates.
+    public var actionCounts: [ExerciseRecommendation.Action: Int] {
+        entries.reduce(into: [:]) { $0[$1.action, default: 0] += 1 }
+    }
+
+    public var reasonCounts: [ExerciseRecommendation.Reason: Int] {
+        entries.reduce(into: [:]) { counts, entry in
+            if let reason = entry.reason { counts[reason, default: 0] += 1 }
+        }
+    }
+
+    public var holdReasonCounts: [ExerciseRecommendation.Reason: Int] {
+        entries.reduce(into: [:]) { counts, entry in
+            if entry.action == .hold, let reason = entry.reason { counts[reason, default: 0] += 1 }
+        }
+    }
+
+    public var unknownReasonCount: Int { entries.filter { $0.reason == nil }.count }
 }
 
 public struct RecommendationFeedbackEntry: Hashable, Sendable, Identifiable {
@@ -105,6 +155,43 @@ public struct RecommendationFeedbackEntry: Hashable, Sendable, Identifiable {
     public let reportedEffortSets: Int
     public let workingSets: Int
     public let aboveTargetEffortSets: Int
+    /// Historical snapshot metadata only. Legacy traces without a displayed
+    /// proposal remain unknown instead of being explained by today's engine.
+    public let reason: ExerciseRecommendation.Reason?
+    public let evidence: ExerciseRecommendation.Evidence?
+    public let ruleVersion: String?
+    public let supportingExposureCount: Int?
+    /// Exact prescribed work, finished without an edit, with every working-set
+    /// RPE explicitly reported below its target. This descriptive outcome does
+    /// not assert physiological benefit or replace the progression policy.
+    public let completedBelowTargetEffort: Bool
+
+    public init(
+        id: String, exerciseID: UUID, generatedAt: Date,
+        action: ExerciseRecommendation.Action, decision: RecommendationTrace.Decision,
+        finished: Bool, completion: ExerciseExposure.Completion?, completedAsPlanned: Bool,
+        reportedEffortSets: Int, workingSets: Int, aboveTargetEffortSets: Int,
+        reason: ExerciseRecommendation.Reason? = nil,
+        evidence: ExerciseRecommendation.Evidence? = nil, ruleVersion: String? = nil,
+        supportingExposureCount: Int? = nil, completedBelowTargetEffort: Bool = false
+    ) {
+        self.id = id
+        self.exerciseID = exerciseID
+        self.generatedAt = generatedAt
+        self.action = action
+        self.decision = decision
+        self.finished = finished
+        self.completion = completion
+        self.completedAsPlanned = completedAsPlanned
+        self.reportedEffortSets = reportedEffortSets
+        self.workingSets = workingSets
+        self.aboveTargetEffortSets = aboveTargetEffortSets
+        self.reason = reason
+        self.evidence = evidence
+        self.ruleVersion = ruleVersion
+        self.supportingExposureCount = supportingExposureCount
+        self.completedBelowTargetEffort = completedBelowTargetEffort
+    }
 
     public var effortCoverage: Double? {
         workingSets > 0 ? Double(reportedEffortSets) / Double(workingSets) : nil
@@ -140,6 +227,13 @@ public enum RecommendationFeedbackEngine {
         var reportedEffortSets = 0
         var acceptedWorkingSets = 0
         var aboveTargetEffortSets = 0
+        var finishedAutomaticPlans = 0
+        var automaticCompletedAsPlanned = 0
+        var automaticWorkingSets = 0
+        var automaticReportedEffortSets = 0
+        var automaticAboveTargetEffortSets = 0
+        var completedBelowTargetEffort = 0
+        var automaticCompletedBelowTargetEffort = 0
         var entries: [RecommendationFeedbackEntry] = []
 
         for session in recorded {
@@ -166,6 +260,18 @@ public enum RecommendationFeedbackEngine {
                     }
             } ?? false
             let planWasUsedWithoutEdit = trace.decision != .edited
+            let belowTarget = plan.map { plan in
+                guard planWasUsedWithoutEdit, session.completedAt != nil,
+                      !plan.sets.isEmpty, plan.sets == trace.proposedSets,
+                      plan.isDeload == trace.proposedDeload, exposure?.plan == plan,
+                      exposure?.completion == .completed, working.count == plan.sets.count else { return false }
+                return zip(working, plan.sets).allSatisfy { performed, target in
+                    performed.record.exerciseID == session.exerciseID
+                        && performed.record.load == target.load && performed.record.reps == target.reps
+                        && performed.effortSource == .reported
+                        && performed.record.rpe.map { $0 < target.rpe } == true
+                }
+            } ?? false
 
             if trace.decision == .accepted, plan != nil, exposure != nil {
                 acceptedWorkingSets += comparable.count
@@ -175,6 +281,17 @@ public enum RecommendationFeedbackEngine {
                     finishedAcceptedPlans += 1
                     if followedExactly { completedAsPlanned += 1 }
                 }
+                if belowTarget { completedBelowTargetEffort += 1 }
+            }
+            if trace.decision == .automaticallyActivated, plan != nil, exposure != nil {
+                automaticWorkingSets += comparable.count
+                automaticReportedEffortSets += reported
+                automaticAboveTargetEffortSets += aboveTarget
+                if session.completedAt != nil {
+                    finishedAutomaticPlans += 1
+                    if followedExactly { automaticCompletedAsPlanned += 1 }
+                }
+                if belowTarget { automaticCompletedBelowTargetEffort += 1 }
             }
 
             entries.append(RecommendationFeedbackEntry(
@@ -188,7 +305,12 @@ public enum RecommendationFeedbackEngine {
                 completedAsPlanned: planWasUsedWithoutEdit && followedExactly,
                 reportedEffortSets: planWasUsedWithoutEdit ? reported : 0,
                 workingSets: planWasUsedWithoutEdit ? comparable.count : 0,
-                aboveTargetEffortSets: planWasUsedWithoutEdit ? aboveTarget : 0
+                aboveTargetEffortSets: planWasUsedWithoutEdit ? aboveTarget : 0,
+                reason: trace.displayedRecommendation?.reason,
+                evidence: trace.displayedRecommendation?.evidence,
+                ruleVersion: trace.displayedRecommendation?.ruleVersion,
+                supportingExposureCount: trace.displayedRecommendation?.supportingExposureIDs.count,
+                completedBelowTargetEffort: belowTarget
             ))
         }
 
@@ -206,7 +328,14 @@ public enum RecommendationFeedbackEngine {
                 if $0.generatedAt != $1.generatedAt { return $0.generatedAt > $1.generatedAt }
                 return $0.id < $1.id
             },
-            automaticActivations: automaticActivations
+            automaticActivations: automaticActivations,
+            finishedAutomaticPlans: finishedAutomaticPlans,
+            automaticCompletedAsPlanned: automaticCompletedAsPlanned,
+            automaticWorkingSets: automaticWorkingSets,
+            automaticReportedEffortSets: automaticReportedEffortSets,
+            automaticAboveTargetEffortSets: automaticAboveTargetEffortSets,
+            completedBelowTargetEffort: completedBelowTargetEffort,
+            automaticCompletedBelowTargetEffort: automaticCompletedBelowTargetEffort
         )
     }
 

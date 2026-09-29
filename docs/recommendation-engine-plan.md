@@ -292,6 +292,11 @@ Recommendation results is primarily for development/evaluation, not a required
 user workflow. Preserve the exact displayed proposal instead of recomputing it
 at acceptance. Track displayed prescriptions, automatic activation, explicit
 reviews, overrides, completion, RPE coverage, and effort overshoot separately.
+Automatic and explicitly reviewed plans remain separate outcome cohorts. Report
+the saved reason for every hold and distinguish fully reported work completed
+below target RPE from missing effort or target-level effort; this allows the
+repeat-easy gate to be evaluated without treating completion alone as proof that
+progression was too conservative.
 Do not relabel old history as an automatic recommendation or approval. Derive
 outcomes from corrected logs and count effort only when an actual reported RPE
 exists. Activation, acceptance, and completion are distinct metrics.

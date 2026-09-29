@@ -590,13 +590,43 @@ private struct RecommendationFeedbackView: View {
             if let report, report.reviewedPlans > 0 || report.automaticActivations > 0 {
                 Section {
                     LabeledContent("Automatic targets", value: "\(report.automaticActivations)")
+                        .accessibilityIdentifier("settings.recommendationResults.summary.automaticTargets")
                     LabeledContent("Plans reviewed", value: "\(report.reviewedPlans)")
+                        .accessibilityIdentifier("settings.recommendationResults.summary.plansReviewed")
                     LabeledContent("Used as suggested", value: "\(report.acceptedAsSuggested)")
+                        .accessibilityIdentifier("settings.recommendationResults.summary.usedAsSuggested")
                     LabeledContent("Edited before use", value: "\(report.editedBeforeUse)")
+                        .accessibilityIdentifier("settings.recommendationResults.summary.editedBeforeUse")
                 } header: {
                     Text("Last \(report.days) days")
                 } footer: {
                     Text("Automatic targets start in the workout. Opening the optional plan editor records a separate review or edit.")
+                }
+
+                if report.finishedAutomaticPlans > 0 || report.automaticWorkingSets > 0 {
+                    Section {
+                        LabeledContent(
+                            "Completed as planned",
+                            value: "\(report.automaticCompletedAsPlanned) of \(report.finishedAutomaticPlans)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.automatic.completedAsPlanned")
+                        LabeledContent(
+                            "Completed below target RPE",
+                            value: "\(report.automaticCompletedBelowTargetEffort)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.automatic.belowTargetRPE")
+                        LabeledContent("RPE reported", value: percentage(report.automaticEffortCoverage))
+                            .accessibilityIdentifier("settings.recommendationResults.automatic.rpeReported")
+                        LabeledContent(
+                            "Sets above target RPE",
+                            value: "\(report.automaticAboveTargetEffortSets)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.automatic.setsAboveTargetRPE")
+                    } header: {
+                        Text("Automatic targets")
+                    } footer: {
+                        Text("These outcomes include targets used without opening the optional plan editor.")
+                    }
                 }
 
                 if report.reviewedPlans > 0 {
@@ -605,15 +635,36 @@ private struct RecommendationFeedbackView: View {
                             "Completed as planned",
                             value: "\(report.completedAsPlanned) of \(report.finishedAcceptedPlans)"
                         )
-                        LabeledContent("RPE reported", value: effortCoverage(report))
+                        .accessibilityIdentifier("settings.recommendationResults.summary.completedAsPlanned")
+                        LabeledContent(
+                            "Completed below target RPE",
+                            value: "\(report.completedBelowTargetEffort)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.summary.belowTargetRPE")
+                        LabeledContent("RPE reported", value: percentage(report.effortCoverage))
+                            .accessibilityIdentifier("settings.recommendationResults.summary.rpeReported")
                         LabeledContent(
                             "Sets above target RPE",
                             value: "\(report.aboveTargetEffortSets)"
                         )
+                        .accessibilityIdentifier("settings.recommendationResults.summary.setsAboveTargetRPE")
                     } header: {
                         Text("Explicitly reviewed plans")
                     } footer: {
                         Text("These aggregate outcomes use only plans explicitly accepted as suggested. Correcting or deleting a set updates the results automatically.")
+                    }
+                }
+
+                let holdReasons = sortedHoldReasons(report)
+                if !holdReasons.isEmpty {
+                    Section {
+                        ForEach(Array(holdReasons.enumerated()), id: \.offset) { _, item in
+                            LabeledContent(reasonLabel(item.reason), value: "\(item.count)")
+                        }
+                    } header: {
+                        Text("Why targets held")
+                    } footer: {
+                        Text("Counts describe saved recommendations. They are evidence for reviewing the rules, not success or failure scores.")
                     }
                 }
 
@@ -630,6 +681,11 @@ private struct RecommendationFeedbackView: View {
                             }
                             Text("\(actionLabel(entry.action)) · \(outcomeLabel(entry))")
                                 .font(.subheadline)
+                            if let reason = entry.reason {
+                                Text(reasonLabel(reason))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             if entry.decision != .edited {
                                 Text(effortLabel(entry))
                                     .font(.caption)
@@ -637,6 +693,7 @@ private struct RecommendationFeedbackView: View {
                             }
                         }
                         .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("settings.recommendationResults.entry.\(entry.id)")
                     }
                 }
             } else if failed {
@@ -645,14 +702,17 @@ private struct RecommendationFeedbackView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text("The saved recommendation history could not be read.")
                 )
+                .accessibilityIdentifier("settings.recommendationResults.unavailable")
             } else {
                 ContentUnavailableView(
                     "No recommendations yet",
                     systemImage: "chart.line.uptrend.xyaxis",
                     description: Text("Automatic targets and optional plan reviews will appear here after a future workout. Existing history remains unchanged.")
                 )
+                .accessibilityIdentifier("settings.recommendationResults.empty")
             }
         }
+        .accessibilityIdentifier("settings.recommendationResults.screen")
         .navigationTitle("Recommendation results")
         .navigationBarTitleDisplayMode(.inline)
         .task { reload() }
@@ -673,9 +733,19 @@ private struct RecommendationFeedbackView: View {
         }
     }
 
-    private func effortCoverage(_ report: RecommendationFeedbackReport) -> String {
-        guard let coverage = report.effortCoverage else { return "No sets yet" }
+    private func percentage(_ coverage: Double?) -> String {
+        guard let coverage else { return "No sets yet" }
         return "\(Int((coverage * 100).rounded()))%"
+    }
+
+    private func sortedHoldReasons(
+        _ report: RecommendationFeedbackReport
+    ) -> [(reason: ExerciseRecommendation.Reason, count: Int)] {
+        report.holdReasonCounts.map { (reason: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count != $1.count { return $0.count > $1.count }
+                return reasonLabel($0.reason) < reasonLabel($1.reason)
+            }
     }
 
     private func actionLabel(_ action: ExerciseRecommendation.Action) -> String {
@@ -712,8 +782,43 @@ private struct RecommendationFeedbackView: View {
     private func effortLabel(_ entry: RecommendationFeedbackEntry) -> String {
         guard entry.workingSets > 0 else { return "No working sets logged" }
         let effort = "RPE reported for \(entry.reportedEffortSets) of \(entry.workingSets) sets"
+        if entry.completedBelowTargetEffort { return "\(effort) · every set below target" }
         guard entry.aboveTargetEffortSets > 0 else { return effort }
         return "\(effort) · \(entry.aboveTargetEffortSets) above target"
+    }
+
+    private func reasonLabel(_ reason: ExerciseRecommendation.Reason) -> String {
+        switch reason {
+        case .firstPlanNeeded: return "Starting plan needed"
+        case .legacyBaseline: return "Recent workout baseline"
+        case .invalidInput: return "Plan or history needs review"
+        case .unsupportedEquipment: return "Equipment policy unavailable"
+        case .equipmentChanged: return "Equipment changed"
+        case .ambiguousHistory: return "Conflicting history"
+        case .staleHistory: return "History is stale"
+        case .newPrescription: return "New prescription"
+        case .missingEffort: return "RPE missing"
+        case .incompleteExposure: return "Prescription incomplete"
+        case .techniqueChanged: return "Technique changed"
+        case .unexpectedPerformance: return "Performed work differed"
+        case .effortAboveTarget: return "RPE above target"
+        case .confirmEasyWorkouts(let completed, let required):
+            return "Repeat-easy gate (\(completed) of \(required))"
+        case .addedRep: return "Rep increase"
+        case .addedLoad: return "Weight increase"
+        case .weeklyVolumeBelowBudget: return "Below weekly set target"
+        case .loadStepTooLarge: return "Weight jump too large"
+        case .noHeavierLoad: return "No heavier configured weight"
+        case .repeatedMisses: return "Repeated missed targets"
+        case .minimumLoad: return "Equipment minimum reached"
+        case .reductionUnavailable: return "Smaller weight unavailable"
+        case .poorRecovery: return "Recovery reported poor"
+        case .acceptedDeload: return "Accepted recovery plan"
+        case .resumeAfterDeload: return "Returning from recovery"
+        case .scheduledDeload: return "Scheduled recovery"
+        case .programFatigue: return "Program-wide fatigue"
+        case .pain: return "Pain reported"
+        }
     }
 }
 

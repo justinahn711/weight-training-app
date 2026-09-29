@@ -137,6 +137,14 @@ The same screen lists each recent reviewed exercise with its proposed action,
 accept/edit decision, completion outcome, and RPE coverage. This makes a real
 workout auditable without treating plan acceptance as a successful outcome.
 
+Automatic and explicitly reviewed prescriptions now have separate completion,
+RPE coverage, below-target-effort, and above-target-effort totals. The results
+screen also groups saved hold reasons, so missing RPE, incomplete work, high
+effort, equipment limits, and the repeat-easy gate can be evaluated separately.
+Legacy traces without a displayed recommendation keep their reason unknown.
+These values are derived from corrected logs and stored proposal snapshots;
+they do not create mutable scores or require another user step.
+
 Recommendation reads now create one request-scoped history snapshot and index
 sets by exercise and workout. Workout coordination, exposure reports, and
 feedback reuse that snapshot instead of repeatedly scanning or fetching the
@@ -202,11 +210,12 @@ Validation after the history-indexing and outcome-integrity milestone on 2026-09
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including automatic activation, workout-wide allocation, review regressions, conservative legacy baselines, personalized bands, explicit recovery decisions, deload entry/exit, feedback derivation, history equivalence, correction/relaunch integrity, and sync constraints (791 tests) | PASS |
+| Swift domain/store suite, including automatic activation, workout-wide allocation, review regressions, conservative legacy baselines, personalized bands, explicit recovery decisions, deload entry/exit, automatic/reviewed outcome cohorts, hold-reason derivation, history equivalence, correction/relaunch integrity, and sync constraints (798 tests) | PASS |
 | Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
 | Foundation-only core check | PASS |
 | Two-year synthetic history equivalence (312 workouts, 1,872 exercise sessions, 7,386 sets) | PASS — identical decisions; shared exposure read about 6× faster in the measured local run |
 | App and widget build for iOS Simulator | PASS |
+| UI-test target compilation, including stable target/results accessibility identifiers | PASS |
 | Focused iPhone UI through the early-completion milestone | PASS |
 | Signed iPhone build | PASS |
 | Install of the workout-wide allocation and recovery-choice milestone over existing phone data | PASS |

@@ -107,6 +107,12 @@ final class AccessibilityAuditTests: XCTestCase {
         startSessionIfPreviewed(app)
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
+        for identifier in ["session.target.card", "session.target.heading", "session.target.line"] {
+            XCTAssertTrue(
+                app.descendants(matching: .any)[identifier].waitForExistence(timeout: 5),
+                "the normal workout should expose \(identifier)"
+            )
+        }
         let issues = try audit(app)
         if !issues.isEmpty { print("Session screen a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
@@ -393,7 +399,19 @@ final class AccessibilityAuditTests: XCTestCase {
         results.tap()
 
         XCTAssertTrue(app.navigationBars["Recommendation results"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["No reviewed plans yet"].waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.recommendationResults.screen"]
+                .waitForExistence(timeout: 5)
+        )
+        let empty = app.descendants(matching: .any)["settings.recommendationResults.empty"]
+        let populated = app.descendants(matching: .any)[
+            "settings.recommendationResults.summary.automaticTargets"
+        ]
+        XCTAssertTrue(
+            empty.waitForExistence(timeout: 5)
+                || populated.waitForExistence(timeout: 5),
+            "recommendation results should expose its empty or populated state"
+        )
     }
 
     /// Answers first-launch setup when it covers Train, then waits for a day
