@@ -535,6 +535,11 @@ struct TrainingSplitEditorView: View {
             Button(action: save) {
                 Text(isOnboarding ? "Get started" : "Save")
                     .font(.title3.bold())
+                    // The default white on the accent fill measured 2.53:1;
+                    // the system contrast audit named this button (#260).
+                    // Muted while disabled, where the fill is grey and
+                    // near-black would be the unreadable pairing instead.
+                    .foregroundStyle(canSave ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.secondary))
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
             }

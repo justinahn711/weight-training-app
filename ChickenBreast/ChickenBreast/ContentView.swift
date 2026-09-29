@@ -520,7 +520,11 @@ struct ContentView: View {
                             .foregroundStyle(.tint)
                     }
                     .padding(.horizontal, 20)
-                    .frame(height: 88)
+                    // A floor, not a fixed height: at larger text the two
+                    // lines outgrew 88pt and clipped, which the system audit
+                    // reported once `.textClipped` stopped being held (#260).
+                    .padding(.vertical, 12)
+                    .frame(minHeight: 88)
                     .frame(maxWidth: .infinity)
                     .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
                     .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.tint, lineWidth: 2))
@@ -932,6 +936,10 @@ private struct WorkoutPreviewView: View {
             Button(action: onStart) {
                 Text("Start workout")
                     .font(.title3.bold())
+                    // Same pairing as onboarding's "Get started", which the
+                    // contrast audit named (#260): white on the accent fill is
+                    // 2.53:1. Muted while disabled, on the grey fill.
+                    .foregroundStyle(session.exercises.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.onAccent))
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
             }
