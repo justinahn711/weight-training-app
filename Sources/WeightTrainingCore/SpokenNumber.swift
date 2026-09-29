@@ -49,7 +49,9 @@ enum SpokenNumber {
         // A leading word is fatal otherwise — "log 185" parsed as nothing at
         // all, losing the weight, while the trailing "185 pounds" was fine.
         // People say "log", "okay", "set", and recognisers prepend strays.
-        var index = words.firstIndex { single($0) != nil } ?? words.count
+        // "oh" is a number only inside one ("one oh five"); leading, it is
+        // the interjection.
+        var index = words.firstIndex { single($0) != nil && $0 != "oh" } ?? words.count
 
         while index < words.count {
             let word = words[index]
@@ -86,7 +88,26 @@ enum SpokenNumber {
                 let isHundredsShorthand = running.truncatingRemainder(dividingBy: 100) == 0
                     && value < 100
                 if isDigits && !isHundredsShorthand { break }
+
+                // The same rule for words, by place value (#267): a word only
+                // fills a place the number has left empty. "one eighty" has
+                // an empty ones place, so "five" makes 185; "one eighty five"
+                // is full, so another "five" is a second number — usually the
+                // rep count after a "for" the room swallowed. Summing it made
+                // a buildable 190 that auto-committed.
+                if !isDigits {
+                    let place: Double = value >= 10 ? 100 : 10
+                    if value == 0 || running.truncatingRemainder(dividingBy: place) != 0 { break }
+                }
                 total = running + value
+            } else if value < 10, value > 0,
+                      index + 2 < words.count, words[index + 1] == "oh",
+                      let ones = units[words[index + 2]], (1...9).contains(ones) {
+                // "one oh five" is 105: "oh" is the hundreds shorthand's
+                // spoken zero. It used to sum as 1 + 0 + 5 = 6.
+                total = value * 100
+                index += 2
+                continue
             } else if value < 10,
                       index + 1 < words.count,
                       let next = single(words[index + 1]),

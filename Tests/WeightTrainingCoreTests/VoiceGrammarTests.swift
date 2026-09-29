@@ -44,6 +44,40 @@ final class SpokenNumberTests: XCTestCase {
         XCTAssertNil(number(""))
     }
 
+    // MARK: - Number words stop at a complete number (#267)
+
+    /// A number word after a load that is already complete in the ones place
+    /// is a second number, exactly as #80 made a second *numeral*. The rep
+    /// marker is the syllable a loud gym eats, and folding the rep count into
+    /// the weight produced a buildable 190 that auto-committed.
+    func testANumberWordAfterACompleteLoadIsNotAddedToIt() {
+        XCTAssertEqual(number("one eighty five five"), 185, "used to be 190")
+        XCTAssertEqual(number("two twenty five five"), 225, "used to be 230")
+        XCTAssertEqual(number("one thirty five eight"), 135, "used to be 143")
+        XCTAssertEqual(number("forty five five"), 45)
+        XCTAssertEqual(number("185 five"), 185, "a word after a numeral too")
+    }
+
+    /// The shorthand the place-value rule has to leave alone.
+    func testWantedShorthandStillCombines() {
+        XCTAssertEqual(number("one eighty five"), 185)
+        XCTAssertEqual(number("two twenty five"), 225)
+        XCTAssertEqual(number("three fifteen"), 315)
+        XCTAssertEqual(number("a hundred and five"), 105)
+        XCTAssertEqual(number("one hundred eighty five"), 185)
+        XCTAssertEqual(number("two hundred and twenty five"), 225)
+        XCTAssertEqual(number("twenty five"), 25)
+        XCTAssertEqual(number("forty five"), 45)
+        XCTAssertEqual(number("one thousand eighty"), 1_080)
+    }
+
+    /// "oh" is the spoken zero of the hundreds shorthand. It used to sum as
+    /// 1 + 0 + 5 = 6.
+    func testOhAsTheHundredsShorthandZero() {
+        XCTAssertEqual(number("one oh five"), 105)
+        XCTAssertEqual(number("two oh five"), 205)
+    }
+
     // MARK: - Decimals (#264)
 
     /// A decimal numeral is one number, not two tokens with the fraction lost.
