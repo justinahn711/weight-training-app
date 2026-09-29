@@ -229,13 +229,14 @@ struct SettingsView: View {
             }
             .frame(minHeight: 44)
 
-            Stepper(value: weeklyTargetBinding, in: 1...7) {
-                LabeledContent(
-                    "Weekly goal",
-                    value: "\(gym.weeklySessionTarget) \(gym.weeklySessionTarget == 1 ? "day" : "days")"
-                )
+            // Stacked at accessibility sizes so "Weekly goal" isn't broken
+            // mid-word beside the −/+ control (#250).
+            StackedStepperRow(title: "Weekly goal", value: weeklyTargetText) {
+                Stepper(value: weeklyTargetBinding, in: 1...7) {
+                    LabeledContent("Weekly goal", value: weeklyTargetText)
+                }
+                .accessibilityIdentifier("settings.weeklySessionTarget")
             }
-            .accessibilityIdentifier("settings.weeklySessionTarget")
         } header: {
             Text("Training")
         } footer: {
@@ -253,6 +254,10 @@ struct SettingsView: View {
         var updated = gym
         updated.trainingSplit = split
         commit(updated)
+    }
+
+    private var weeklyTargetText: String {
+        "\(gym.weeklySessionTarget) \(gym.weeklySessionTarget == 1 ? "day" : "days")"
     }
 
     private var weeklyTargetBinding: Binding<Int> {
@@ -277,17 +282,19 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
 
-            Stepper(
-                value: barBinding,
-                in: gym.unit == .pounds ? 15...75 : 5...35,
-                step: gym.unit == .pounds ? 5 : 2.5
-            ) {
-                HStack {
-                    Text("Bar")
-                    Spacer(minLength: 12)
-                    Text(gym.unit.format(pounds: gym.barWeight.pounds))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
+            StackedStepperRow(title: "Bar", value: gym.unit.format(pounds: gym.barWeight.pounds)) {
+                Stepper(
+                    value: barBinding,
+                    in: gym.unit == .pounds ? 15...75 : 5...35,
+                    step: gym.unit == .pounds ? 5 : 2.5
+                ) {
+                    HStack {
+                        Text("Bar")
+                        Spacer(minLength: 12)
+                        Text(gym.unit.format(pounds: gym.barWeight.pounds))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         } header: {
