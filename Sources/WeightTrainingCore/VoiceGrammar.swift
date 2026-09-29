@@ -81,9 +81,10 @@ public enum VoiceGrammar {
     }
 
     /// Reps a person actually performs. Beyond this it's a weight or a
-    /// mishearing wearing a rep count's clothes.
+    /// mishearing wearing a rep count's clothes. A half rep is not a count
+    /// either — truncating 5.5 to 5 would invent one (#264).
     private static func plausibleReps(_ value: Double) -> Double? {
-        (1...100).contains(value) ? value : nil
+        (1...100).contains(value) && value == value.rounded() ? value : nil
     }
 
     /// Near enough to the RPE scale to be a mishearing of it.
@@ -99,12 +100,27 @@ public enum VoiceGrammar {
 
     // MARK: - Tokenizing
 
+    /// A dot is a decimal point between two digits and punctuation anywhere
+    /// else. Dictation writes "eight and a half" as `8.5`, and splitting on
+    /// every dot kept the 8 and threw the 5 away — RPE 8 auto-committed, and
+    /// a 32.5 kg stack set logged as 32 (#264).
+    private static let punctuationDot = try! NSRegularExpression(
+        pattern: #"(?<![0-9])\.|\.(?![0-9])"#
+    )
+
     private static func tokenize(_ transcript: String) -> [String] {
-        transcript
+        var text = transcript
             .lowercased()
             .replacingOccurrences(of: "×", with: " x ")
             .replacingOccurrences(of: "@", with: " at ")
-            .components(separatedBy: CharacterSet(charactersIn: " ,.-"))
+            // "8½" and "8 1/2" are the numeral spellings of "eight and a half".
+            .replacingOccurrences(of: "½", with: " and a half ")
+            .replacingOccurrences(of: " 1/2", with: " and a half ")
+        text = punctuationDot.stringByReplacingMatches(
+            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " "
+        )
+        return text
+            .components(separatedBy: CharacterSet(charactersIn: " ,-"))
             .filter { !$0.isEmpty }
             .flatMap(splittingUnitSuffix)
     }
@@ -206,7 +222,7 @@ public enum VoiceGrammar {
             // RPE goes — and absent is honest where invented is not. The
             // confirm step (#22) can only save you from what it shows you.
             case .reps: reps = reps ?? SpokenNumber.parse(pending).flatMap(plausibleReps)
-            case .rpe:  rpe = rpe ?? SpokenNumber.parseWithHalf(pending).flatMap(plausibleRPE)
+            case .rpe:  rpe = rpe ?? SpokenNumber.parse(pending).flatMap(plausibleRPE)
             }
             pending = []
         }
