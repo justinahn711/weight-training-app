@@ -187,6 +187,27 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The volume row's height, claimed at first paint (#115).
+    ///
+    /// Was a fixed `.frame(height: 44)` — 44 rather than 22, matching the
+    /// row's own minimum, because reserving less than the control needs made
+    /// the outer frame the real hit area, which is how a full-width row ended
+    /// up 18pt tall. But a fixed 44 is one line only at the default size: at
+    /// the accessibility sizes the row is taller than its slot and drew over
+    /// the digest row above it (#249). An invisible copy of one line of the
+    /// row, at whatever size the text is, reserves exactly what arrives.
+    private var volumeRowReservation: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text("Volume this week")
+                .lineLimit(1)
+        }
+        .font(.subheadline)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .hidden()
+        .accessibilityHidden(true)
+    }
+
     private var trainTab: some View {
         NavigationStack {
             Group {
@@ -390,6 +411,10 @@ struct ContentView: View {
                     .foregroundStyle(.primary)
                     .padding(.vertical, 10)
                     .padding(.horizontal, 14)
+                    // 41pt at the default size without this: one subheadline
+                    // line plus the padding came up 3pt short of a target a
+                    // thumb reliably finds (#249).
+                    .frame(minHeight: 44)
                     .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
                     .contentShape(Rectangle())
                 }
@@ -415,21 +440,48 @@ struct ContentView: View {
             // stack is centred between two Spacers, so a late height change
             // anywhere in it re-centres everything above as well. Dropping the
             // reservation here would relocate the #115 jump, not remove it.
-            Group {
+            ZStack {
+                volumeRowReservation
                 if let volume {
                     volumeRow(volume)
                 }
             }
-            // 44 rather than 22, matching the row's own minimum. The
-            // reservation still does its #115 job — the space is claimed at
-            // first paint so the day buttons never move under a thumb — but
-            // reserving less than the control needs made the outer frame the
-            // real hit area, which is how a full-width row ended up 18pt tall.
-            .frame(height: 44)
         }
     }
 
+    /// Centred when it fits, scrolled when it doesn't (#249).
+    ///
+    /// Was a bare `VStack` between two `Spacer`s. Taller than the screen —
+    /// an iPhone SE at the default size with the iCloud badge showing, or any
+    /// phone at the accessibility sizes — it overflowed at both ends: the
+    /// badge and the cycle line drew over the large title, the digest and
+    /// volume rows sat behind the tab bar, and a swipe moved nothing.
+    ///
+    /// The stack is floored at the viewport's height rather than wrapped in
+    /// `ViewThatFits`. When it fits, the floor gives the Spacers the same room
+    /// they had, so the screen looks exactly as it did and #115's reservation
+    /// below does the same job. When it doesn't, the Spacers collapse and the
+    /// stack pins to the top of the scroll view, so anything that arrives late
+    /// grows downward — and since #215 every late arrival sits below the day
+    /// buttons, so they cannot move at all. `ViewThatFits` would instead swap
+    /// between two different subtrees the moment the insights tipped the
+    /// height over the edge, which is the #115 jump in its worst form.
+    ///
+    /// `GeometryReader` rather than a height read back into `@State`: the
+    /// floor has to be right on the first frame, or the stack paints top-
+    /// aligned and then re-centres under a thumb.
     private var dayPicker: some View {
+        GeometryReader { viewport in
+            ScrollView {
+                dayStack
+                    .frame(maxWidth: .infinity, minHeight: viewport.size.height)
+            }
+            // No rubber-banding on a screen that has nothing to scroll to.
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+
+    private var dayStack: some View {
         VStack(spacing: 16) {
             Spacer()
 

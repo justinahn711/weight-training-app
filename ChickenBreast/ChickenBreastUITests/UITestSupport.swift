@@ -206,7 +206,12 @@ class ChickenBreastUITestCase: XCTestCase {
     @discardableResult
     func reachTrainScreen(_ app: XCUIApplication,
                           timeout: TimeInterval = 30) throws -> Bool {
-        let push = app.buttons["day.push"]
+        // Any day, not Push specifically, and not necessarily on screen: since
+        // Train scrolls (#249), the badge and the cycle line alone can fill an
+        // SE at the accessibility sizes, leaving every day below the fold.
+        // With the cover gone, a day that exists is a Train that has loaded;
+        // `openPushDay` scrolls to what it needs.
+        let day = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "day.")).firstMatch
         let resume = app.buttons["home.resume"]
         let save = app.buttons["splitEditor.save"]
 
@@ -235,7 +240,9 @@ class ChickenBreastUITestCase: XCTestCase {
                 }
                 save.tap()
             }
-            if (push.exists && push.isHittable) || (resume.exists && resume.isHittable) {
+            let coverGone = !save.exists
+            if (day.exists && (day.isHittable || coverGone))
+                || (resume.exists && (resume.isHittable || coverGone)) {
                 return true
             }
             Thread.sleep(forTimeInterval: 0.2)
@@ -255,13 +262,19 @@ class ChickenBreastUITestCase: XCTestCase {
         // order-dependent. Adopting the draft is the honest reaction: the goal
         // is to be in a session, and resuming reaches one.
         let resume = app.buttons["home.resume"]
+        let push = app.buttons["day.push"]
+        // Either can be below the fold at the accessibility sizes (#249).
+        var swipes = 0
+        while !(resume.exists && resume.isHittable) && !(push.exists && push.isHittable) && swipes < 4 {
+            app.swipeUp()
+            swipes += 1
+        }
         if resume.exists && resume.isHittable {
             resume.tap()
             return
         }
-        let push = app.buttons["day.push"]
         XCTAssertTrue(push.waitForExistence(timeout: 5) && push.isHittable,
-                      "the Push day should be offered and tappable")
+                      "the Push day should be offered and tappable, scrolling if it has to")
         push.tap()
     }
 
