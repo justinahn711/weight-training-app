@@ -56,22 +56,56 @@ class ChickenBreastUITestCase: XCTestCase {
     /// Issue types held open, with the reason each is still failing.
     ///
     /// Not a way to make the suite green. An entry here is a defect that has
-    /// been seen, named and left — the audit still runs, still reports it, and
-    /// the moment it stops firing the entry becomes a lie the next person
-    /// deletes. What it prevents is a suite that fails for a known reason,
-    /// because that suite gets ignored and then stops being run at all.
+    /// been seen, named and left. What it prevents is a suite that fails for
+    /// a known reason, because that suite gets ignored and then stops being
+    /// run at all. The moment an entry stops firing it becomes a lie the next
+    /// person deletes — and every entry names an open issue, so "is this still
+    /// true?" has somewhere to be answered. Empty is the goal.
     ///
-    /// Empty is the goal. Seven contrast and hit-area defects the audit named
-    /// on its first run were fixed in this change. What is held open needs a
-    /// layout decision rather than a colour swap:
+    /// Until #260 this held `.contrast`, `.textClipped` and `.dynamicType`,
+    /// justified by #113 and #138, which had both closed. Re-audited one type
+    /// at a time: `.textClipped` and `.dynamicType` now gate every audited
+    /// screen, with the few elements still firing held individually in
+    /// `heldElements` below. What is left here:
     ///
-    /// - `.dynamicType` — the session's set counter, exercise name, config
-    ///   line and the Next/Dumbbell-rack labels are laid out at fixed sizes.
-    ///   Letting them grow is #113's compact-layout work, not a one-line fix.
-    /// - `.textClipped` — the same lines, seen from the other side.
-    /// - `.contrast` — one case remains on the session screen, inside a
-    ///   control whose colours carry meaning; recolouring it needs the design
-    ///   answer #138 is already circling.
+    /// - `.contrast` — #276. Still fires on the session's quiet controls
+    ///   ("Next exercise", "More", the "Dumbbell rack" caption), which is a
+    ///   colour decision rather than a swap, and on the lift library's last
+    ///   rows, under the floating tab bar. It cannot be held per element: on
+    ///   repeat runs of one build the audit reported the same failures with
+    ///   `issue.element == nil`. Time was not the reason — enabling it moved
+    ///   an audit from ~0.5-2s to ~2-7s locally, nowhere near the -56 budget.
+    static let knownIssues: XCUIAccessibilityAuditType = [
+        .contrast,
+    ]
+
+    /// Single elements held open inside a type that otherwise gates (#260).
+    ///
+    /// Narrower than `knownIssues` on purpose: holding a whole type for one
+    /// element blinds the audit to every *new* defect of that type, which is
+    /// how the clipping #249 and #250 fixed reached a phone before a test.
+    /// Matched on the audit type and the start of the element's label, and
+    /// only while the element is still reported — each entry's issue says
+    /// what finishing it means.
+    struct HeldElement {
+        let type: XCUIAccessibilityAuditType
+        let labelPrefix: String
+        let issue: Int
+    }
+
+    static let heldElements: [HeldElement] = [
+        // `.lineLimit(1)` is what keeps #115's reservation exact; letting it
+        // wrap is a layout decision (#277).
+        HeldElement(type: .textClipped, labelPrefix: "Behind on ", issue: 277),
+        // Wraps and grows at AccessibilityXXXL by screenshot, yet reported
+        // deterministically; suspected audit false positive (#277).
+        HeldElement(type: .textClipped, labelPrefix: "Sleep and HRV from Health", issue: 277),
+        // The session's exercise title. Not `minimumScaleFactor` (removing it
+        // did not clear this); likely the compact layout swapping largeTitle
+        // for title2 at the accessibility sizes (#278).
+        HeldElement(type: .dynamicType, labelPrefix: "Incline DB Press", issue: 278),
+    ]
+
     /// The types actually audited — everything except what `knownIssues`
     /// holds open.
     ///
@@ -84,7 +118,7 @@ class ChickenBreastUITestCase: XCTestCase {
     /// The cost of this is real and worth naming: a held-open issue is no
     /// longer reported in the result bundle, so the backlog those entries
     /// describe stops being observable from a test run. That backlog is
-    /// written down in `knownIssues` below and tracked in #113 and #138, which
+    /// written down in `knownIssues` above and tracked in the issues it names, which
     /// is where it belongs — a comment nobody deletes beats a log nobody
     /// reads, and reliability of the checks that *do* gate is worth more.
     static let auditedTypes: XCUIAccessibilityAuditType = {
@@ -92,12 +126,6 @@ class ChickenBreastUITestCase: XCTestCase {
         all.subtract(knownIssues)
         return all
     }()
-
-    static let knownIssues: XCUIAccessibilityAuditType = [
-        .contrast,
-        .textClipped,
-        .dynamicType,
-    ]
 
     /// Runs the audit and names every element that fails.
     ///
@@ -167,25 +195,42 @@ class ChickenBreastUITestCase: XCTestCase {
 
     private func runAuditOnce(_ app: XCUIApplication) throws -> [String] {
         var seen: [String] = []
+        // Printed, so the -56 history (#193) has numbers in every CI log
+        // rather than only in the result bundle. Not printed on a thrown
+        // timeout, which `audit(_:)` reports on its own.
+        let started = Date()
         try app.performAccessibilityAudit(for: Self.auditedTypes) { issue in
-            let element = Self.describe(issue.element)
+            // The label is read once and shared by the log line and the hold
+            // check: each read is a round trip to the app (#193).
+            let label = issue.element?.label
+            let element = Self.describe(issue.element, label: label)
             let detail = "\(issue.auditType): \(issue.detailedDescription ?? "no detail") — \(element)"
             seen.append(detail)
+            // In the log as well as the bundle: the bundle's own description
+            // of a failure is "Contrast failed for SwiftUI.AccessibilityNode",
+            // which names no element (#260).
+            print("a11y issue: \(detail)")
             XCTContext.runActivity(named: "a11y issue") { $0.add(.init(string: detail)) }
-            // Suppressed only for the types listed above, and every issue is
-            // still recorded either way — so a held-open type reports the same
-            // detail it always did, it simply does not fail the run.
+            // Suppressed only for what is named above; every issue is still
+            // recorded either way.
             return Self.knownIssues.contains(issue.auditType)
+                || Self.isHeld(issue.auditType, label: label)
         }
+        print(String(format: "a11y audit took %.1fs (%@)", Date().timeIntervalSince(started), name))
         return seen
     }
 
     /// A cheap stand-in for `debugDescription` (see `audit(_:)` above): four
     /// properties XCTest already resolved for this one element, none of which
     /// walk its descendants the way `debugDescription` documents that it does.
-    private static func describe(_ element: XCUIElement?) -> String {
+    private static func describe(_ element: XCUIElement?, label: String?) -> String {
         guard let element else { return "unknown element" }
-        return "\(element.elementType) id=\"\(element.identifier)\" label=\"\(element.label)\" frame=\(element.frame)"
+        return "\(element.elementType) id=\"\(element.identifier)\" label=\"\(label ?? "")\" frame=\(element.frame)"
+    }
+
+    private static func isHeld(_ type: XCUIAccessibilityAuditType, label: String?) -> Bool {
+        guard let label else { return false }
+        return heldElements.contains { $0.type == type && label.hasPrefix($0.labelPrefix) }
     }
 
     /// Matched on code and message rather than domain: the domain XCTest uses
