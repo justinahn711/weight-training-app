@@ -158,14 +158,70 @@ enum SessionActivityRefresh {
         }
     }
 
+    // Each of the three below edits the activity and then makes the rest
+    // alerts match the rest it now shows (#261). The intent runs in the app's
+    // process but not through `SessionViewModel` — the session screen may
+    // never have been built — so this is the lock screen's copy of
+    // `SessionViewModel.syncRestAlerts()`. Each returns early, touching
+    // neither the activity nor the alerts, when there's no activity to act
+    // on, so a stale or duplicate delivery leaves the alerts as they were.
+
     static func afterLoggedSet(
         workoutID: String,
         setID: UUID,
         restStartedAt: Date,
-        restEndsAt: Date
+        restEndsAt: Date,
+        alerts: RestAlertScheduling = SystemRestAlerts()
     ) async {
         guard let activity = current(workoutID: workoutID) else { return }
-        var state = activity.content.state
+        let state = loggingSet(
+            setID,
+            restStartedAt: restStartedAt,
+            restEndsAt: restEndsAt,
+            in: activity.content.state
+        )
+        syncRestAlerts(to: state, using: alerts)
+        await activity.update(ActivityContent(state: state, staleDate: restEndsAt))
+    }
+
+    static func clearRest(
+        workoutID: String,
+        alerts: RestAlertScheduling = SystemRestAlerts()
+    ) async {
+        guard let activity = current(workoutID: workoutID) else { return }
+        let state = clearingRest(in: activity.content.state)
+        syncRestAlerts(to: state, using: alerts)
+        await activity.update(ActivityContent(state: state, staleDate: nil))
+    }
+
+    static func afterUndo(
+        workoutID: String,
+        setID: UUID,
+        alerts: RestAlertScheduling = SystemRestAlerts()
+    ) async {
+        guard let activity = current(workoutID: workoutID),
+              activity.content.state.lastLoggedSetID == setID else { return }
+        let before = activity.content.state
+        let state = undoing(setID, in: before)
+        // Only when the rest actually went: a hand-started rest outlives the
+        // undo, and its alerts with it.
+        if state.restEndsAt != before.restEndsAt {
+            syncRestAlerts(to: state, using: alerts)
+        }
+        await activity.update(ActivityContent(state: state, staleDate: state.restEndsAt))
+    }
+
+    // MARK: Pure state changes, so the decisions can be unit-tested
+
+    typealias State = SessionActivityAttributes.ContentState
+
+    static func loggingSet(
+        _ setID: UUID,
+        restStartedAt: Date,
+        restEndsAt: Date,
+        in state: State
+    ) -> State {
+        var state = state
         state.setsLogged += 1
         state.restStartedAt = restStartedAt
         state.restEndsAt = restEndsAt
@@ -177,28 +233,54 @@ enum SessionActivityRefresh {
         state.restSetID = setID
         state.lastLoggedSetID = setID
         state.logActionID = UUID()
-        await activity.update(ActivityContent(state: state, staleDate: restEndsAt))
+        return state
     }
 
-    static func clearRest(workoutID: String) async {
-        guard let activity = current(workoutID: workoutID) else { return }
-        var state = activity.content.state
+    static func clearingRest(in state: State) -> State {
+        var state = state
         state.restStartedAt = nil
         state.restEndsAt = nil
         state.restSetID = nil
-        await activity.update(ActivityContent(state: state, staleDate: nil))
+        return state
     }
 
-    static func afterUndo(workoutID: String, setID: UUID) async {
-        guard let activity = current(workoutID: workoutID),
-              activity.content.state.lastLoggedSetID == setID else { return }
-        var state = activity.content.state
+    /// Takes the set back, and the rest only if that set started it — the
+    /// same rule as `SessionViewModel.undoRecentlyLoggedSet` (#8). An
+    /// activity from before #200 carries neither `restStartedAt` nor
+    /// `restSetID`, and every rest it could show was the logged set's, which
+    /// is how `RestTimer.reconciled` reads it too.
+    static func undoing(_ setID: UUID, in state: State) -> State {
+        var state = state
+        let restBelongsToSet = state.restSetID == setID
+            || (state.restSetID == nil && state.restStartedAt == nil)
         state.setsLogged = max(0, state.setsLogged - 1)
-        state.restStartedAt = nil
-        state.restEndsAt = nil
-        state.restSetID = nil
+        if restBelongsToSet {
+            state = clearingRest(in: state)
+        }
         state.lastLoggedSetID = nil
         state.logActionID = UUID()
-        await activity.update(ActivityContent(state: state, staleDate: nil))
+        return state
+    }
+
+    /// The pending alerts for whatever rest `state` shows: the pair for it,
+    /// named by the lift and target on the lock screen, or none. Settings'
+    /// toggle is honoured inside `RestNotification.schedule`.
+    static func syncRestAlerts(to state: State, using alerts: RestAlertScheduling) {
+        guard let endsAt = state.restEndsAt else {
+            alerts.cancel()
+            return
+        }
+        // Only the end and the check-in matter to the alerts, and both hang
+        // off `endsAt`; an activity without a start time still gets them.
+        let startedAt = state.restStartedAt ?? endsAt
+        alerts.schedule(
+            for: RestTimer(
+                startedAt: startedAt,
+                duration: max(0, endsAt.timeIntervalSince(startedAt)),
+                setID: state.restSetID
+            ),
+            exercise: state.exerciseName,
+            next: state.targetLine
+        )
     }
 }

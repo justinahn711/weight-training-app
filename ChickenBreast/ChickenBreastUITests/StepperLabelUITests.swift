@@ -101,10 +101,10 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
             .map { rows.element(boundBy: $0) }
             .first { $0.frame.minY >= navBottom && $0.frame.maxY <= window.maxY }
         XCTAssertNotNil(row, "a set row should be fully on screen")
-        // The row's text, not the row: a `.plain` button only hit-tests its
-        // drawn content, and at this size the row's centre falls in the gap
-        // between "45 lb × 5" and "RPE 8" — a tap there does nothing.
-        row?.staticTexts.firstMatch.tap()
+        // The row's centre, deliberately: at this size it falls in the gap
+        // between "45 lb × 5" and "RPE 8", which a `.plain` button without a
+        // content shape doesn't hit-test — a tap there did nothing (#258).
+        row?.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let opened = app.staticTexts["Correct set"].waitForExistence(timeout: 5)
         XCTAssertTrue(opened, "Correct set should open on the tapped row")
 

@@ -967,6 +967,240 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.session.allLoggedSets.isEmpty)
         XCTAssertNil(vm.failure)
     }
+
+    // MARK: - Rest alerts follow the rest (#261, #263)
+
+    /// The reconcilable fixture with a recorder standing in for the
+    /// notification centre, and a second seeded lift to swap to.
+    private func makeAlertedViewModel() throws -> (
+        vm: SessionViewModel, alerts: RecordingRestAlerts, other: Exercise
+    ) {
+        let store = try TrainingStore.inMemory()
+        let seeded = try store.seedLibraryIfNeeded()
+        let exercise = try XCTUnwrap(seeded.first)
+        let other = try XCTUnwrap(seeded.first { $0.id != exercise.id })
+        let session = Session(
+            kind: .push,
+            exercises: [SessionExercise(
+                exercise: exercise,
+                prescription: Prescription(load: Load(135), reps: 5, rpe: .eight)
+            )],
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let alerts = RecordingRestAlerts()
+        let vm = SessionViewModel(store: store, session: session, draftID: UUID(), restAlerts: alerts)
+        return (vm, alerts, other)
+    }
+
+    func test_restAlerts_loggingASetSchedulesThePairForItsRest() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        let rest = try XCTUnwrap(vm.rest)
+        XCTAssertEqual(alerts.pending?.rest, rest)
+        XCTAssertEqual(alerts.pending?.exercise, vm.current?.exercise.name)
+    }
+
+    func test_restAlerts_skipCancels() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        vm.skipRest()
+        XCTAssertNil(vm.rest)
+        XCTAssertNil(alerts.pending)
+    }
+
+    func test_restAlerts_undoingTheRestingSetCancels() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        let logged = try XCTUnwrap(vm.recentlyLoggedSet)
+        vm.undoRecentlyLoggedSet(id: logged.id)
+        XCTAssertNil(vm.rest)
+        XCTAssertNil(alerts.pending)
+    }
+
+    /// #263 part 1: swapping the visible lift clears the rest on purpose, so
+    /// its alerts have to go with it.
+    func test_restAlerts_swappingTheVisibleLiftMidRestCancels() throws {
+        let (vm, alerts, other) = try makeAlertedViewModel()
+        vm.logSet()
+        XCTAssertNotNil(alerts.pending)
+        let visible = try XCTUnwrap(vm.current)
+
+        vm.swap(visible, to: other)
+
+        XCTAssertNil(vm.rest, "a swap ends the rest (unchanged)")
+        XCTAssertNil(alerts.pending, "and no alert may outlive it")
+    }
+
+    /// Leaving still takes the alerts down, alongside the Live Activity.
+    func test_restAlerts_leavingCancels() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        vm.leaveSession()
+        XCTAssertNotNil(vm.rest, "the model keeps the rest across Leave")
+        XCTAssertNil(alerts.pending)
+    }
+
+    /// #263 part 2: Resume brings the rest back on screen and on the lock
+    /// screen, so it has to bring its alerts back too.
+    func test_restAlerts_resumingAfterLeaveReschedulesForTheSameRest() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        let rest = try XCTUnwrap(vm.rest)
+        vm.leaveSession()
+
+        // What `SessionView.onAppear` calls on Resume.
+        vm.reconcileLiveActivityActions()
+
+        XCTAssertEqual(vm.rest, rest)
+        XCTAssertEqual(alerts.pending?.rest, rest)
+    }
+
+    /// Resume with no rest running must not invent alerts.
+    func test_restAlerts_resumingWithNoRestSchedulesNothing() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        vm.skipRest()
+        vm.leaveSession()
+        vm.reconcileLiveActivityActions()
+        XCTAssertNil(alerts.pending)
+    }
+
+    // MARK: - When each alert fires (#263)
+
+    private let planNow = Date(timeIntervalSince1970: 1_700_000_000)
+
+    func test_restAlertPlan_bothPendingBeforeTheTarget() {
+        let rest = RestTimer(startedAt: planNow, duration: 180, setID: nil)
+        let plan = RestNotification.plan(for: rest, now: planNow.addingTimeInterval(30))
+        XCTAssertEqual(plan.completionIn, 150)
+        XCTAssertEqual(plan.idleCheckIn, 750)
+    }
+
+    /// A rest resumed after its target has passed still owes the check-in.
+    func test_restAlertPlan_onlyTheCheckInOncePastTheTarget() {
+        let rest = RestTimer(startedAt: planNow, duration: 180, setID: nil)
+        let plan = RestNotification.plan(for: rest, now: planNow.addingTimeInterval(300))
+        XCTAssertNil(plan.completionIn)
+        XCTAssertEqual(plan.idleCheckIn, 480)
+    }
+
+    func test_restAlertPlan_nothingOnceExpired() {
+        let rest = RestTimer(startedAt: planNow, duration: 180, setID: nil)
+        let plan = RestNotification.plan(for: rest, now: planNow.addingTimeInterval(780))
+        XCTAssertNil(plan.completionIn)
+        XCTAssertNil(plan.idleCheckIn)
+    }
+
+    // MARK: - Lock-screen intents keep the alerts in step (#261)
+    //
+    // `SessionActivityRefresh`'s ActivityKit half needs a running activity,
+    // which this host can't make; these cover the decisions it makes — what
+    // the activity will show, and which alerts that implies.
+
+    private func activityState(
+        lastLoggedSetID: UUID? = nil,
+        restSetID: UUID? = nil,
+        restStartedAt: Date? = nil,
+        restEndsAt: Date? = nil
+    ) -> SessionActivityAttributes.ContentState {
+        SessionActivityAttributes.ContentState(
+            exerciseName: "Bench Press",
+            targetLine: "135 lb × 8",
+            setsLogged: 2,
+            exerciseID: UUID(),
+            targetPounds: 135,
+            targetReps: 8,
+            targetRPE: 8,
+            logActionID: UUID(),
+            lastLoggedSetID: lastLoggedSetID,
+            restEndsAt: restEndsAt,
+            restStartedAt: restStartedAt,
+            restSetID: restSetID
+        )
+    }
+
+    /// Log (lock screen): the pair is replaced by one for the new rest,
+    /// named by what the lock screen shows.
+    func test_intentAlerts_logSchedulesThePairForTheNewRest() {
+        let alerts = RecordingRestAlerts()
+        let setID = UUID()
+        let state = SessionActivityRefresh.loggingSet(
+            setID,
+            restStartedAt: planNow,
+            restEndsAt: planNow.addingTimeInterval(180),
+            in: activityState()
+        )
+        SessionActivityRefresh.syncRestAlerts(to: state, using: alerts)
+
+        XCTAssertEqual(alerts.pending?.rest.endsAt, planNow.addingTimeInterval(180))
+        XCTAssertEqual(alerts.pending?.rest.expiresAt,
+                       planNow.addingTimeInterval(180 + RestTimer.maximumOverrun))
+        XCTAssertEqual(alerts.pending?.exercise, "Bench Press")
+        XCTAssertEqual(alerts.pending?.next, "135 lb × 8")
+    }
+
+    /// End rest (lock screen): both alerts go.
+    func test_intentAlerts_endRestCancels() {
+        let alerts = RecordingRestAlerts()
+        let resting = activityState(restSetID: UUID(), restStartedAt: planNow,
+                                    restEndsAt: planNow.addingTimeInterval(180))
+        SessionActivityRefresh.syncRestAlerts(to: resting, using: alerts)
+        XCTAssertNotNil(alerts.pending)
+
+        SessionActivityRefresh.syncRestAlerts(
+            to: SessionActivityRefresh.clearingRest(in: resting), using: alerts
+        )
+        XCTAssertNil(alerts.pending)
+    }
+
+    /// Undo (lock screen) of the set the rest belongs to clears the rest,
+    /// which is what cancels its alerts.
+    func test_intentAlerts_undoOfTheRestingSetClearsTheRest() {
+        let setID = UUID()
+        let resting = activityState(lastLoggedSetID: setID, restSetID: setID,
+                                    restStartedAt: planNow,
+                                    restEndsAt: planNow.addingTimeInterval(180))
+        let undone = SessionActivityRefresh.undoing(setID, in: resting)
+        XCTAssertNil(undone.restEndsAt)
+        XCTAssertNil(undone.lastLoggedSetID)
+        XCTAssertEqual(undone.setsLogged, 1)
+    }
+
+    /// A hand-started rest isn't the undone set's, so it and its alerts
+    /// stay — the rule `undoRecentlyLoggedSet` follows (#8).
+    func test_intentAlerts_undoLeavesAHandStartedRestAlone() {
+        let setID = UUID()
+        let resting = activityState(lastLoggedSetID: setID, restSetID: nil,
+                                    restStartedAt: planNow,
+                                    restEndsAt: planNow.addingTimeInterval(180))
+        let undone = SessionActivityRefresh.undoing(setID, in: resting)
+        XCTAssertEqual(undone.restEndsAt, resting.restEndsAt)
+        XCTAssertNil(undone.lastLoggedSetID)
+    }
+}
+
+/// Stands in for the notification centre: holds the one pair that would be
+/// pending, the way `rest-complete`/`rest-idle-check` replace rather than
+/// accumulate.
+final class RecordingRestAlerts: RestAlertScheduling {
+    struct Pending: Equatable {
+        var rest: RestTimer
+        var exercise: String
+        var next: String?
+    }
+
+    private(set) var pending: Pending?
+    private(set) var calls: [String] = []
+
+    func schedule(for rest: RestTimer, exercise: String, next: String?) {
+        pending = Pending(rest: rest, exercise: exercise, next: next)
+        calls.append("schedule")
+    }
+
+    func cancel() {
+        pending = nil
+        calls.append("cancel")
+    }
 }
 
 private extension Exercise {
@@ -1029,6 +1263,14 @@ private extension Exercise {
 // `RestTimerTests`, which is where that logic actually lives. Only the wiring
 // (does tapping the button call `startRest`, does `startRest` reach for
 // `Exercise.restTarget`) is left to the simulator, same as `logSet` above.
+//
+// #261/#263 narrowed the notification half of that: `SessionViewModel`
+// now reaches the centre only through an injected `RestAlertScheduling`, so
+// the "Rest alerts follow the rest" section drives `logSet`, `skipRest`,
+// `undoRecentlyLoggedSet`, `swap` and Leave/Resume with a recorder in its
+// place. Whether a scheduled alert is actually delivered, and whether a
+// lock-screen intent reaches `SessionActivityRefresh` at all, is still the
+// phone's to say.
 //
 // `swapCandidates` and `searchResults` are pure given `allExercises`, but
 // `allExercises` is a private property only populated by
