@@ -124,7 +124,12 @@ jobs:
     # the app target, and it runs the actual simulator, so it needs a matching
     # simulator runtime too.
     runs-on: macos-26
-    timeout-minutes: 20
+    # Was 20. By #249 the suite had grown to 17 tests — SessionFlowUITests
+    # alone runs ~9 minutes on this runner, after ~5 of build — and the job was
+    # cancelled mid-TrainLayoutUITests with every earlier test green. A
+    # timeout that cancels a passing suite reads as red and teaches nobody
+    # anything; 35 leaves room for the next few tests without hiding a hang.
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v4
