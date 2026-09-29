@@ -83,6 +83,14 @@ final class TrainLayoutUITests: ChickenBreastUITestCase {
         // 2. The digest and volume rows can be scrolled fully above the tab bar.
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.exists, "the tab bar should be on screen")
+        // The Health card only shows until Health has been answered, so it is
+        // evidence rather than an assertion: #249 found it truncated to
+        // "Use re…" / "Sleep an…" at AccessibilityXXXL.
+        let health = app.staticTexts["Use recovery data"]
+        if health.exists, scrollUntilClearOfTabBar(health, tabBar: tabBar, in: app) {
+            print("#249 [\(sizeName)] health card title frame: \(health.frame)")
+            attachScreenshot(app, "\(sizeName)-train-health-card")
+        }
         for (name, row) in [("digest", digest), ("volume", volume)] {
             let visible = scrollUntilClearOfTabBar(row, tabBar: tabBar, in: app)
             print("#249 [\(sizeName)] \(name) row frame: \(row.frame) hittable: \(row.isHittable) tab bar minY: \(tabBar.frame.minY)")
