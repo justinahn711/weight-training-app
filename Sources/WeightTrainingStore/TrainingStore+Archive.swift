@@ -82,7 +82,13 @@ extension TrainingStore {
         // Exercises and templates first. A set whose exercise is missing stays
         // on disk but drops out of history and volume until the lift exists,
         // so the lift should exist by the time the set lands.
-        try upsert(archive.exercises)
+        // Every restored row is stamped with when the file was written, not
+        // with now: it holds what was true then. A lift edited on another
+        // device after the export carries a later stamp and survives the
+        // dedupe below, rather than losing to the older copy restored here
+        // (#268) — the same reasoning the gym row already follows.
+        let stamp = EditStamp.at(archive.exportedAt)
+        try upsert(archive.exercises, stampedAt: stamp)
         report.exercises = archive.exercises.count
 
         do {
@@ -91,16 +97,16 @@ extension TrainingStore {
                 archive.dayTemplates,
                 key: \DayTemplate.id,
                 storedKey: \StoredDayTemplate.id,
-                make: StoredDayTemplate.init,
-                update: { $0.update(from: $1) }
+                make: { StoredDayTemplate($0, updatedAt: stamp) },
+                update: { $0.update(from: $1); $0.updatedAt = stamp }
             )
 
             report.sets = try merge(
                 archive.sets,
                 key: \SetRecord.id,
                 storedKey: \StoredSetLog.id,
-                make: StoredSetLog.init,
-                update: { $0.update(from: $1) }
+                make: { StoredSetLog($0, updatedAt: stamp) },
+                update: { $0.update(from: $1); $0.updatedAt = stamp }
             )
 
             report.progressStates = try mergeProgressStates(archive.progressStates)
