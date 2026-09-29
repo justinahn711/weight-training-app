@@ -814,12 +814,16 @@ private struct EditSetView: View {
                     // Stepped by the lift's own increment, so a correction
                     // can't produce a weight the equipment can't be set to
                     // (#20, #39).
-                    Stepper(value: poundsBinding, in: 0...2000, step: exercise.increment.pounds) {
-                        // Stepped in pounds because that is what is stored, but
-                        // read in the unit the lifter uses (#67) — the step
-                        // itself is the equipment's own, so the numbers land
-                        // where the equipment does.
-                        LabeledContent("Weight", value: format(pounds))
+                    // Stacked at accessibility sizes so "Weight" and "Reps"
+                    // aren't broken mid-word beside the −/+ control (#250).
+                    StackedStepperRow(title: "Weight", value: format(pounds)) {
+                        Stepper(value: poundsBinding, in: 0...2000, step: exercise.increment.pounds) {
+                            // Stepped in pounds because that is what is stored, but
+                            // read in the unit the lifter uses (#67) — the step
+                            // itself is the equipment's own, so the numbers land
+                            // where the equipment does.
+                            LabeledContent("Weight", value: format(pounds))
+                        }
                     }
                     // Direct entry beside the stepper rather than behind
                     // another sheet (#218) — a big correction is common
@@ -840,8 +844,10 @@ private struct EditSetView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Stepper(value: $reps, in: 1...50) {
-                        LabeledContent("Reps", value: "\(reps)")
+                    StackedStepperRow(title: "Reps", value: "\(reps)") {
+                        Stepper(value: $reps, in: 1...50) {
+                            LabeledContent("Reps", value: "\(reps)")
+                        }
                     }
                 } header: {
                     Text(exercise.name)
