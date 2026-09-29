@@ -26,17 +26,42 @@ enum SpokenNumber {
     /// followed by anything twenty or above is a hundreds count — which is
     /// exactly how plate weights get said out loud.
     ///
+    /// A half is part of the number wherever it's said — "eight and a half",
+    /// "eight point five", "sixty two point five", "two and a half" (#264).
+    /// Loads, adjustments and RPE all read numbers the same way, so a half
+    /// can't survive in one field and vanish in another.
+    ///
     /// - Returns: nil when the words contain no number at all.
     static func parse(_ words: [String]) -> Double? {
+        read(words)?.value
+    }
+
+    /// A number read from the front of a run of words, and where it stopped.
+    struct Reading: Equatable {
+        let value: Double
+        /// The index of the first word the number did not use.
+        let end: Int
+    }
+
+    static func read(_ words: [String]) -> Reading? {
         var total: Double?
         // Skip anything before the first number rather than giving up at it.
         // A leading word is fatal otherwise — "log 185" parsed as nothing at
         // all, losing the weight, while the trailing "185 pounds" was fine.
         // People say "log", "okay", "set", and recognisers prepend strays.
-        var index = words.firstIndex { single($0) != nil } ?? words.count
+        // "oh" is a number only inside one ("one oh five"); leading, it is
+        // the interjection.
+        var index = words.firstIndex { single($0) != nil && $0 != "oh" } ?? words.count
 
         while index < words.count {
             let word = words[index]
+
+            // "and a half" ends the number: "eight and a half" -> 8.5.
+            if let whole = total, isAndAHalf(words, at: index) {
+                total = whole + 0.5
+                index += 3
+                break
+            }
 
             // "and" is noise inside a number: "two hundred and twenty five".
             if word == "and", total != nil {
@@ -63,7 +88,26 @@ enum SpokenNumber {
                 let isHundredsShorthand = running.truncatingRemainder(dividingBy: 100) == 0
                     && value < 100
                 if isDigits && !isHundredsShorthand { break }
+
+                // The same rule for words, by place value (#267): a word only
+                // fills a place the number has left empty. "one eighty" has
+                // an empty ones place, so "five" makes 185; "one eighty five"
+                // is full, so another "five" is a second number — usually the
+                // rep count after a "for" the room swallowed. Summing it made
+                // a buildable 190 that auto-committed.
+                if !isDigits {
+                    let place: Double = value >= 10 ? 100 : 10
+                    if value == 0 || running.truncatingRemainder(dividingBy: place) != 0 { break }
+                }
                 total = running + value
+            } else if value < 10, value > 0,
+                      index + 2 < words.count, words[index + 1] == "oh",
+                      let ones = units[words[index + 2]], (1...9).contains(ones) {
+                // "one oh five" is 105: "oh" is the hundreds shorthand's
+                // spoken zero. It used to sum as 1 + 0 + 5 = 6.
+                total = value * 100
+                index += 2
+                continue
             } else if value < 10,
                       index + 1 < words.count,
                       let next = single(words[index + 1]),
@@ -81,39 +125,35 @@ enum SpokenNumber {
             index += 1
         }
 
-        return total
+        guard var value = total else { return nil }
+
+        // "eight point five", "sixty two point five". One digit after the
+        // point is all anyone says; "point eight" off the RPE grid still
+        // snaps later, which is what "seven point eight" relies on.
+        if index + 1 < words.count, words[index] == "point",
+           let tenth = single(words[index + 1]), (0...9).contains(tenth),
+           tenth == tenth.rounded() {
+            value += tenth / 10
+            index += 2
+        } else if index < words.count, words[index] == "half" {
+            // "eight half" — the "and a" swallowed by the room.
+            value += 0.5
+            index += 1
+        }
+
+        return Reading(value: value, end: index)
+    }
+
+    private static func isAndAHalf(_ words: [String], at index: Int) -> Bool {
+        index + 2 < words.count
+            && words[index] == "and" && words[index + 1] == "a" && words[index + 2] == "half"
     }
 
     /// A single token's numeric value, if it has one.
     static func single(_ word: String) -> Double? {
-        if let digits = Double(word) { return digits }
+        if let digits = Double(word), digits.isFinite { return digits }
         if word == "hundred" { return 100 }
         if word == "thousand" { return 1_000 }
         return units[word] ?? tens[word]
-    }
-
-    /// Parses a number that may carry a half — "eight and a half", "eight
-    /// point five", "eight five" after an "at".
-    static func parseWithHalf(_ words: [String]) -> Double? {
-        // "eight point five"
-        if let pointIndex = words.firstIndex(of: "point"),
-           let whole = parse(Array(words[..<pointIndex])),
-           let fraction = parse(Array(words[(pointIndex + 1)...])) {
-            return whole + (fraction == 5 ? 0.5 : fraction / 10)
-        }
-
-        // "eight and a half"
-        if let andIndex = words.firstIndex(of: "and"),
-           Array(words.suffix(from: min(andIndex + 1, words.count)).prefix(2)) == ["a", "half"],
-           let whole = parse(Array(words[..<andIndex])) {
-            return whole + 0.5
-        }
-
-        if words.last == "half", words.count >= 2,
-           let whole = parse(Array(words.dropLast())) {
-            return whole + 0.5
-        }
-
-        return parse(words)
     }
 }

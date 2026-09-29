@@ -33,15 +33,60 @@ final class SpokenNumberTests: XCTestCase {
 
     func testHalves() {
         let words = { (phrase: String) in phrase.split(separator: " ").map(String.init) }
-        XCTAssertEqual(SpokenNumber.parseWithHalf(words("eight and a half")), 8.5)
-        XCTAssertEqual(SpokenNumber.parseWithHalf(words("eight point five")), 8.5)
-        XCTAssertEqual(SpokenNumber.parseWithHalf(words("nine and a half")), 9.5)
-        XCTAssertEqual(SpokenNumber.parseWithHalf(words("eight")), 8)
+        XCTAssertEqual(SpokenNumber.parse(words("eight and a half")), 8.5)
+        XCTAssertEqual(SpokenNumber.parse(words("eight point five")), 8.5)
+        XCTAssertEqual(SpokenNumber.parse(words("nine and a half")), 9.5)
+        XCTAssertEqual(SpokenNumber.parse(words("eight")), 8)
     }
 
     func testNonNumbersParseToNothing() {
         XCTAssertNil(number("left shoulder felt off"))
         XCTAssertNil(number(""))
+    }
+
+    // MARK: - Number words stop at a complete number (#267)
+
+    /// A number word after a load that is already complete in the ones place
+    /// is a second number, exactly as #80 made a second *numeral*. The rep
+    /// marker is the syllable a loud gym eats, and folding the rep count into
+    /// the weight produced a buildable 190 that auto-committed.
+    func testANumberWordAfterACompleteLoadIsNotAddedToIt() {
+        XCTAssertEqual(number("one eighty five five"), 185, "used to be 190")
+        XCTAssertEqual(number("two twenty five five"), 225, "used to be 230")
+        XCTAssertEqual(number("one thirty five eight"), 135, "used to be 143")
+        XCTAssertEqual(number("forty five five"), 45)
+        XCTAssertEqual(number("185 five"), 185, "a word after a numeral too")
+    }
+
+    /// The shorthand the place-value rule has to leave alone.
+    func testWantedShorthandStillCombines() {
+        XCTAssertEqual(number("one eighty five"), 185)
+        XCTAssertEqual(number("two twenty five"), 225)
+        XCTAssertEqual(number("three fifteen"), 315)
+        XCTAssertEqual(number("a hundred and five"), 105)
+        XCTAssertEqual(number("one hundred eighty five"), 185)
+        XCTAssertEqual(number("two hundred and twenty five"), 225)
+        XCTAssertEqual(number("twenty five"), 25)
+        XCTAssertEqual(number("forty five"), 45)
+        XCTAssertEqual(number("one thousand eighty"), 1_080)
+    }
+
+    /// "oh" is the spoken zero of the hundreds shorthand. It used to sum as
+    /// 1 + 0 + 5 = 6.
+    func testOhAsTheHundredsShorthandZero() {
+        XCTAssertEqual(number("one oh five"), 105)
+        XCTAssertEqual(number("two oh five"), 205)
+    }
+
+    // MARK: - Decimals (#264)
+
+    /// A decimal numeral is one number, not two tokens with the fraction lost.
+    func testDecimalsAndSpokenPointsAreOneNumber() {
+        XCTAssertEqual(number("62.5"), 62.5)
+        XCTAssertEqual(number("sixty two point five"), 62.5)
+        XCTAssertEqual(number("two and a half"), 2.5)
+        XCTAssertEqual(number("eight and a half"), 8.5)
+        XCTAssertEqual(number("eight point five"), 8.5)
     }
 }
 
@@ -258,6 +303,84 @@ final class VoiceGrammarTests: XCTestCase {
     }
 }
 
+/// Decimals survive tokenizing (#264).
+///
+/// iOS dictation writes "eight and a half" as `8.5`, and the tokenizer split
+/// on the dot: `8` and `5`, the `5` discarded. When the truncated value was
+/// still valid nothing refused or snapped it, so RPE 8.5 auto-committed as 8
+/// and a 32.5 kg stack set as 32.
+final class VoiceDecimalTests: XCTestCase {
+
+    private func set(_ phrase: String, in unit: MassUnit = .pounds)
+        -> (load: Load?, reps: Int?, rpe: RPE?)? {
+        guard case .logSet(let load, let reps, let rpe)? =
+                VoiceGrammar.parse(phrase, in: unit)?.command else { return nil }
+        return (load, reps, rpe)
+    }
+
+    func testADecimalRPEIsKept() throws {
+        for (phrase, expected) in [
+            ("185 for 5 at 8.5", 8.5), ("185 for 5 at 7.5", 7.5),
+            ("185 for 5 at 9.5", 9.5), ("185 for 5 at 8 1/2", 8.5),
+            ("185 for 5 at 8½", 8.5), ("185 x 5 @ 8.5", 8.5),
+        ] {
+            let heard = try XCTUnwrap(set(phrase), phrase)
+            XCTAssertEqual(heard.rpe, RPE(expected), phrase)
+            XCTAssertEqual(heard.load, Load(185), phrase)
+            XCTAssertEqual(heard.reps, 5, phrase)
+        }
+    }
+
+    func testADecimalRPEInAKilogramGym() throws {
+        let heard = try XCTUnwrap(set("60 for 5 at 8.5", in: .kilograms))
+        XCTAssertEqual(heard.rpe, RPE(8.5))
+        XCTAssertEqual(heard.load?.value(in: .kilograms) ?? 0, 60, accuracy: 0.0001)
+    }
+
+    /// The load is heard exactly; snapping is the snapper's job, not the
+    /// tokenizer's.
+    func testADecimalLoadIsHeardExactly() throws {
+        for (phrase, kilograms) in [
+            ("62.5 for 5", 62.5), ("62.5 kilos for 5", 62.5), ("62.5kg for 5", 62.5),
+            ("32.5 for 10", 32.5), ("27.5 for 10", 27.5), ("102.5 for 3", 102.5),
+            ("sixty two point five for 5", 62.5),
+            ("sixty two point five kilos for 5", 62.5),
+        ] {
+            let heard = try XCTUnwrap(set(phrase, in: .kilograms), phrase)
+            XCTAssertEqual(heard.load?.value(in: .kilograms) ?? 0, kilograms,
+                           accuracy: 0.0001, phrase)
+        }
+    }
+
+    func testADecimalAdjustment() throws {
+        for phrase in ["add 2.5", "add two and a half", "up 2.5"] {
+            guard case .adjustLoad(let by)? = VoiceGrammar.parse(phrase)?.command else {
+                return XCTFail("expected an adjustment from \(phrase)")
+            }
+            XCTAssertEqual(by.pounds, 2.5, accuracy: 0.0001, phrase)
+        }
+        guard case .adjustLoad(let by)? = VoiceGrammar.parse("drop 2.5 kilos")?.command else {
+            return XCTFail("expected an adjustment")
+        }
+        XCTAssertEqual(by.value(in: .kilograms), -2.5, accuracy: 0.0001)
+    }
+
+    /// The period that ends a sentence is still punctuation, not a decimal.
+    func testASentenceEndingPeriodIsStillPunctuation() throws {
+        let heard = try XCTUnwrap(set("185 for 5."))
+        XCTAssertEqual(heard.load, Load(185))
+        XCTAssertEqual(heard.reps, 5)
+        let full = try XCTUnwrap(set("185 for 5 at 8.5."))
+        XCTAssertEqual(full.rpe, RPE(8.5))
+    }
+
+    /// A half rep is not a rep count, and truncating it to 5 would invent one.
+    func testAHalfRepIsNotTruncated() throws {
+        let heard = try XCTUnwrap(set("185 for 5.5"))
+        XCTAssertNotEqual(heard.reps, 5)
+    }
+}
+
 /// Hearing a unit that was said out loud, and defaulting to the gym's (#67, #21).
 final class VoiceUnitTests: XCTestCase {
 
@@ -318,11 +441,14 @@ final class VoiceUnitTests: XCTestCase {
         XCTAssertEqual(by.value(in: .kilograms), 5, accuracy: 0.0001)
     }
 
-    /// Naming the unit is grammar, so it lifts the utterance out of the
-    /// shown-but-never-committed case a bare number falls into (#22).
-    func testNamingTheUnitMakesABareNumberConfident() throws {
+    /// Naming the unit settles what the number *is* — a weight in kilos —
+    /// but not that a set was said: the reps would still come from the form.
+    /// So it's still shown, never committed (#274, which narrowed #67's rule).
+    /// With reps heard, the unit is grammar like any other.
+    func testNamingTheUnitDoesNotMakeAWeightAloneASet() throws {
         XCTAssertFalse(try XCTUnwrap(VoiceGrammar.parse("sixty")).isConfident)
-        XCTAssertTrue(try XCTUnwrap(VoiceGrammar.parse("sixty kilos")).isConfident)
+        XCTAssertFalse(try XCTUnwrap(VoiceGrammar.parse("sixty kilos")).isConfident)
+        XCTAssertTrue(try XCTUnwrap(VoiceGrammar.parse("sixty kilos for eight")).isConfident)
     }
 
     /// "rep" and "lb" must not collide: reps still win.
