@@ -7,6 +7,30 @@ import Foundation
 import UserNotifications
 import WeightTrainingCore
 
+/// What `SessionViewModel` needs from the rest alerts, as a seam (#261, #263).
+///
+/// The view model decides *whether* a rest's alerts should exist; this is the
+/// only way it reaches the notification centre, so a unit test can stand in a
+/// recorder and assert what was scheduled and cancelled without a real
+/// `UNUserNotificationCenter`, an authorization prompt, or a device.
+protocol RestAlertScheduling {
+    /// Replaces whatever is pending with the pair for `rest`.
+    func schedule(for rest: RestTimer, exercise: String, next: String?)
+    /// Removes both pending alerts.
+    func cancel()
+}
+
+/// The real centre, through `RestNotification`.
+struct SystemRestAlerts: RestAlertScheduling {
+    func schedule(for rest: RestTimer, exercise: String, next: String?) {
+        Task { await RestNotification.schedule(for: rest, exercise: exercise, next: next) }
+    }
+
+    func cancel() {
+        RestNotification.cancel()
+    }
+}
+
 /// Tells you rest is over when you aren't looking at the phone (#69).
 ///
 /// #23's whole premise is the phone staying in a pocket with the session on the
@@ -51,10 +75,10 @@ enum RestNotification {
         let center = UNUserNotificationCenter.current()
         cancel()
 
-        let remaining = rest.endsAt.timeIntervalSinceNow
+        let plan = Self.plan(for: rest, now: Date())
         // Already over by the time we got here — nothing useful to schedule,
         // and a zero interval is rejected outright.
-        guard remaining > 0.5 else { return }
+        guard let completionIn = plan.completionIn else { return }
 
         let content = UNMutableNotificationContent()
         content.title = "Rest's up"
@@ -70,7 +94,7 @@ enum RestNotification {
         let request = UNNotificationRequest(
             identifier: identifier,
             content: content,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: remaining, repeats: false)
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: completionIn, repeats: false)
         )
         try? await center.add(request)
 
@@ -84,11 +108,32 @@ enum RestNotification {
             identifier: idleIdentifier,
             content: idle,
             trigger: UNTimeIntervalNotificationTrigger(
-                timeInterval: max(1, rest.expiresAt.timeIntervalSinceNow),
+                timeInterval: plan.idleCheckIn ?? 1,
                 repeats: false
             )
         )
         try? await center.add(idleRequest)
+    }
+
+    /// When each of the two alerts should fire for `rest`, as intervals from
+    /// `now`, or nil for one that has nothing left to say.
+    ///
+    /// Pulled out of `schedule` so the timing can be checked without a
+    /// notification centre.
+    struct Plan: Equatable {
+        /// Seconds until "Rest's up".
+        var completionIn: TimeInterval?
+        /// Seconds until "Still working out?".
+        var idleCheckIn: TimeInterval?
+    }
+
+    static func plan(for rest: RestTimer, now: Date) -> Plan {
+        let remaining = rest.endsAt.timeIntervalSince(now)
+        guard remaining > 0.5 else { return Plan(completionIn: nil, idleCheckIn: nil) }
+        return Plan(
+            completionIn: remaining,
+            idleCheckIn: max(1, rest.expiresAt.timeIntervalSince(now))
+        )
     }
 
     /// Asks for notification access, serialised against every other prompt.

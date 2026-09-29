@@ -967,6 +967,153 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.session.allLoggedSets.isEmpty)
         XCTAssertNil(vm.failure)
     }
+
+    // MARK: - Rest alerts follow the rest (#261, #263)
+
+    /// The reconcilable fixture with a recorder standing in for the
+    /// notification centre, and a second seeded lift to swap to.
+    private func makeAlertedViewModel() throws -> (
+        vm: SessionViewModel, alerts: RecordingRestAlerts, other: Exercise
+    ) {
+        let store = try TrainingStore.inMemory()
+        let seeded = try store.seedLibraryIfNeeded()
+        let exercise = try XCTUnwrap(seeded.first)
+        let other = try XCTUnwrap(seeded.first { $0.id != exercise.id })
+        let session = Session(
+            kind: .push,
+            exercises: [SessionExercise(
+                exercise: exercise,
+                prescription: Prescription(load: Load(135), reps: 5, rpe: .eight)
+            )],
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let alerts = RecordingRestAlerts()
+        let vm = SessionViewModel(store: store, session: session, draftID: UUID(), restAlerts: alerts)
+        return (vm, alerts, other)
+    }
+
+    func test_restAlerts_loggingASetSchedulesThePairForItsRest() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        let rest = try XCTUnwrap(vm.rest)
+        XCTAssertEqual(alerts.pending?.rest, rest)
+        XCTAssertEqual(alerts.pending?.exercise, vm.current?.exercise.name)
+    }
+
+    func test_restAlerts_skipCancels() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        vm.skipRest()
+        XCTAssertNil(vm.rest)
+        XCTAssertNil(alerts.pending)
+    }
+
+    func test_restAlerts_undoingTheRestingSetCancels() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        let logged = try XCTUnwrap(vm.recentlyLoggedSet)
+        vm.undoRecentlyLoggedSet(id: logged.id)
+        XCTAssertNil(vm.rest)
+        XCTAssertNil(alerts.pending)
+    }
+
+    /// #263 part 1: swapping the visible lift clears the rest on purpose, so
+    /// its alerts have to go with it.
+    func test_restAlerts_swappingTheVisibleLiftMidRestCancels() throws {
+        let (vm, alerts, other) = try makeAlertedViewModel()
+        vm.logSet()
+        XCTAssertNotNil(alerts.pending)
+        let visible = try XCTUnwrap(vm.current)
+
+        vm.swap(visible, to: other)
+
+        XCTAssertNil(vm.rest, "a swap ends the rest (unchanged)")
+        XCTAssertNil(alerts.pending, "and no alert may outlive it")
+    }
+
+    /// Leaving still takes the alerts down, alongside the Live Activity.
+    func test_restAlerts_leavingCancels() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        vm.leaveSession()
+        XCTAssertNotNil(vm.rest, "the model keeps the rest across Leave")
+        XCTAssertNil(alerts.pending)
+    }
+
+    /// #263 part 2: Resume brings the rest back on screen and on the lock
+    /// screen, so it has to bring its alerts back too.
+    func test_restAlerts_resumingAfterLeaveReschedulesForTheSameRest() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        let rest = try XCTUnwrap(vm.rest)
+        vm.leaveSession()
+
+        // What `SessionView.onAppear` calls on Resume.
+        vm.reconcileLiveActivityActions()
+
+        XCTAssertEqual(vm.rest, rest)
+        XCTAssertEqual(alerts.pending?.rest, rest)
+    }
+
+    /// Resume with no rest running must not invent alerts.
+    func test_restAlerts_resumingWithNoRestSchedulesNothing() throws {
+        let (vm, alerts, _) = try makeAlertedViewModel()
+        vm.logSet()
+        vm.skipRest()
+        vm.leaveSession()
+        vm.reconcileLiveActivityActions()
+        XCTAssertNil(alerts.pending)
+    }
+
+    // MARK: - When each alert fires (#263)
+
+    private let planNow = Date(timeIntervalSince1970: 1_700_000_000)
+
+    func test_restAlertPlan_bothPendingBeforeTheTarget() {
+        let rest = RestTimer(startedAt: planNow, duration: 180, setID: nil)
+        let plan = RestNotification.plan(for: rest, now: planNow.addingTimeInterval(30))
+        XCTAssertEqual(plan.completionIn, 150)
+        XCTAssertEqual(plan.idleCheckIn, 750)
+    }
+
+    /// A rest resumed after its target has passed still owes the check-in.
+    func test_restAlertPlan_onlyTheCheckInOncePastTheTarget() {
+        let rest = RestTimer(startedAt: planNow, duration: 180, setID: nil)
+        let plan = RestNotification.plan(for: rest, now: planNow.addingTimeInterval(300))
+        XCTAssertNil(plan.completionIn)
+        XCTAssertEqual(plan.idleCheckIn, 480)
+    }
+
+    func test_restAlertPlan_nothingOnceExpired() {
+        let rest = RestTimer(startedAt: planNow, duration: 180, setID: nil)
+        let plan = RestNotification.plan(for: rest, now: planNow.addingTimeInterval(780))
+        XCTAssertNil(plan.completionIn)
+        XCTAssertNil(plan.idleCheckIn)
+    }
+}
+
+/// Stands in for the notification centre: holds the one pair that would be
+/// pending, the way `rest-complete`/`rest-idle-check` replace rather than
+/// accumulate.
+final class RecordingRestAlerts: RestAlertScheduling {
+    struct Pending: Equatable {
+        var rest: RestTimer
+        var exercise: String
+        var next: String?
+    }
+
+    private(set) var pending: Pending?
+    private(set) var calls: [String] = []
+
+    func schedule(for rest: RestTimer, exercise: String, next: String?) {
+        pending = Pending(rest: rest, exercise: exercise, next: next)
+        calls.append("schedule")
+    }
+
+    func cancel() {
+        pending = nil
+        calls.append("cancel")
+    }
 }
 
 private extension Exercise {

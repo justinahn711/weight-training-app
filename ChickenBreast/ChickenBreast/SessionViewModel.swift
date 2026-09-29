@@ -19,6 +19,9 @@ import WeightTrainingStore
 final class SessionViewModel {
     private let store: TrainingStore
     private let liveActivity: SessionActivityController
+    /// The "Rest's up" and "Still working out?" alerts. Injected so tests can
+    /// see what was scheduled and cancelled (#261, #263).
+    private let restAlerts: RestAlertScheduling
     private let draftID: UUID
     /// Finish can be tapped twice while navigation animates. Persistent
     /// progression and Live Activity teardown still belong to one explicit
@@ -102,8 +105,14 @@ final class SessionViewModel {
     /// the set takes the badge with it.
     private(set) var recordSetIDs: Set<UUID> = []
 
-    init(store: TrainingStore, session: Session, draftID: UUID) {
+    init(
+        store: TrainingStore,
+        session: Session,
+        draftID: UUID,
+        restAlerts: RestAlertScheduling = SystemRestAlerts()
+    ) {
         self.store = store
+        self.restAlerts = restAlerts
         self.session = session
         self.draftID = draftID
         self.liveActivity = SessionActivityController(workoutID: draftID)
@@ -294,7 +303,7 @@ final class SessionViewModel {
         let next = exercise.prescription.isColdStart
             ? nil
             : exercise.prescription.displayLine(in: GymSettings.shared.unit)
-        Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
+        restAlerts.schedule(for: timer, exercise: name, next: next)
         publishActivity()
     }
 
@@ -318,7 +327,7 @@ final class SessionViewModel {
     /// Dismisses the rest clock without touching the logged set.
     func skipRest() {
         rest = nil
-        RestNotification.cancel()
+        restAlerts.cancel()
         // Skipping the rest that was going to move you on means "I'm ready":
         // go now rather than leaving a card that promised a move on a rest
         // that no longer exists.
@@ -337,7 +346,7 @@ final class SessionViewModel {
     func expireRestIfNeeded(now: Date = Date()) {
         guard let rest, rest.hasExpired(at: now) else { return }
         self.rest = nil
-        RestNotification.cancel()
+        restAlerts.cancel()
         publishActivity()
     }
 
@@ -395,7 +404,7 @@ final class SessionViewModel {
             if rest?.setID == record.id {
                 rest = nil
                 // A buzz for a set you took back is worse than no buzz at all.
-                RestNotification.cancel()
+                restAlerts.cancel()
             }
             // The set that armed the move is gone, so the move is too.
             pendingAdvance = nil
@@ -540,7 +549,7 @@ final class SessionViewModel {
         // running (#169, #172).
         if let setID = rest?.setID, !survivingIDs.contains(setID) {
             rest = nil
-            RestNotification.cancel()
+            restAlerts.cancel()
         }
 
         // Leaving the workout already took the Live Activity down on
@@ -1032,7 +1041,7 @@ final class SessionViewModel {
                 )
                 : nil
             if rest == nil {
-                RestNotification.cancel()
+                restAlerts.cancel()
             }
             publishActivity()
         } catch {
@@ -1092,7 +1101,7 @@ final class SessionViewModel {
         // Rest belongs to a session in progress. Leaving ends the session
         // route, so a pending alert would arrive for training that's already
         // finished.
-        RestNotification.cancel()
+        restAlerts.cancel()
     }
 
     /// Corrects what the app assumes about this machine (#20, #39).
