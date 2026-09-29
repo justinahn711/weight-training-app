@@ -839,6 +839,8 @@ final class SessionViewModel {
     /// than tapping. Anything uncertain never starts the clock at all.
     static let autoCommitDelay: TimeInterval = 3
 
+    func beginVoiceUtterance() {}
+
     /// Applies a heard command.
     ///
     /// Set-shaped commands fill the form and wait. Everything else — next,
