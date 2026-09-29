@@ -599,7 +599,12 @@ struct DayDetailView: View {
             Button {
                 editing = EditTarget(record: set, exercise: exercise)
             } label: {
+                // The whole row, not just its text (#258): a `.plain` button
+                // hit-tests only what it draws, and the gap the Spacer leaves
+                // between the load and the RPE is most of the row at large
+                // sizes. Same fix as `checkbox(selected:)` below.
                 SetRow(set: set)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
