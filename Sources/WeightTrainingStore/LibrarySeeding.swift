@@ -27,7 +27,9 @@ extension TrainingStore {
         let existing = Set(try exercises().map(\.id))
         let missing = ExerciseLibrary.all.filter { !existing.contains($0.id) }
         guard !missing.isEmpty else { return [] }
-        try upsert(missing)
+        // Stamped as stock, not as now: a seed is not the lifter's write, and
+        // must lose to their edited copy when CloudKit delivers it (#268).
+        try upsert(missing, stampedAt: EditStamp.stock)
         return missing
     }
 }
