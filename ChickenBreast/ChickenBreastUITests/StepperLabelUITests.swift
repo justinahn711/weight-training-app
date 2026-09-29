@@ -64,7 +64,20 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
         )
         XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10),
                       "today's workout should list at least one set")
-        rows.firstMatch.tap()
+        // The first match can sit scrolled under the navigation bar, where a
+        // tap lands on the bar instead; take the first row fully on screen.
+        let window = app.windows.firstMatch.frame
+        let navBottom = app.navigationBars.firstMatch.frame.maxY
+        let row = (0..<rows.count).lazy
+            .map { rows.element(boundBy: $0) }
+            .first { $0.frame.minY >= navBottom && $0.frame.maxY <= window.maxY }
+        XCTAssertNotNil(row, "a set row should be fully on screen")
+        // The row's text, not the row: a `.plain` button only hit-tests its
+        // drawn content, and at this size the row's centre falls in the gap
+        // between "45 lb × 5" and "RPE 8" — a tap there does nothing.
+        row?.staticTexts.firstMatch.tap()
+        let opened = app.staticTexts["Correct set"].waitForExistence(timeout: 5)
+        XCTAssertTrue(opened, "Correct set should open on the tapped row")
 
         try assertStackedStepper(in: app, title: "Weight", valuePattern: "[0-9.]+ (lb|kg)")
         try assertStackedStepper(in: app, title: "Reps", valuePattern: "\\d+")
@@ -85,8 +98,17 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
         let stepper = app.steppers
             .matching(NSPredicate(format: "label BEGINSWITH %@", "\(title), "))
             .firstMatch
+        // On screen, with room below it for the whole row — `isHittable` is
+        // not used, since a stepper's hit point is ambiguous between its two
+        // buttons.
+        let window = app.windows.firstMatch.frame
+        func onScreen() -> Bool {
+            stepper.exists && stepper.frame.minY >= window.minY + 60
+                && stepper.frame.maxY <= window.maxY - 60
+        }
+        _ = stepper.waitForExistence(timeout: 5)
         var swipes = 0
-        while !(stepper.exists && stepper.isHittable), swipes < 12 {
+        while !onScreen(), swipes < 12 {
             app.swipeUp(velocity: .slow)
             swipes += 1
         }
@@ -144,26 +166,21 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
 
     // MARK: - Navigation
 
-    /// Opens today's workout in History, logging and finishing one set first
-    /// if today has none — the corrector only exists for a logged set.
+    /// Logs and finishes one set, then opens today's workout in History —
+    /// the corrector only exists for a logged set, and finishing leaves no
+    /// workout open behind this test (openPushDay resumes one if an earlier
+    /// test left it).
     private func openTodayInHistory(_ app: XCUIApplication) throws {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         let todayID = "history.day.\(formatter.string(from: Date()))"
 
-        let history = app.tabBars.buttons["History"]
-        XCTAssertTrue(history.waitForExistence(timeout: 5) && history.isHittable)
-        history.tap()
+        try logOneSetAndFinish(app)
 
-        if !(scrollTo(app.descendants(matching: .any)[todayID], in: app)) {
-            // Nothing logged today yet: log one set and finish, then return.
-            let train = app.tabBars.buttons.element(boundBy: 0)
-            train.tap()
-            try logOneSetAndFinish(app)
-            XCTAssertTrue(history.waitForExistence(timeout: 10))
-            history.tap()
-        }
+        let history = app.tabBars.buttons["History"]
+        XCTAssertTrue(history.waitForExistence(timeout: 10) && history.isHittable)
+        history.tap()
         let today = app.descendants(matching: .any)[todayID]
         XCTAssertTrue(scrollTo(today, in: app), "today should be a trained, tappable day in History")
         today.tap()
