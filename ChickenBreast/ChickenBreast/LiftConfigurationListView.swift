@@ -151,9 +151,13 @@ struct LiftConfigurationListView: View {
                 let inheritedBase = loading.usesGymRack && loadingUnit == gym.unit
                     ? gym.barWeight
                     : loadingUnit.standardBar
+                // Native, not converted (#245): an empty weight is measured
+                // in its own unit, so a typed 45.25 reads 45.25 here as it
+                // does in the config sheet and on the session card.
+                let baseText = loadingUnit.format(base.value(in: loadingUnit), withSymbol: true)
                 parts.append(base == inheritedBase
-                    ? "\(base.formatted(in: loadingUnit)) empty (default)"
-                    : "\(base.formatted(in: loadingUnit)) empty")
+                    ? "\(baseText) empty (default)"
+                    : "\(baseText) empty")
             } else {
                 parts.append("Not weighed yet")
             }
