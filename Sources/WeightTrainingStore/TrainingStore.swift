@@ -113,21 +113,26 @@ public final class TrainingStore {
     // MARK: - Exercises
 
     /// Inserts the exercise, or overwrites the existing row with the same id.
+    ///
+    /// Stamped as the lifter's write, which is what lets it win over a stock
+    /// copy of the same lift that another device seeded (#268).
     public func upsert(_ exercise: Exercise) throws {
-        if let existing = try storedExercise(id: exercise.id) {
-            existing.update(from: exercise)
-        } else {
-            context.insert(StoredExercise(exercise))
-        }
-        try commit()
+        try upsert([exercise])
     }
 
     public func upsert(_ exercises: [Exercise]) throws {
+        try upsert(exercises, stampedAt: EditStamp.at(Date()))
+    }
+
+    /// - Parameter stamp: what `deduplicate()` will read about who wrote these
+    ///   rows — see `EditStamp`.
+    func upsert(_ exercises: [Exercise], stampedAt stamp: Date) throws {
         for exercise in exercises {
             if let existing = try storedExercise(id: exercise.id) {
                 existing.update(from: exercise)
+                existing.updatedAt = stamp
             } else {
-                context.insert(StoredExercise(exercise))
+                context.insert(StoredExercise(exercise, updatedAt: stamp))
             }
         }
         try commit()
@@ -192,22 +197,22 @@ public final class TrainingStore {
         let descriptor = FetchDescriptor<StoredExercise>(
             sortBy: [SortDescriptor(\.name)]
         )
-        var seen: Set<UUID> = []
-        return try context.fetch(descriptor)
-            .filter { seen.insert($0.id).inserted }
-            .map { try $0.toDomain() }
+        return try survivors(
+            try context.fetch(descriptor), key: \.id, winner: DuplicateSurvivor.exercise
+        ).map { try $0.toDomain() }
     }
 
     public func exercise(id: UUID) throws -> Exercise? {
         try storedExercise(id: id)?.toDomain()
     }
 
+    /// The copy `deduplicate()` would keep, so an edit lands on the row that
+    /// survives rather than on one about to be deleted (#268).
     private func storedExercise(id: UUID) throws -> StoredExercise? {
-        var descriptor = FetchDescriptor<StoredExercise>(
+        let descriptor = FetchDescriptor<StoredExercise>(
             predicate: #Predicate { $0.id == id }
         )
-        descriptor.fetchLimit = 1
-        return try context.fetch(descriptor).first
+        return DuplicateSurvivor.exercise(try context.fetch(descriptor))
     }
 
     // MARK: - Sets
@@ -261,6 +266,9 @@ public final class TrainingStore {
         descriptor.fetchLimit = 1
         guard let stored = try context.fetch(descriptor).first else { return false }
         stored.update(from: record)
+        // A correction outranks the set as first logged when two copies meet
+        // in `deduplicate()` (#268).
+        stored.updatedAt = EditStamp.at(Date())
         try commit()
         return true
     }
@@ -285,6 +293,9 @@ public final class TrainingStore {
         descriptor.fetchLimit = 1
         guard let stored = try context.fetch(descriptor).first else { return false }
         stored.update(from: record)
+        // A correction outranks the set as first logged when two copies meet
+        // in `deduplicate()` (#268).
+        stored.updatedAt = EditStamp.at(Date())
         try commit()
         session = preview
         return true
@@ -443,8 +454,7 @@ public final class TrainingStore {
     /// A duplicated set is not a cosmetic problem: it inflates volume, e1RM,
     /// and every progression decision that reads the session.
     private func unique(_ rows: [StoredSetLog]) -> [SetRecord] {
-        var seen: Set<UUID> = []
-        return rows.filter { seen.insert($0.id).inserted }.map { $0.toDomain() }
+        survivors(rows, key: \.id, winner: DuplicateSurvivor.set).map { $0.toDomain() }
     }
 
     // MARK: - Bodyweight
@@ -512,14 +522,19 @@ public final class TrainingStore {
     // MARK: - Day templates
 
     public func upsert(_ template: DayTemplate) throws {
-        var descriptor = FetchDescriptor<StoredDayTemplate>(
+        try upsert(template, stampedAt: EditStamp.at(Date()))
+    }
+
+    /// - Parameter stamp: see `EditStamp`; seeding passes `EditStamp.stock`.
+    func upsert(_ template: DayTemplate, stampedAt stamp: Date) throws {
+        let descriptor = FetchDescriptor<StoredDayTemplate>(
             predicate: #Predicate { $0.id == template.id }
         )
-        descriptor.fetchLimit = 1
-        if let existing = try context.fetch(descriptor).first {
+        if let existing = DuplicateSurvivor.template(try context.fetch(descriptor)) {
             existing.update(from: template)
+            existing.updatedAt = stamp
         } else {
-            context.insert(StoredDayTemplate(template))
+            context.insert(StoredDayTemplate(template, updatedAt: stamp))
         }
         try commit()
     }
@@ -534,10 +549,10 @@ public final class TrainingStore {
     /// a second copy of every row. The next launch merges them, but the whole
     /// first launch runs on doubled templates.
     public func dayTemplates() throws -> [DayTemplate] {
-        var seen: Set<UUID> = []
-        return try context.fetch(FetchDescriptor<StoredDayTemplate>())
-            .filter { seen.insert($0.id).inserted }
-            .map { try $0.toDomain() }
+        try survivors(
+            try context.fetch(FetchDescriptor<StoredDayTemplate>()),
+            key: \.id, winner: DuplicateSurvivor.template
+        ).map { try $0.toDomain() }
     }
 
     public func dayTemplate(kind: DayKind) throws -> DayTemplate? {
