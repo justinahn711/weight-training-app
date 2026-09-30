@@ -606,6 +606,7 @@ struct SessionView: View {
                 }
                 .font(.subheadline.weight(.semibold))
                 .frame(minHeight: 44)
+                .contentShape(Rectangle())
                 .accessibilityIdentifier("session.plan.review")
             }
         }
