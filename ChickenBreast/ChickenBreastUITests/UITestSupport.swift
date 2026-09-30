@@ -200,10 +200,6 @@ class ChickenBreastUITestCase: XCTestCase {
         // Wraps and grows at AccessibilityXXXL by screenshot, yet reported
         // deterministically; suspected audit false positive (#277).
         HeldElement(type: .textClipped, labelPrefix: "Sleep and HRV from Health", issue: 277),
-        // The session's exercise title. Not `minimumScaleFactor` (removing it
-        // did not clear this); likely the compact layout swapping largeTitle
-        // for title2 at the accessibility sizes (#278).
-        HeldElement(type: .dynamicType, labelPrefix: "Incline DB Press", issue: 278),
     ]
 
     /// The types actually audited — everything except what `knownIssues`

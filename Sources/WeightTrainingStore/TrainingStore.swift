@@ -121,7 +121,40 @@ public final class TrainingStore {
     }
 
     public func upsert(_ exercises: [Exercise]) throws {
-        try upsert(exercises, stampedAt: EditStamp.at(Date()))
+        let gym = (try? gymConfig()) ?? .standard
+        let marked = try exercises.map { try markingBase(of: $0, in: gym) }
+        try upsert(marked, stampedAt: EditStamp.at(Date()))
+    }
+
+    /// Settles whether a lifter-written empty weight is the gym's bar or a
+    /// measurement (#270).
+    ///
+    /// The lift sheet builds a fresh `LoadingStyle` on every Save with no
+    /// opinion on `followsGymBar`, and a caller editing a lift it read back
+    /// carries the old mark along with a new number — so the mark a write
+    /// arrives with is not evidence of anything. The store decides from what
+    /// changed instead:
+    ///
+    /// - An untouched base keeps the mark it had. A Save that only changed
+    ///   the rest timer must not detach the bar from the gym.
+    /// - A newly typed base is a measurement, unless it is exactly the gym's
+    ///   own bar. That exception is how a lift goes back to following,
+    ///   including one an older build stranded on a bar the gym no longer has.
+    /// - A lift with a rack of its own isn't re-racked at all, so its new base
+    ///   is left unmarked; should it rejoin the gym, `applied` infers one then.
+    private func markingBase(of exercise: Exercise, in gym: GymConfig) throws -> Exercise {
+        guard var loading = exercise.loading, let base = loading.baseWeight else { return exercise }
+        guard let stored = (try storedExercise(id: exercise.id)).flatMap({ try? $0.toDomain() })?.loading
+        else { return exercise }
+
+        if stored.baseWeight == base {
+            loading.followsGymBar = loading.followsGymBar ?? stored.followsGymBar
+        } else {
+            loading.followsGymBar = loading.usesGymRack ? base == gym.barWeight : nil
+        }
+        var marked = exercise
+        marked.loading = loading
+        return marked
     }
 
     /// - Parameter stamp: what `deduplicate()` will read about who wrote these
@@ -208,7 +241,7 @@ public final class TrainingStore {
 
     /// The copy `deduplicate()` would keep, so an edit lands on the row that
     /// survives rather than on one about to be deleted (#268).
-    private func storedExercise(id: UUID) throws -> StoredExercise? {
+    func storedExercise(id: UUID) throws -> StoredExercise? {
         let descriptor = FetchDescriptor<StoredExercise>(
             predicate: #Predicate { $0.id == id }
         )
@@ -356,12 +389,12 @@ public final class TrainingStore {
         }
 
         // What progression sees changes with the history it reads from — a
-        // stallCount or an earned load that came partly from sets that no
-        // longer exist can't just be left standing. Computed from the
-        // in-memory remainder rather than a fresh fetch: the deletes above are
-        // only staged, not yet saved, so re-fetching here isn't guaranteed to
-        // reflect them, and the remainder is already known without one.
-        let remainingHistory = historyBeforeDelete.filter { !removedIDs.contains($0.id) }
+        // load jump or a stall count earned by sets that no longer exist
+        // can't just be left standing. But only state the replay itself would
+        // have produced is the replay's to rewrite (#269); see
+        // `stageProgressStateCorrection`. Computed from the in-memory history
+        // rather than a fresh fetch: the deletes above are only staged, not
+        // yet saved, so re-fetching here isn't guaranteed to reflect them.
         let exercisesByID = Dictionary(uniqueKeysWithValues: try exercises().map { ($0.id, $0) })
         for exerciseID in affectedExerciseIDs {
             guard let exercise = exercisesByID[exerciseID] else {
@@ -369,8 +402,8 @@ public final class TrainingStore {
                 // row is already meaningless and reaches no screen.
                 continue
             }
-            try stageRecomputedProgressState(
-                exerciseID: exerciseID, exercise: exercise, history: remainingHistory
+            try stageProgressStateCorrection(
+                exercise: exercise, historyBeforeDelete: historyBeforeDelete, removedIDs: removedIDs
             )
         }
 
@@ -378,49 +411,106 @@ public final class TrainingStore {
         return removedIDs
     }
 
-    /// Replays an exercise's remaining history from a cold start and stages
-    /// the resulting state, without saving — the caller commits once for the
-    /// whole batch (#168).
+    /// Undoes the progression step a batch delete took the ground out from
+    /// under — and nothing else. Stages the change without saving; the caller
+    /// commits once for the whole batch (#168).
     ///
     /// `ProgressState` is a cumulative snapshot advanced once per session by
     /// `applyProgression`, never a live read of history the way the digest and
-    /// e1RM trends are. Deleting the sets that earned a load jump or ran up a
-    /// stall count would otherwise leave that jump or that stall standing on
-    /// nothing. Replaying is the only honest fix: it reconstructs exactly the
-    /// state the exercise would be in had the deleted sets never been logged,
-    /// the same rule `ProgressionEngine` already applies going forward.
-    private func stageRecomputedProgressState(
-        exerciseID: UUID, exercise: Exercise, history: [SetRecord]
+    /// e1RM trends are. Deleting the session that earned a load jump or ran up
+    /// a stall would otherwise leave that jump standing on nothing (#168).
+    ///
+    /// The first version replayed the lift's whole remaining history from a
+    /// cold start and overwrote whatever was stored (#269). That is only
+    /// honest if the stored state *is* such a replay, and it often isn't: a
+    /// deload tapped in the digest, a session finished under an older rule or
+    /// increment, a same-day re-entry the live path's guard skipped. Deleting
+    /// one warmup from an old day put a 165 lb deload back to 180. So the
+    /// state is rewritten only when all of these hold, and left exactly as it
+    /// was otherwise:
+    ///
+    /// 1. **A working set was deleted.** Warmups never drive progression.
+    /// 2. **It belongs to the lift's latest session.** That session produced
+    ///    the stored target; older ones are already superseded by it.
+    /// 3. **The stored state is what replaying the pre-delete history
+    ///    produces** (ignoring `lastPerformedAt`, which the live path stamps
+    ///    with the session start). A match means nothing but that history
+    ///    authored the state, so replaying without the deleted sets removes
+    ///    exactly their contribution. A mismatch means something the replay
+    ///    can't reconstruct — a deload above all — is in there, and the
+    ///    lifter's decision outranks the recompute. Suggest, never change.
+    ///
+    /// The one exception is a delete that leaves no working sets at all: the
+    /// lift is back to never performed, and a target with no history under it
+    /// is the thing #168 set out to prevent, so the row is removed.
+    private func stageProgressStateCorrection(
+        exercise: Exercise, historyBeforeDelete: [SetRecord], removedIDs: Set<UUID>
     ) throws {
-        let ownHistory = history.filter { $0.exerciseID == exerciseID }
-        let sessions = ownHistory.groupedIntoSessions()
+        let ownHistory = historyBeforeDelete.filter { $0.exerciseID == exercise.id }
 
-        guard !sessions.isEmpty else {
+        // 1. Warmups only: nothing progression ever read has changed.
+        guard ownHistory.contains(where: { removedIDs.contains($0.id) && !$0.isWarmup }) else { return }
+
+        let sessionsBefore = ownHistory.groupedIntoSessions()
+        let sessionsAfter = ownHistory.filter { !removedIDs.contains($0.id) }.groupedIntoSessions()
+
+        guard !sessionsAfter.isEmpty else {
             // No working sets left at all: back to the cold start the session
             // screen shows for a lift that's never been performed.
-            if let existing = try storedState(for: exerciseID) {
+            if let existing = try storedState(for: exercise.id) {
                 context.delete(existing)
             }
             return
         }
 
-        var state = ProgressState(exerciseID: exerciseID)
+        // 2. Only the latest session's step is undoable; earlier days are
+        //    already superseded by it.
+        guard let latest = sessionsBefore.last,
+              latest.contains(where: { removedIDs.contains($0.id) }) else { return }
+
+        // 3. Only state the replay itself would have produced is the replay's
+        //    to rewrite.
+        guard let existing = try storedState(for: exercise.id) else { return }
+        let stored = existing.toDomain()
+        guard Self.sameProgression(stored, Self.replay(sessionsBefore, exercise: exercise)) else { return }
+
+        var corrected = Self.replay(sessionsAfter, exercise: exercise)
+        // A partial delete from the latest day leaves that day the latest, so
+        // keep the stamp the live path wrote for it (the session start). A
+        // whole day removed leaves only set times to go on; the day is what
+        // `applyProgression`'s same-day guard reads, and that is right.
+        if let storedDate = stored.lastPerformedAt,
+           let replayedDate = corrected.lastPerformedAt,
+           Calendar.current.isDate(storedDate, inSameDayAs: replayedDate) {
+            corrected.lastPerformedAt = storedDate
+        }
+        existing.update(from: corrected)
+    }
+
+    /// The state a lift's working sessions produce from a cold start, each
+    /// advanced once, in order — the same rule `ProgressionEngine` applies
+    /// going forward.
+    private static func replay(_ sessions: [[SetRecord]], exercise: Exercise) -> ProgressState {
+        var state = ProgressState(exerciseID: exercise.id)
         for session in sessions {
             // `groupedIntoSessions` already drops warmups, so every set here
-            // is working; `advance` never sees a session it should skip the
-            // way `applyProgression`'s same-day guard does, because a replay
-            // runs each real session exactly once, in order.
+            // is working.
             let performedAt = session.map(\.performedAt).max() ?? state.lastPerformedAt ?? Date()
             state = ProgressionEngine.advance(
                 exercise: exercise, state: state, performed: session, now: performedAt
             ).state
         }
+        return state
+    }
 
-        if let existing = try storedState(for: exerciseID) {
-            existing.update(from: state)
-        } else {
-            context.insert(StoredProgressState(state))
-        }
+    /// Equal in everything progression decides. `lastPerformedAt` is left
+    /// out: the live path stamps the session start, a replay can only see set
+    /// times, and neither changes a target.
+    private static func sameProgression(_ lhs: ProgressState, _ rhs: ProgressState) -> Bool {
+        var lhs = lhs, rhs = rhs
+        lhs.lastPerformedAt = nil
+        rhs.lastPerformedAt = nil
+        return lhs == rhs
     }
 
     /// Every set for one exercise, oldest first.

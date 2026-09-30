@@ -6,6 +6,7 @@
 import ActivityKit
 import AppIntents
 import SwiftUI
+import WeightTrainingCore
 import WidgetKit
 
 /// The session on the lock screen and in the Dynamic Island (#23).
@@ -24,13 +25,11 @@ struct SessionLiveActivity: Widget {
             VStack(spacing: 12) {
                 LockScreenView(
                     state: context.state,
-                    dayKind: context.attributes.dayKind,
-                    isStale: context.isStale
+                    dayKind: context.attributes.dayKind
                 )
                 SessionButtons(
                     state: context.state,
-                    workoutID: context.attributes.workoutID,
-                    isStale: context.isStale
+                    workoutID: context.attributes.workoutID
                 )
             }
                 .padding()
@@ -50,11 +49,7 @@ struct SessionLiveActivity: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    RestReadout(
-                        endsAt: context.state.restEndsAt,
-                        isStale: context.isStale,
-                        font: .title2
-                    )
+                    RestReadout(endsAt: context.state.restEndsAt, font: .title2)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
@@ -64,19 +59,14 @@ struct SessionLiveActivity: Widget {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         SessionButtons(
                             state: context.state,
-                            workoutID: context.attributes.workoutID,
-                            isStale: context.isStale
+                            workoutID: context.attributes.workoutID
                         )
                     }
                 }
             } compactLeading: {
                 Image(systemName: "figure.strengthtraining.traditional")
             } compactTrailing: {
-                RestReadout(
-                    endsAt: context.state.restEndsAt,
-                    isStale: context.isStale,
-                    font: .caption2
-                )
+                RestReadout(endsAt: context.state.restEndsAt, font: .caption2)
             } minimal: {
                 Image(systemName: "figure.strengthtraining.traditional")
             }
@@ -102,10 +92,16 @@ struct SessionLiveActivity: Widget {
 private struct SessionButtons: View {
     let state: SessionActivityAttributes.ContentState
     let workoutID: String?
-    let isStale: Bool
 
+    /// Only a countdown hides Log. Past the target, and past the cap where
+    /// the face shows no rest at all (#265), the next set is what's wanted.
+    /// Read from the same face as the clock, so the buttons and the readout
+    /// can never disagree about which state they're in.
     private var isActivelyResting: Bool {
-        state.isResting && !isStale
+        if case .countingDown = RestTimer.lockScreenFace(restEndsAt: state.restEndsAt, now: .now) {
+            return true
+        }
+        return false
     }
 
     var body: some View {
@@ -169,36 +165,39 @@ private struct SessionButtons: View {
 /// Resting is the only state with a number worth showing; between exercises
 /// there is no countdown to render and a zeroed timer would read as a rest
 /// that just ended.
+///
+/// Which clock is drawn comes from `RestTimer.lockScreenFace` (#265), decided
+/// at render time. The controller sets the content's `staleDate` to the moment
+/// rest ends, and WidgetKit re-renders then — the only way this view learns
+/// that time has passed, since the app pushes updates when the facts change
+/// and rest finishing is not something anyone does.
 private struct RestReadout: View {
     let endsAt: Date?
-    /// True once the content has passed its `staleDate`, which the controller
-    /// sets to the moment rest ends. WidgetKit re-renders then, which is the
-    /// only way this view learns that time has passed — the app pushes updates
-    /// when the facts change, and rest finishing is not something anyone does.
-    let isStale: Bool
     let font: Font
 
     var body: some View {
-        if let endsAt {
-            if isStale {
-                // Counting up, not frozen at zero. Rest running long is
-                // information — it's the first sign a session is dragging — and
-                // a stopped clock reading 0:00 is indistinguishable from a rest
-                // that just started.
-                Text(timerInterval: endsAt...(endsAt + 3600), countsDown: false)
-                    .font(font.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.trailing)
-                    .frame(minWidth: 44, alignment: .trailing)
-            } else {
-                Text(timerInterval: Date.now...endsAt, countsDown: true)
-                    .font(font.monospacedDigit())
-                    .multilineTextAlignment(.trailing)
-                    // Fixed so the digits don't reflow the layout every second
-                    // as the numbers change width.
-                    .frame(minWidth: 44, alignment: .trailing)
-            }
-        } else {
+        switch RestTimer.lockScreenFace(restEndsAt: endsAt, now: .now) {
+        case .countingDown(let endsAt):
+            Text(timerInterval: Date.now...endsAt, countsDown: true)
+                .font(font.monospacedDigit())
+                .multilineTextAlignment(.trailing)
+                // Fixed so the digits don't reflow the layout every second
+                // as the numbers change width.
+                .frame(minWidth: 44, alignment: .trailing)
+        case .overrun(let range):
+            // Counting up, not frozen at zero. Rest running long is
+            // information — it's the first sign a session is dragging — and
+            // a stopped clock reading 0:00 is indistinguishable from a rest
+            // that just started. The range ends at
+            // `RestTimer.maximumOverrun`, where the app's own clock gives up,
+            // so the count stops there instead of running on for an hour.
+            Text(timerInterval: range, countsDown: false)
+                .font(font.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .frame(minWidth: 44, alignment: .trailing)
+        case .noRest:
+            // Also past the cap: what `expireRestIfNeeded` would publish.
             Image(systemName: "dumbbell.fill")
                 .font(font)
                 .foregroundStyle(.secondary)
@@ -209,7 +208,6 @@ private struct RestReadout: View {
 private struct LockScreenView: View {
     let state: SessionActivityAttributes.ContentState
     let dayKind: String
-    let isStale: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -228,7 +226,7 @@ private struct LockScreenView: View {
             }
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 2) {
-                RestReadout(endsAt: state.restEndsAt, isStale: isStale, font: .largeTitle)
+                RestReadout(endsAt: state.restEndsAt, font: .largeTitle)
                 Text(caption)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -239,7 +237,6 @@ private struct LockScreenView: View {
     /// Says which clock is being read, since a countdown and an overrun look
     /// alike at a glance.
     private var caption: String {
-        guard state.isResting else { return "ready" }
-        return isStale ? "over" : "resting"
+        RestTimer.lockScreenFace(restEndsAt: state.restEndsAt, now: .now).caption
     }
 }

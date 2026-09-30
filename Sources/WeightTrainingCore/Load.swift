@@ -180,6 +180,19 @@ public struct LoadIncrement: Hashable, Codable, Sendable {
     /// is genuinely short of the next step.
     private static let snapTolerance = 1e-9
 
+    /// Whether two loads are the same weight on this equipment, to within the
+    /// float dust a kilogram round trip leaves.
+    ///
+    /// Exact `Load` equality is the wrong question for anything that has been
+    /// snapped: 62.5 kg heard and 62.5 kg snapped to a 2.5 kg step arrive in
+    /// canonical pounds by different paths and differ in the last bit, so a
+    /// snap that moved nothing looked like one that did (#275). Measured in
+    /// steps, with the same tolerance `snap` uses, so a load genuinely off the
+    /// step — 62.4 kg is 0.04 of one — is never waved through.
+    public func isSameLoad(_ a: Load, _ b: Load) -> Bool {
+        abs(a.pounds - b.pounds) / pounds < Self.snapTolerance
+    }
+
     /// Rounds to the nearest achievable load, which may be heavier.
     ///
     /// Used where the proposal is a *steer* rather than a prescription: the

@@ -134,6 +134,87 @@ final class GymConfigTests: XCTestCase {
         XCTAssertEqual(gym.applied(to: once), once)
     }
 
+    // MARK: - A base that follows the gym's bar, recorded (#270)
+
+    /// A second device learns the gym only through sync, so it never knows
+    /// the gym being replaced. A bar marked as following must land on the
+    /// gym's bar whatever it was sitting on — including an intermediate
+    /// stepper value that is neither a standard bar nor a known `previous`.
+    func testAFollowingBarLandsOnTheGymsBarWithNoHistory() {
+        let bar = LoadingStyle(baseWeight: Load(40), sleeves: 2, followsGymBar: true)
+        let gym = GymConfig(unit: .pounds, barWeight: Load(35))
+        let applied = gym.applied(to: bar)
+        XCTAssertEqual(applied.baseWeight, Load(35))
+        XCTAssertEqual(applied.followsGymBar, true)
+    }
+
+    /// The unit-switch half: a following 35 lb bar in a gym switched to kg
+    /// becomes the kg gym's bar, not a 35 lb "bar" in a kilogram rack.
+    func testAFollowingNonStandardBarCrossesAUnitSwitch() {
+        let bar = LoadingStyle(baseWeight: Load(35), sleeves: 2, followsGymBar: true)
+        let applied = GymConfig.standard(in: .kilograms).applied(to: bar)
+        XCTAssertEqual(applied.unit, .kilograms)
+        XCTAssertEqual(applied.baseWeight, MassUnit.kilograms.standardBar)
+    }
+
+    /// Marked as measured means kept — even when it happens to equal a
+    /// standard bar, since the lifter said so.
+    func testAMeasuredMarkKeepsTheBaseThroughAnyGym() {
+        let lever = LoadingStyle(baseWeight: Load(45), sleeves: 1, followsGymBar: false)
+        let applied = GymConfig(unit: .kilograms, barWeight: Load(15, .kilograms)).applied(to: lever)
+        XCTAssertEqual(applied.baseWeight, Load(45))
+        XCTAssertEqual(applied.followsGymBar, false)
+    }
+
+    /// An unmarked base (every row written before #270) is inferred once and
+    /// the answer recorded: the gym's current bar, either unit's standard
+    /// bar, or the replaced gym's bar mean following; anything else measured.
+    func testAnUnmarkedBaseIsInferredAndRecorded() {
+        let gym = GymConfig(unit: .pounds, barWeight: Load(35))
+        let onGymBar = gym.applied(to: LoadingStyle(baseWeight: Load(35), sleeves: 2))
+        XCTAssertEqual(onGymBar.followsGymBar, true)
+
+        let onStandard = gym.applied(to: LoadingStyle(baseWeight: Load(45), sleeves: 2))
+        XCTAssertEqual(onStandard.followsGymBar, true)
+        XCTAssertEqual(onStandard.baseWeight, Load(35))
+
+        // A pound bar stranded in a kilogram-marked rack by an older build.
+        let stranded = LoadingStyle(baseWeight: Load(45), sleeves: 2, unit: .kilograms)
+        let healed = GymConfig.standard(in: .kilograms).applied(to: stranded)
+        XCTAssertEqual(healed.baseWeight, MassUnit.kilograms.standardBar)
+
+        let lever = gym.applied(to: LoadingStyle(baseWeight: Load(62), sleeves: 1))
+        XCTAssertEqual(lever.followsGymBar, false)
+        XCTAssertEqual(lever.baseWeight, Load(62))
+    }
+
+    /// An unmeasured apparatus has no base to follow or keep; no mark.
+    func testAnUnmeasuredMachineGetsNoMark() {
+        let sled = GymConfig.standard(in: .kilograms).applied(to: .unmeasuredMachine(sleeves: 2))
+        XCTAssertNil(sled.followsGymBar)
+        XCTAssertNil(sled.baseWeight)
+    }
+
+    /// The mark rides inside the stored loading JSON, so it syncs with the
+    /// row it describes. Rows written before it decode as unmarked.
+    func testTheMarkSurvivesARoundTripAndOldRowsReadUnmarked() throws {
+        let marked = LoadingStyle(baseWeight: Load(40), sleeves: 2, followsGymBar: true)
+        let back = try JSONDecoder().decode(LoadingStyle.self, from: JSONEncoder().encode(marked))
+        XCTAssertEqual(back, marked)
+
+        let json = """
+        {"sleeves":2,"availablePlates":[45,35,25,10,5,2.5],"baseWeight":{"pounds":45},"unit":"pounds","usesGymRack":true}
+        """.data(using: .utf8)!
+        XCTAssertNil(try JSONDecoder().decode(LoadingStyle.self, from: json).followsGymBar)
+    }
+
+    /// What the gym hands a new lift, and the stock barbell, follow its bar.
+    func testInheritedBarsAreMarkedAsFollowing() {
+        XCTAssertEqual(GymConfig.standard.inheritedLoading().followsGymBar, true)
+        XCTAssertEqual(LoadingStyle.olympicBarbell.followsGymBar, true)
+        XCTAssertEqual(LoadingStyle.standardBarbell(in: .kilograms).followsGymBar, true)
+    }
+
     // MARK: - Increments
 
     /// 5 lb is a real increment; 2.27 kg is not. A default follows the gym.
