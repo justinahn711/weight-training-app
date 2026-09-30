@@ -104,6 +104,15 @@ final class BatchDeleteTests: XCTestCase {
                                 performedAt: Date())
         try first.log(earlySet)
         try first.log(lateSet)
+        // The state both sessions earned, as `applyProgression` would have
+        // stored it — the batch only rewrites state the replay authored (#269).
+        var earned = ProgressState(exerciseID: flyExercise.id)
+        for set in [earlySet, lateSet] {
+            earned = ProgressionEngine.advance(
+                exercise: flyExercise, state: earned, performed: [set], now: set.performedAt
+            ).state
+        }
+        try first.save(earned)
         _ = try first.deleteSets(ids: [lateSet.id])
 
         let second = try TrainingStore(url: url)
@@ -195,5 +204,125 @@ final class BatchDeleteTests: XCTestCase {
 
         XCTAssertNoThrow(try store.deleteSets(ids: [set.id]))
         XCTAssertTrue(try store.allSets().isEmpty)
+    }
+
+    // MARK: - State the replay can't author (#269)
+
+    /// Midday anchors, never `Date()` with offsets: sets are grouped by
+    /// calendar day, and a fixture near midnight splits a session (#79).
+    private func midday(_ dayOffset: Int) -> Date {
+        var components = DateComponents()
+        components.year = 2026; components.month = 3; components.day = 10 + dayOffset; components.hour = 12
+        return Calendar.current.date(from: components)!
+    }
+
+    /// Four push days of Flat Bench — one warmup and three working sets at
+    /// 185x4 @9 each — each finished through the live path
+    /// (`applyProgression(now: startedAt)`), exactly as `SessionViewModel`
+    /// finishes a session. Returns every set, by day.
+    private func fourBenchDaysThroughTheLivePath() throws -> [(warmup: SetRecord, working: [SetRecord])] {
+        var days: [(warmup: SetRecord, working: [SetRecord])] = []
+        for day in 0..<4 {
+            let warmup = SetRecord(exerciseID: bench.id, load: Load(95), reps: 5, isWarmup: true,
+                                   performedAt: midday(day))
+            try store.log(warmup)
+            var working: [SetRecord] = []
+            for index in 0..<3 {
+                let set = SetRecord(exerciseID: bench.id, load: Load(185), reps: 4, rpe: RPE(9)!,
+                                    performedAt: midday(day).addingTimeInterval(Double(120 + index * 60)))
+                try store.log(set)
+                working.append(set)
+            }
+            let session = try store.startSession(kind: .push, startedAt: midday(day).addingTimeInterval(600))
+            try store.applyProgression(for: session, now: session.startedAt)
+            days.append((warmup, working))
+        }
+        return days
+    }
+
+    /// What the lifter gets by tapping the digest's deload bullet —
+    /// `DigestView.apply`, verbatim.
+    private func applyDigestDeload(to pounds: Double) throws -> ProgressState {
+        var state = try XCTUnwrap(store.progressState(forExercise: bench.id))
+        state.targetLoad = Load(pounds)
+        state.stallCount = 0
+        state.consecutiveTopHits = 0
+        try store.save(state)
+        return state
+    }
+
+    /// The auditor's case: a digest deload took the target from 180 to 165,
+    /// then one warmup from an old day was removed — and the target went
+    /// back to 180, the weight the lifter had just been told to back off
+    /// from. No progression decision ever reads a warmup, so deleting one
+    /// has nothing to correct.
+    func testDeletingAWarmupLeavesAnAppliedDeloadAlone() throws {
+        let days = try fourBenchDaysThroughTheLivePath()
+        let deload = try applyDigestDeload(to: 165)
+
+        _ = try store.deleteSets(ids: [days[0].warmup.id])
+
+        XCTAssertEqual(try store.progressState(forExercise: bench.id), deload)
+    }
+
+    /// Warmups never drive progression, so deleting only warmups leaves the
+    /// stored state exactly as it was — `lastPerformedAt` included, which the
+    /// cold-start replay used to move to the last set's time.
+    func testDeletingOnlyWarmupsNeverChangesProgressState() throws {
+        let days = try fourBenchDaysThroughTheLivePath()
+        let before = try XCTUnwrap(store.progressState(forExercise: bench.id))
+
+        _ = try store.deleteSets(ids: Set(days.map(\.warmup.id)))
+
+        XCTAssertEqual(try store.progressState(forExercise: bench.id), before)
+    }
+
+    /// A day older than the lift's latest session didn't produce the current
+    /// target — the sessions after it did. Removing a working set from it
+    /// (an old accidental entry) leaves the applied deload standing.
+    func testDeletingAWorkingSetFromAnOlderDayLeavesAnAppliedDeloadAlone() throws {
+        let days = try fourBenchDaysThroughTheLivePath()
+        let deload = try applyDigestDeload(to: 165)
+
+        _ = try store.deleteSets(ids: [days[0].working[0].id])
+
+        XCTAssertEqual(try store.progressState(forExercise: bench.id), deload)
+    }
+
+    /// Even the latest session's sets can't undo a deload: the deload is a
+    /// decision the lifter made *after* that session, and a replay of the
+    /// sets has no way to reconstruct it. The store only rewrites state the
+    /// replay itself would have produced.
+    func testDeletingAWorkingSetFromTheLatestDayLeavesAnAppliedDeloadAlone() throws {
+        let days = try fourBenchDaysThroughTheLivePath()
+        let deload = try applyDigestDeload(to: 165)
+
+        _ = try store.deleteSets(ids: [days[3].working[2].id])
+
+        XCTAssertEqual(try store.progressState(forExercise: bench.id), deload)
+    }
+
+    /// The original purpose (#168) still holds through the live path, not
+    /// just a hand-replayed fixture: deleting the whole latest session backs
+    /// the state out to what the three earlier sessions earned, and
+    /// `lastPerformedAt` lands on the day that is now the latest.
+    func testDeletingTheLatestSessionThroughTheLivePathRevertsIt() throws {
+        let days = try fourBenchDaysThroughTheLivePath()
+        let afterFour = try XCTUnwrap(store.progressState(forExercise: bench.id))
+
+        _ = try store.deleteSets(ids: Set(days[3].working.map(\.id) + [days[3].warmup.id]))
+
+        let reverted = try XCTUnwrap(store.progressState(forExercise: bench.id))
+        XCTAssertNotEqual(reverted, afterFour, "the fourth session's step is undone")
+        var expected = ProgressState(exerciseID: bench.id)
+        for day in days.prefix(3) {
+            expected = ProgressionEngine.advance(
+                exercise: bench, state: expected, performed: day.working, now: day.working.last!.performedAt
+            ).state
+        }
+        XCTAssertEqual(reverted.targetLoad, expected.targetLoad)
+        XCTAssertEqual(reverted.stallCount, expected.stallCount)
+        XCTAssertEqual(reverted.consecutiveTopHits, expected.consecutiveTopHits)
+        XCTAssertTrue(Calendar.current.isDate(try XCTUnwrap(reverted.lastPerformedAt), inSameDayAs: midday(2)))
     }
 }
