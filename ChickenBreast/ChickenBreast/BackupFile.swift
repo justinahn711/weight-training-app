@@ -174,7 +174,13 @@ struct BackupSection: View {
                 guard !report.isEmpty else {
                     return "That backup was empty — nothing changed."
                 }
-                var text = "\(report.sets) set\(report.sets == 1 ? "" : "s") and \(report.exercises) lift\(report.exercises == 1 ? "" : "s") merged in. Anything already logged here was kept."
+                // A restore only adds what is missing (#271), so a file whose
+                // every row is already here changes nothing, and saying "0
+                // sets merged in" would read like a failure.
+                guard report.total > 0 || report.restoredGym else {
+                    return "Everything in that backup is already here — nothing changed."
+                }
+                var text = "\(report.sets) set\(report.sets == 1 ? "" : "s") and \(report.exercises) lift\(report.exercises == 1 ? "" : "s") added. Anything already logged here was kept."
                 if !report.deduplicated.isEmpty {
                     text += " \(report.deduplicated.total) duplicate row\(report.deduplicated.total == 1 ? "" : "s") merged."
                 }
