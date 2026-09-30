@@ -38,7 +38,7 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
     func testSettingsStepperRowsStackAtAccessibilityText() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = launch(arguments: Self.accessibilityXXXL)
-        XCTAssertTrue(try reachTrainScreen(app))
+        XCTAssertTrue(reachTrainScreen(app))
 
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable)
@@ -57,7 +57,7 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
     func testSettingsStepperRowsKeepOneLineAtDefaultText() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = launch()
-        XCTAssertTrue(try reachTrainScreen(app))
+        XCTAssertTrue(reachTrainScreen(app))
 
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable)
@@ -82,7 +82,7 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
     func testCorrectSetStepperRowsStackAtAccessibilityText() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = launch(arguments: Self.accessibilityXXXL)
-        XCTAssertTrue(try reachTrainScreen(app))
+        XCTAssertTrue(reachTrainScreen(app))
 
         try openTodayInHistory(app)
 
@@ -196,9 +196,8 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
     // MARK: - Navigation
 
     /// Logs and finishes one set, then opens today's workout in History —
-    /// the corrector only exists for a logged set, and finishing leaves no
-    /// workout open behind this test (openPushDay resumes one if an earlier
-    /// test left it).
+    /// the corrector only exists for a logged set, and each test starts from
+    /// an empty store (#285).
     private func openTodayInHistory(_ app: XCUIApplication) throws {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -220,17 +219,12 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
         startSessionIfPreviewed(app)
         let logSet = app.buttons["Log Set"]
         XCTAssertTrue(logSet.waitForExistence(timeout: 20))
-        if !logSet.isEnabled {
-            let heavier = app.buttons["session.weight.increment"]
-            XCTAssertTrue(heavier.waitForExistence(timeout: 5))
-            heavier.tap()
-        }
+        makeLogSetAvailable(app, logSet)
         var swipes = 0
         while !logSet.isHittable, swipes < 4 { app.swipeUp(); swipes += 1 }
         logSet.tap()
-        Thread.sleep(forTimeInterval: 1)
         let stay = app.buttons["Stay"]
-        if stay.exists && stay.isHittable { stay.tap() }
+        if wait(for: stay, toMatch: "hittable == true", timeout: 2) { stay.tap() }
 
         let finish = app.buttons["Finish workout"].firstMatch
         XCTAssertTrue(finish.waitForExistence(timeout: 10))
@@ -245,7 +239,7 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
             while !done.isHittable, swipes < 4 { app.swipeUp(); swipes += 1 }
             done.tap()
         }
-        XCTAssertTrue(try reachTrainScreen(app, timeout: 15))
+        XCTAssertTrue(reachTrainScreen(app, timeout: 15))
     }
 
     private func scrollTo(_ element: XCUIElement, in app: XCUIApplication) -> Bool {

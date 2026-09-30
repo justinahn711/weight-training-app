@@ -17,38 +17,25 @@ import XCTest
 /// which of the two had actually happened.
 ///
 /// Named `SystemAuditUITests` rather than the original `AccessibilityAuditTests`
-/// for a load-bearing reason, not a cosmetic one (#193 follow-up on the split
-/// itself, from CI on PR #196): without a test plan, this target's classes run
-/// in alphabetical-by-name order (verified empirically on the macos-26/Xcode
-/// 26.6 runner this project builds with — Xcode's "Randomize execution order"
-/// is off by default, and off means alphabetical). `SessionFlowUITests` and
-/// `openPushDay`/`reachTrainScreen` already lean on that same property *within*
-/// a class — the Back/Chip/Finish/History/History/Log/Partial chain only makes
-/// sense in that exact alphabetical sequence, and the file header there has
-/// always said so. Before the split, the two tests below sorted after all of
-/// `SessionFlowUITests`'s methods inside one shared class (`Session...` and
-/// `Train...` both start with letters past `B`, `C`, `F`, `H`, `L`, `P`), so
-/// they always ran last and never had to think about what session state a
-/// flow test had already created. Splitting into two classes kept the method
-/// order inside each class but reset the question of order *between* classes
-/// — and `AccessibilityAuditTests` sorted first (`A` < `S`), which flipped the
-/// two groups: the audits ran first on CI, left a session draft behind exactly
-/// as they always have, and `SessionFlowUITests` inherited it a run earlier
-/// than before. `testBackAndNextExerciseAreSeparated` failed after 146s
-/// resuming into that draft under CI's load — its own tolerance for "any
-/// starting position" is real (see that file), but paying for an extra resume
-/// hop, and for two full accessibility-tree walks happening immediately
-/// before it, is not free under contention, and was never a cost this test
-/// used to have to absorb. Naming this class so it still sorts after
-/// `SessionFlowUITests` restores the exact sequence the whole suite always
-/// ran in — audits last — while keeping the two kinds of test in the separate
-/// files/classes #193 wanted them in.
+/// so it sorted after `SessionFlowUITests` (#193 follow-up, PR #196): without
+/// a test plan, classes run alphabetically, and every test then inherited the
+/// session draft the one before it left — so which class ran first changed
+/// what each one saw. That stopped being true in #285: every test launches
+/// from an empty isolated store (`launch(arguments:freshState:)`), so order
+/// no longer decides the state an audit runs in. The name stays; nothing
+/// depends on it any more.
+///
+/// This class is the only one that audits (#285). The onboarding cover used
+/// to be audited inside `reachTrainScreen`, i.e. by whichever test launched
+/// first on a just-booted CI simulator, which is where the -56 stalls on
+/// PRs #282 and #286 happened; it has its own test below instead. Each
+/// screen is audited once per run, here, with every gating type.
 final class SystemAuditUITests: ChickenBreastUITestCase {
 
     func testTrainScreenPassesSystemAudit() throws {
         let app = launch()
         // Either shape of the Train screen is valid; both must pass the audit.
-        XCTAssertTrue(try reachTrainScreen(app),
+        XCTAssertTrue(reachTrainScreen(app),
                       "Train should offer a day to start or a workout to resume")
         let issues = try audit(app)
         // Printed rather than asserted to zero: the held-open types above are
@@ -56,6 +43,22 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         if !issues.isEmpty { print("Train screen a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
+    /// The split cover a first launch shows over Train (#136). Always up now,
+    /// since every test starts from an empty store (#285).
+    func testOnboardingCoverPassesSystemAudit() throws {
+        let app = launch()
+        let save = app.buttons["splitEditor.save"]
+        XCTAssertTrue(wait(for: save, toMatch: "hittable == true", timeout: 30),
+                      "a first launch should ask for the training split")
+        let issues = try audit(app)
+        if !issues.isEmpty { print("Onboarding cover a11y backlog:\n" + issues.joined(separator: "\n")) }
+    }
+
+    /// Audited on a fresh Push session: the first exercise, nothing logged,
+    /// no rest running. Before #285 this inherited whatever draft
+    /// `SessionFlowUITests` left, sometimes with a rest on screen, which is
+    /// the state #289's "RESTING" finding needs; that state is #289's to
+    /// decide and test on purpose, not this test's to inherit by accident.
     func testSessionScreenPassesSystemAudit() throws {
         let app = launch()
         try openPushDay(app)
@@ -75,7 +78,7 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
     /// every other screen here answers to.
     func testLiftLibraryIsReachableFromSettingsAndPassesAudit() throws {
         let app = launch()
-        XCTAssertTrue(try reachTrainScreen(app))
+        XCTAssertTrue(reachTrainScreen(app))
 
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5) && settings.isHittable)

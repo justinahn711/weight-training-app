@@ -27,10 +27,10 @@ import XCTest
 /// `reachTrainScreen` and `openPushDay` below — so that logic lives once,
 /// here, rather than getting forked into two answers that drift.
 ///
-/// See `SystemAuditUITests.swift` for why its class name, not just its file,
-/// had to change in a follow-up to this split: the two classes' relative
-/// order is load-bearing, because both leave/expect session state on disk
-/// that the other reads.
+/// Until #285 the classes' relative order was load-bearing, because every
+/// test inherited the session state on disk that the one before it left
+/// (see `SystemAuditUITests.swift`'s header for that history). Each test now
+/// launches from a known state instead — see `launch(arguments:freshState:)`.
 class ChickenBreastUITestCase: XCTestCase {
 
     override func setUp() {
@@ -38,16 +38,114 @@ class ChickenBreastUITestCase: XCTestCase {
         continueAfterFailure = false
     }
 
-    func launch(arguments: [String] = []) -> XCUIApplication {
+    /// Launches the app from a known state (#285).
+    ///
+    /// Each test used to inherit whatever the test before it left on disk —
+    /// a workout draft to resume, parked on any exercise, sometimes with a
+    /// rest still running on its Live Activity. The tests grew tolerances for
+    /// that ("a draft left by an earlier test can resume anywhere"), but the
+    /// state a test ran in still depended on which tests ran first, and one
+    /// audit's result did too (#289: a leftover rest put "RESTING" on the
+    /// session screen only when `SessionFlowUITests` had run before it).
+    ///
+    /// So every launch opens an isolated store that never syncs to iCloud,
+    /// and by default empties it first and ends any leftover Live Activity
+    /// and pending rest alert — the app's side is `UITestLaunchState`, in
+    /// `AppStore.swift`, compiled into Debug builds only. The app then does
+    /// its real first launch: seeds the library, shows the split cover.
+    ///
+    /// `freshState: false` is for a test that relaunches on purpose to read
+    /// back what it just wrote (the Progress tab, Train after a finish): the
+    /// same isolated store, kept.
+    func launch(arguments: [String] = [], freshState: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
-        // Deliberately no launch arguments. A `-seed-sample-data` flag would
-        // need a branch in the real launch path, and a test-only branch in
-        // production startup is a liability that outlives the test. The suite
-        // runs against a freshly installed simulator app instead, whose seeded
-        // library is deterministic on its own.
-        app.launchArguments = arguments
-        app.launch()
+        app.launchArguments = ["-UITestIsolatedStore"]
+            + (freshState ? ["-UITestResetState"] : [])
+            + arguments
+        retryingOnceOnLaunchTimeout { app.launch() }
         return app
+    }
+
+    /// `launch` (in practice `app.launch()`), retried once when — and only
+    /// when — XCTest reports that the launch itself timed out (#285).
+    ///
+    /// Seen on CI as `Failed to launch … Timed out while launching
+    /// application via Xcode`, on the first test of a run, on a simulator
+    /// the job had just booted; the next test launched the same binary in
+    /// seconds. Like the audit retry below, it is one retry of one specific
+    /// infrastructure error: a crash on launch is a different error and still
+    /// fails, and a second timeout in a row fails as it always did. What it
+    /// buys is not having a cold simulator read as a broken app.
+    ///
+    /// The first attempt runs inside a non-strict `XCTExpectFailure` scoped
+    /// to that message, so a timeout is recorded as an expected failure (and
+    /// kept in the result bundle) rather than failing the test; anything else
+    /// the launch reports is unmatched and fails exactly as before.
+    func retryingOnceOnLaunchTimeout(_ launch: () -> Void) {
+        final class Flag { var raised = false }
+        let timedOut = Flag()
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = false
+        options.issueMatcher = { issue in
+            guard Self.isLaunchTimeout(issue.compactDescription) else { return false }
+            timedOut.raised = true
+            return true
+        }
+        // A recorded failure would otherwise stop the test before the retry.
+        let continued = continueAfterFailure
+        let failuresBefore = testRun?.totalFailureCount ?? 0
+        continueAfterFailure = true
+        XCTExpectFailure("app launch timed out; retrying once (#285)", options: options) {
+            launch()
+        }
+        continueAfterFailure = continued
+        // Any other launch failure already failed the test above; stop here
+        // as the plain `app.launch()` would have, rather than tapping on.
+        if (testRun?.totalFailureCount ?? 0) > failuresBefore {
+            XCTFail("the app did not launch; stopping")
+            return
+        }
+        guard timedOut.raised else { return }
+        XCTContext.runActivity(named: "app launch timed out once, retrying (#285)") { _ in
+            launch()
+        }
+    }
+
+    static func isLaunchTimeout(_ description: String) -> Bool {
+        description.localizedCaseInsensitiveContains("failed to launch")
+            && description.localizedCaseInsensitiveContains("timed out while launching")
+    }
+
+    // MARK: - Waiting
+
+    /// Waits for `element` to satisfy `format`, instead of reading it once.
+    ///
+    /// A single read of `isEnabled` or `isHittable` right after a tap races
+    /// SwiftUI's re-render: the tap returns once the app reports idle, which
+    /// under CI's load is not the same moment the new state is on screen.
+    /// That race is how `testLogSetAndUndoIsReachableWithoutSight` failed on
+    /// PR #282 — the weight tap took 36s to land and Log Set was read at the
+    /// instant after (#285).
+    @discardableResult
+    func wait(for element: XCUIElement, toMatch format: String,
+              timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: format), object: element
+        )
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// Log Set, enabled. A cold-start lift opens with no weight, and Log Set
+    /// refuses a zero load rather than writing "0 lb" into history, so this
+    /// adds one increment when the button hasn't become enabled on its own.
+    func makeLogSetAvailable(_ app: XCUIApplication, _ logSet: XCUIElement,
+                             file: StaticString = #filePath, line: UInt = #line) {
+        guard !wait(for: logSet, toMatch: "enabled == true", timeout: 3) else { return }
+        let heavier = app.buttons["session.weight.increment"]
+        XCTAssertTrue(heavier.waitForExistence(timeout: 5), file: file, line: line)
+        heavier.tap()
+        XCTAssertTrue(wait(for: logSet, toMatch: "enabled == true", timeout: 15),
+                      "Log Set should be available once a weight is set", file: file, line: line)
     }
 
     /// The system's own audit, which catches what a hand-written expectation
@@ -241,7 +339,7 @@ class ChickenBreastUITestCase: XCTestCase {
     /// or resumable workout that can actually receive a tap.
     @discardableResult
     func reachTrainScreen(_ app: XCUIApplication,
-                          timeout: TimeInterval = 30) throws -> Bool {
+                          timeout: TimeInterval = 30) -> Bool {
         // Any day, not Push specifically, and not necessarily on screen: since
         // Train scrolls (#249), the badge and the cycle line alone can fill an
         // SE at the accessibility sizes, leaving every day below the fold.
@@ -251,29 +349,20 @@ class ChickenBreastUITestCase: XCTestCase {
         let resume = app.buttons["home.resume"]
         let save = app.buttons["splitEditor.save"]
 
-        // Audited at most once per call (#193). This loop polls every 200ms
-        // while onboarding is up, and `save.tap()` doesn't dismiss the cover
-        // instantly — under load the animation can still be mid-flight on the
-        // next poll, which used to mean `save.exists && save.isHittable` was
-        // still true and the audit ran again before the tap had even landed.
-        // A full audit inside a 200ms polling loop, potentially repeated for
-        // as long as the transition is slow to settle, is its own way to turn
-        // a contended machine into a multi-minute stall independent of the
-        // -56 fix above.
-        var auditedOnboarding = false
+        // No audit here any more (#285). This used to audit the onboarding
+        // cover whenever it was up, which on CI meant exactly once per run:
+        // in whichever test launched first, seconds after the simulator
+        // booted — and that is where every -56 since #280 happened (PRs #282
+        // and #286), in a layout test with nothing to do with the cover.
+        // With a fresh store per test the cover is up in every test, so it
+        // would now audit twenty times. The cover has its own audit test in
+        // `SystemAuditUITests` instead.
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             // Elements behind a full-screen cover still exist in XCUI's
             // hierarchy. Handle the cover first and require the destination
             // controls to be hittable so a hidden day never wins this race.
             if save.exists && save.isHittable {
-                if !auditedOnboarding {
-                    auditedOnboarding = true
-                    let issues = try audit(app)
-                    if !issues.isEmpty {
-                        print("Onboarding cover a11y backlog:\n" + issues.joined(separator: "\n"))
-                    }
-                }
                 save.tap()
             }
             let coverGone = !save.exists
@@ -292,17 +381,37 @@ class ChickenBreastUITestCase: XCTestCase {
     /// library, deduplicating, reconciling the gym — and a first launch on a
     /// cold simulator is the slowest this ever gets.
     func openPushDay(_ app: XCUIApplication) throws {
-        XCTAssertTrue(try reachTrainScreen(app), "the Train screen should become reachable")
-        // A workout left in progress by an earlier test replaces the day list
-        // with Resume — correct behaviour (#132), and it makes these tests
-        // order-dependent. Adopting the draft is the honest reaction: the goal
-        // is to be in a session, and resuming reaches one.
+        XCTAssertTrue(reachTrainScreen(app), "the Train screen should become reachable")
+        // A workout in progress replaces the day list with Resume (#132).
+        // Since #285 a test starts with none, but one that relaunches with
+        // `freshState: false` mid-session can meet one; resuming reaches a
+        // session either way.
         let resume = app.buttons["home.resume"]
         let push = app.buttons["day.push"]
+        func reachable() -> Bool {
+            (resume.exists && resume.isHittable) || (push.exists && push.isHittable)
+        }
+        // Given a moment after the split cover's Save before any swipe: the
+        // cover may still be animating away. Every test meets the cover
+        // since #285, so this is the common path now.
+        let settle = Date().addingTimeInterval(5)
+        while !reachable() && Date() < settle {
+            Thread.sleep(forTimeInterval: 0.2)
+        }
         // Either can be below the fold at the accessibility sizes (#249).
         var swipes = 0
-        while !(resume.exists && resume.isHittable) && !(push.exists && push.isHittable) && swipes < 4 {
+        while !reachable() && swipes < 4 {
             app.swipeUp()
+            swipes += 1
+        }
+        // And back down. On an SE at AccessibilityXXXL with a fresh store
+        // (day buttons, not a Resume card), Push was not hittable at rest
+        // and a full swipe up carries it past the top; one swipe back down
+        // leaves it hittable. Before #285 these tests resumed a draft and
+        // never met that layout (#285, measured on ChickenBreast-SE).
+        swipes = 0
+        while !reachable() && swipes < 6 {
+            app.swipeDown()
             swipes += 1
         }
         if resume.exists && resume.isHittable {
@@ -333,6 +442,8 @@ class ChickenBreastUITestCase: XCTestCase {
 
         let sheet = app.descendants(matching: .any)["finish.confirmation.sheet"]
         XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        // Hittable once the sheet has finished rising, not at first existence.
+        XCTAssertTrue(wait(for: app.buttons["finish.confirmation.finish"], toMatch: "hittable == true", timeout: 5))
         if requiresBottomPosition {
             XCTAssertGreaterThan(
                 sheet.frame.minY,
@@ -340,11 +451,13 @@ class ChickenBreastUITestCase: XCTestCase {
                 "partial-finish confirmation should rise from the bottom, not float near the top"
             )
         }
-        XCTAssertTrue(app.buttons["finish.confirmation.finish"].isHittable)
 
         let keepTraining = app.buttons["finish.confirmation.cancel"]
         XCTAssertTrue(keepTraining.isHittable)
         keepTraining.tap()
-        XCTAssertFalse(sheet.waitForExistence(timeout: 1))
+        // Waits for it to go. `XCTAssertFalse(sheet.waitForExistence(...))`
+        // returned true the instant the sheet was still mid-dismissal (#285).
+        XCTAssertTrue(wait(for: sheet, toMatch: "exists == false", timeout: 5),
+                      "Keep training should dismiss the confirmation")
     }
 }
