@@ -46,8 +46,20 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
     /// undo that.
     public var usesGymRack: Bool
 
-    /// Whether `baseWeight` is the gym's bar rather than something weighed
-    /// (#270). Nil means nobody has said — every row written before this.
+    /// Whether `baseWeight` is just the gym's bar, as opposed to something
+    /// somebody weighed (#270).
+    ///
+    /// Recorded rather than recognised. `reconcileGym()` runs on a device that
+    /// learned the gym through sync and has no idea what the bar was before,
+    /// so "is this 40 still just the bar?" can't be answered from the number:
+    /// a 40 left by a stepper tap on another phone and a lever weighed at 40
+    /// look the same. The answer has to travel with the lift. It rides inside
+    /// the lift's stored loading JSON, so it syncs with the row it describes.
+    ///
+    /// Nil means nobody has said — every row written before #270, or by a
+    /// build that predates it. `GymConfig.applied` infers an answer for those
+    /// once and records it; see there for the rule and the one case it gets
+    /// wrong. Only meaningful while `usesGymRack` is true and there is a base.
     public var followsGymBar: Bool?
 
     public init(
@@ -91,12 +103,15 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
     /// possible at all.
     public static let standardPlates: [Double] = [45, 35, 25, 10, 5, 2.5]
 
-    /// A 45 lb Olympic bar, plates on both sleeves.
-    public static let olympicBarbell = LoadingStyle(baseWeight: Load(45), sleeves: 2)
+    /// A 45 lb Olympic bar, plates on both sleeves — the gym's bar, so it
+    /// follows the gym's (#270).
+    public static let olympicBarbell = LoadingStyle(
+        baseWeight: Load(45), sleeves: 2, followsGymBar: true
+    )
 
     /// The standard bar in a given world: 45 lb here, 20 kg elsewhere.
     public static func standardBarbell(in unit: MassUnit) -> LoadingStyle {
-        LoadingStyle(baseWeight: unit.standardBar, sleeves: 2, unit: unit)
+        LoadingStyle(baseWeight: unit.standardBar, sleeves: 2, unit: unit, followsGymBar: true)
     }
 
     /// A machine whose empty weight hasn't been measured yet.

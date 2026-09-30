@@ -121,7 +121,40 @@ public final class TrainingStore {
     }
 
     public func upsert(_ exercises: [Exercise]) throws {
-        try upsert(exercises, stampedAt: EditStamp.at(Date()))
+        let gym = (try? gymConfig()) ?? .standard
+        let marked = try exercises.map { try markingBase(of: $0, in: gym) }
+        try upsert(marked, stampedAt: EditStamp.at(Date()))
+    }
+
+    /// Settles whether a lifter-written empty weight is the gym's bar or a
+    /// measurement (#270).
+    ///
+    /// The lift sheet builds a fresh `LoadingStyle` on every Save with no
+    /// opinion on `followsGymBar`, and a caller editing a lift it read back
+    /// carries the old mark along with a new number — so the mark a write
+    /// arrives with is not evidence of anything. The store decides from what
+    /// changed instead:
+    ///
+    /// - An untouched base keeps the mark it had. A Save that only changed
+    ///   the rest timer must not detach the bar from the gym.
+    /// - A newly typed base is a measurement, unless it is exactly the gym's
+    ///   own bar. That exception is how a lift goes back to following,
+    ///   including one an older build stranded on a bar the gym no longer has.
+    /// - A lift with a rack of its own isn't re-racked at all, so its new base
+    ///   is left unmarked; should it rejoin the gym, `applied` infers one then.
+    private func markingBase(of exercise: Exercise, in gym: GymConfig) throws -> Exercise {
+        guard var loading = exercise.loading, let base = loading.baseWeight else { return exercise }
+        guard let stored = (try storedExercise(id: exercise.id)).flatMap({ try? $0.toDomain() })?.loading
+        else { return exercise }
+
+        if stored.baseWeight == base {
+            loading.followsGymBar = loading.followsGymBar ?? stored.followsGymBar
+        } else {
+            loading.followsGymBar = loading.usesGymRack ? base == gym.barWeight : nil
+        }
+        var marked = exercise
+        marked.loading = loading
+        return marked
     }
 
     /// - Parameter stamp: what `deduplicate()` will read about who wrote these
