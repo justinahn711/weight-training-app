@@ -117,6 +117,55 @@ final class AccessibilityAuditTests: XCTestCase {
         if !issues.isEmpty { print("Session screen a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
+    /// Reviewing a day is an in-memory operation until Start workout. Keep a
+    /// phone-safe smoke path for the preview and its navigation controls that
+    /// never creates a draft, accepts a plan, or writes a set.
+    func testWorkoutPreviewControlsAreReachableWithoutStarting() throws {
+        let app = launch()
+        XCTAssertTrue(try reachTrainScreen(app))
+        if app.buttons["home.resume"].exists {
+            throw XCTSkip("An existing draft replaces day previews; preserve it rather than modifying phone data.")
+        }
+
+        let push = app.buttons["day.push"]
+        XCTAssertTrue(push.waitForExistence(timeout: 5) && push.isHittable)
+        push.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["workout.preview.screen"]
+                .waitForExistence(timeout: 5)
+        )
+        XCTAssertGreaterThan(
+            app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier BEGINSWITH 'workout.preview.exercise.'"))
+                .count,
+            0
+        )
+        let controls = [
+            "workout.preview.back",
+            "workout.preview.edit",
+            "workout.preview.add",
+            "workout.preview.start",
+        ]
+        for identifier in controls {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.exists && button.isHittable, "\(identifier) should be reachable")
+        }
+
+        app.buttons["workout.preview.add"].tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["workout.preview.add.screen"]
+                .waitForExistence(timeout: 5)
+        )
+        let cancel = app.buttons["workout.preview.add.cancel"]
+        XCTAssertTrue(cancel.exists && cancel.isHittable)
+        cancel.tap()
+
+        app.buttons["workout.preview.back"].tap()
+        XCTAssertTrue(app.buttons["day.push"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["home.resume"].exists, "preview navigation must not create a workout draft")
+    }
+
     /// Start session -> log a set -> undo, the flow the issue names.
     ///
     /// Asserted through accessibility identifiers rather than screen positions,

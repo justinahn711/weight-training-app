@@ -553,6 +553,7 @@ struct ContentView: View {
                 onMove: movePlannedExercises,
                 onRemove: removePlannedExercises,
                 onAdd: addPlannedExercise,
+                onCancel: { route = nil },
                 onStart: startPlannedSession
             )
         } else if let sessionStartFailure {
@@ -760,6 +761,7 @@ private struct WorkoutPreviewView: View {
     let onMove: (IndexSet, Int) -> Void
     let onRemove: (IndexSet) -> Void
     let onAdd: (Exercise) -> Void
+    let onCancel: () -> Void
     let onStart: () -> Void
 
     @State private var showingAdd = false
@@ -776,6 +778,8 @@ private struct WorkoutPreviewView: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 3)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("workout.preview.exercise.\(row.id.uuidString)")
                 }
                 .onMove(perform: onMove)
                 .onDelete(perform: onRemove)
@@ -785,12 +789,20 @@ private struct WorkoutPreviewView: View {
                 Text("Changes affect this workout only. Your recurring plan stays the same.")
             }
         }
+        .accessibilityIdentifier("workout.preview.screen")
         .navigationTitle("\(dayName) workout")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Back", systemImage: "chevron.left", action: onCancel)
+                    .accessibilityIdentifier("workout.preview.back")
+            }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 EditButton()
+                    .accessibilityIdentifier("workout.preview.edit")
                 Button("Add exercise", systemImage: "plus") { showingAdd = true }
+                    .accessibilityIdentifier("workout.preview.add")
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -802,6 +814,7 @@ private struct WorkoutPreviewView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(session.exercises.isEmpty)
+            .accessibilityIdentifier("workout.preview.start")
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
             .background(.bar)
@@ -819,13 +832,16 @@ private struct WorkoutPreviewView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    .accessibilityIdentifier("workout.preview.add.exercise.\(exercise.id.uuidString)")
                 }
+                .accessibilityIdentifier("workout.preview.add.screen")
                 .searchable(text: $query, prompt: "Exercise name")
                 .navigationTitle("Add for today")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { showingAdd = false }
+                            .accessibilityIdentifier("workout.preview.add.cancel")
                     }
                 }
             }
