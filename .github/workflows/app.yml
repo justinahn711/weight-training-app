@@ -181,16 +181,32 @@ jobs:
       - name: Choose a simulator the runner actually has
         id: sim
         run: |
-          name=$(xcrun simctl list devices available \
-                 | sed -nE 's/^[[:space:]]*(iPhone [^(]*[^([:space:]])[[:space:]]*\(.*/\1/p' \
-                 | head -1)
-          if [ -z "$name" ]; then
+          line=$(xcrun simctl list devices available \
+                 | grep -E '^[[:space:]]*iPhone ' | head -1)
+          name=$(printf '%s\n' "$line" \
+                 | sed -nE 's/^[[:space:]]*(iPhone [^(]*[^([:space:]])[[:space:]]*\(.*/\1/p')
+          udid=$(printf '%s\n' "$line" \
+                 | sed -nE 's/.*\(([0-9A-F-]{36})\).*/\1/p')
+          if [ -z "$name" ] || [ -z "$udid" ]; then
             echo "::error::no available iPhone simulator on this runner"
             xcrun simctl list devices available
             exit 1
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
-          echo "Using simulator: $name"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: $name ($udid)"
+
+      # Booted, and waited on until the boot has actually finished, before
+      # xcodebuild starts (#285). Otherwise xcodebuild boots it itself and the
+      # first test launches the app into a simulator that is still settling:
+      # on PR #282 that first launch timed out ("Timed out while launching
+      # application via Xcode"), and on #282 and #286 the first test's audit
+      # stalled (-56) — while every later test in the same run launched and
+      # audited in seconds. By UDID, the one the tests then run on, rather
+      # than by a name two runtimes might share.
+      - name: Boot the simulator before the suite
+        run: |
+          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
 
       # -only-testing scopes this to the UI suite specifically (#181): the
       # scheme's TestAction now also lists ChickenBreastTests, run separately
@@ -201,7 +217,7 @@ jobs:
           xcodebuild test \
             -project ChickenBreast/ChickenBreast.xcodeproj \
             -scheme ChickenBreastUITests \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath UITestResults.xcresult
 
       # Not a required check (see PR #155): a UI test suite that boots a
