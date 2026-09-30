@@ -1986,6 +1986,12 @@ private struct RestBanner: View {
                     .font(.title2.weight(.bold).monospacedDigit())
                     .foregroundStyle(done ? Theme.done : Color.primary)
                     .contentTransition(.numericText())
+                    // A label that doesn't change every second, with the time
+                    // as its value. As a bare label the element was a new
+                    // one each tick, and on a slow CI runner the system audit
+                    // lost it mid-check and reported "2:54" (#289, PR #292).
+                    .accessibilityLabel(done ? "Rest over" : "Rest remaining")
+                    .accessibilityValue(rest.displayTime(at: date))
 
                 if showsTiming, let report {
                     Text(report.line)
