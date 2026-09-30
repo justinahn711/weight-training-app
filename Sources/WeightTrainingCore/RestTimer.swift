@@ -122,6 +122,58 @@ public struct RestTimer: Hashable, Sendable {
     }
 }
 
+extension RestTimer {
+    /// What the lock screen and Dynamic Island draw for the rest (#265).
+    ///
+    /// The widget has no app behind it while the phone is locked, so nothing
+    /// calls `expireRestIfNeeded` there. It has only `restEndsAt` and the
+    /// moment it is rendered, and it gets a guaranteed re-render just once, at
+    /// the stale date (`restEndsAt`). This decides the face from those alone,
+    /// so it follows the app's own rule rather than a second copy of it.
+    public enum LockScreenFace: Equatable {
+        /// No clock: the face `expireRestIfNeeded` publishes, with Log back.
+        case noRest
+        /// Counting down to the target.
+        case countingDown(to: Date)
+        /// Counting up from the target. The range ends at the cap, so the
+        /// system's own ticking stops at `maximumOverrun` rather than
+        /// running on for an hour as it used to.
+        case overrun(ClosedRange<Date>)
+
+        /// Says which clock is being read, since a countdown and an overrun
+        /// look alike at a glance.
+        public var caption: String {
+            switch self {
+            case .noRest: "ready"
+            case .countingDown: "resting"
+            case .overrun: "over"
+            }
+        }
+    }
+
+    /// Past the cap the face is `.noRest`: the same thing the app shows once
+    /// `expireRestIfNeeded` has run, so unlocking never reveals the two
+    /// disagreeing about whether a rest exists. The alternative, a fixed
+    /// "10:00+", was rejected because it is still a rest the app no longer
+    /// has.
+    ///
+    /// The render time decides, not the activity's `isStale` flag, which can
+    /// lag the clock — a countdown range starting past its end would trap.
+    ///
+    /// A face rendered before the cap and not re-rendered after it holds its
+    /// count-up at the cap's value (`10:00`, "over"), because that is where a
+    /// `Text(timerInterval:)` range stops. It stops counting there, which is
+    /// the promise; the switch to `.noRest` waits for the system's next render
+    /// or the next time the app runs.
+    public static func lockScreenFace(restEndsAt: Date?, now: Date) -> LockScreenFace {
+        guard let endsAt = restEndsAt else { return .noRest }
+        if now < endsAt { return .countingDown(to: endsAt) }
+        let cap = endsAt.addingTimeInterval(maximumOverrun)
+        if now >= cap { return .noRest }
+        return .overrun(endsAt...cap)
+    }
+}
+
 extension Exercise {
     /// Whether the lift is heavy enough to need a full rest.
     ///

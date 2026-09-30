@@ -14,7 +14,7 @@ extension TrainingStore {
         let existing = Set(try dayTemplates().map(\.id))
         let missing = DayTemplateLibrary.all.filter { !existing.contains($0.id) }
         for template in missing {
-            try upsert(template)
+            try upsert(template, stampedAt: EditStamp.stock)
         }
         return missing
     }
