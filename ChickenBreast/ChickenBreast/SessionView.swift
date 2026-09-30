@@ -1947,6 +1947,7 @@ private struct RestBanner: View {
     var onExpire: () -> Void = {}
 
     @AppStorage(RestAlertSettings.timingKey) private var showsTiming = RestAlertSettings.timingDefault
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// What the buzz did, once it has done it. See `RestAlertReport`.
     @State private var report: RestAlertReport?
@@ -1959,68 +1960,103 @@ private struct RestBanner: View {
         RoundedRectangle(cornerRadius: 24, style: .continuous)
     }
 
+    /// The ring and the time left, read as one.
+    private func clock(at date: Date, done: Bool) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .stroke(.quaternary, lineWidth: 3)
+                Circle()
+                    .trim(from: 0, to: rest.progress(at: date))
+                    .stroke(done ? Theme.done : Color.accentColor,
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            // Fixed rather than `@ScaledMetric` (a platform audit's P3, tried
+            // and reverted): scaling this relative to `.largeTitle` measured
+            // 22pt taller even at the system's own default category, which
+            // pushed the action bar over the #205 340pt ceiling before any
+            // Dynamic Type setting was touched. Growing it costs more than the
+            // audit's own "polish, low real-world impact" rating for this
+            // finding was worth chasing.
+            .frame(width: 22, height: 22)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(rest.displayTime(at: date))
+                    .font(.title2.weight(.bold).monospacedDigit())
+                    .foregroundStyle(done ? Theme.done : Color.primary)
+                    .contentTransition(.numericText())
+                    // A label that doesn't change every second, with the time
+                    // as its value. As a bare label the element was a new
+                    // one each tick, and on a slow CI runner the system audit
+                    // lost it mid-check and reported "2:54" (#289, PR #292).
+                    .accessibilityLabel(done ? "Rest over" : "Rest remaining")
+                    .accessibilityValue(rest.displayTime(at: date))
+
+                if showsTiming, let report {
+                    Text(report.line)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    private var skipButton: some View {
+        Button(action: onSkip) {
+            // Never truncated: at accessibility sizes it showed "S".
+            Text("Skip").lineLimit(1).fixedSize(horizontal: true, vertical: false)
+        }
+            .font(.body.weight(.semibold))
+            .buttonStyle(.bordered)
+            .tint(Theme.quietTint)
+    }
+
     var body: some View {
         TimelineView(.periodic(from: rest.startedAt, by: 1)) { context in
             let done = rest.isComplete(at: context.date)
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .stroke(.quaternary, lineWidth: 3)
-                    Circle()
-                        .trim(from: 0, to: rest.progress(at: context.date))
-                        .stroke(done ? Theme.done : Color.accentColor,
-                                style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
+            VStack(alignment: .leading, spacing: 2) {
+                // The same `timer` glyph `StartRestControl` showed for the
+                // empty state of this slot (#223), so the clock reads as one
+                // control rather than a bar that appears from nowhere.
+                //
+                // Two things the system audit reported here (#289):
+                //
+                // - `caption`, not `caption2`. caption2 is 11pt at every size
+                //   from xSmall to Large, so below the default it can't get
+                //   smaller, and the Dynamic Type audit read that as text
+                //   that ignores the setting. The same line in caption
+                //   passes; in caption2 it failed even with the rest of the
+                //   bar removed.
+                // - A row of its own, above the clock rather than beside it.
+                //   Squeezed between the clock and Skip it hyphenated to
+                //   "REST-" at accessibility sizes, and the one-line,
+                //   scale-to-fit fix for that was reported as clipped. Across
+                //   the whole bar it has room at every size.
+                Label {
+                    Text(done ? "Rest complete" : "Resting")
+                        .textCase(.uppercase)
+                } icon: {
+                    Image(systemName: done ? "checkmark.circle.fill" : "timer")
                 }
-                .frame(width: 22, height: 22)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-                VStack(alignment: .leading, spacing: 0) {
-                    // The same `timer` glyph `StartRestControl` showed for
-                    // the empty state of this slot (#223), so the clock reads
-                    // as one control rather than a bar that appears from
-                    // nowhere.
-                    Label {
-                        Text(done ? "Rest complete" : "Resting")
-                            .textCase(.uppercase)
-                    } icon: {
-                        Image(systemName: done ? "checkmark.circle.fill" : "timer")
-                    }
-                    .font(.caption2.weight(.semibold))
-                    // At accessibility sizes this hyphenated to "REST-".
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                    .foregroundStyle(.secondary)
-                    // Fixed rather than `@ScaledMetric` (a platform audit's
-                    // P3, tried and reverted): scaling this relative to
-                    // `.largeTitle` measured 22pt taller even at the
-                    // system's own default category, which pushed the
-                    // action bar over the #205 340pt ceiling before any
-                    // Dynamic Type setting was touched. `minimumScaleFactor`
-                    // below already keeps this from clipping when the
-                    // surrounding text grows; growing it too costs more
-                    // than the audit's own "polish, low real-world impact"
-                    // rating for this finding was worth chasing further.
-                    Text(rest.displayTime(at: context.date))
-                        .font(.title2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(done ? Theme.done : Color.primary)
-                        .contentTransition(.numericText())
-
-                    if showsTiming, let report {
-                        Text(report.line)
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                    }
+                // Skip moves under the clock at accessibility sizes (#289):
+                // beside it, on an SE, the fixed-width Skip left the clock
+                // "2…", and the clock is the one thing on this bar that has
+                // to be read whole. `AnyLayout` rather than two branches, so
+                // the clock stays the same view across the switch — swapping
+                // views is what the Dynamic Type audit reported.
+                let row = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(spacing: 12))
+                row {
+                    clock(at: context.date, done: done)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    skipButton
                 }
-
-                Spacer()
-
-                Button(action: onSkip) {
-                    // Never truncated: at accessibility sizes it showed "S".
-                    Text("Skip").lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                }
-                    .font(.body.weight(.semibold))
-                    .buttonStyle(.bordered)
-                    .tint(Theme.quietTint)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
