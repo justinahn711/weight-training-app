@@ -101,6 +101,74 @@ final class SessionViewModelTests: XCTestCase {
         return SessionViewModel(store: store, session: session, draftID: UUID())
     }
 
+    // MARK: - Voice load adjustments across partial transcripts (#266)
+
+    /// The recogniser reports partial transcripts, and each prefix of "drop
+    /// twenty five" parses to its own adjustment. Before #266 every partial was
+    /// added on top of the last, so one utterance moved the weight twice.
+    private func adjust(_ vm: SessionViewModel, by pounds: Double) {
+        vm.handle(VoiceParse(command: .adjustLoad(by: Load(pounds))))
+    }
+
+    func test_voiceAdjust_partialsOfOneUtteranceReplaceRatherThanStack() throws {
+        let vm = try makeViewModel()
+        vm.clearWarmupRamp()
+        XCTAssertEqual(vm.pendingLoad, Load(135), "sanity: starts on the working weight")
+
+        vm.beginVoiceUtterance()
+        adjust(vm, by: -20)   // partial: "drop 20"
+        adjust(vm, by: -25)   // partial: "drop 25"
+
+        XCTAssertEqual(vm.pendingLoad, Load(110), "one spoken 'drop 25' is a net -25, not -45")
+    }
+
+    func test_voiceAdjust_landsOnTheEquipmentGrid() throws {
+        let bench = benchPress()
+        let vm = try makeViewModel(exercises: [bench])
+        vm.clearWarmupRamp()
+
+        vm.beginVoiceUtterance()
+        adjust(vm, by: 5)                                  // partial: "add 5"
+        adjust(vm, by: Load(5, .kilograms).pounds)         // partial: "add 5 kilos"
+
+        XCTAssertEqual(vm.pendingLoad, bench.nearestAchievable(Load(135 + Load(5, .kilograms).pounds)))
+        XCTAssertEqual(vm.pendingLoad, Load(145), "+11 lb on a 5 lb barbell grid lands on 145, not 146.02 or 151")
+    }
+
+    func test_voiceAdjust_separateUtterancesEachApply() throws {
+        let vm = try makeViewModel()
+        vm.clearWarmupRamp()
+
+        vm.beginVoiceUtterance()
+        adjust(vm, by: -20)
+        vm.beginVoiceUtterance()
+        adjust(vm, by: -20)
+
+        XCTAssertEqual(vm.pendingLoad, Load(95), "two utterances are two decisions")
+    }
+
+    func test_voiceAdjust_aTapMidUtteranceWinsOverLaterPartials() throws {
+        let vm = try makeViewModel()
+        vm.clearWarmupRamp()
+
+        vm.beginVoiceUtterance()
+        adjust(vm, by: -20)    // 115
+        vm.adjustLoad(by: 1)   // the lifter taps + : 120
+        adjust(vm, by: -25)    // a late partial of the same utterance
+
+        XCTAssertEqual(vm.pendingLoad, Load(120), "the lifter's own edit is not re-based or stacked on")
+    }
+
+    func test_voiceAdjust_floorsAtTheEquipmentMinimum() throws {
+        let vm = try makeViewModel()
+        vm.clearWarmupRamp()
+
+        vm.beginVoiceUtterance()
+        adjust(vm, by: -500)
+
+        XCTAssertEqual(vm.pendingLoad, benchPress().minimumLoad)
+    }
+
     // MARK: - Next up: moving on once last time's set count is matched
 
     /// A dumbbell lift with no ramp, so `logSet()` writes a working set from
