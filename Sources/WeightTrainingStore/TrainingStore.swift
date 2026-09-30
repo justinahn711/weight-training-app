@@ -208,7 +208,7 @@ public final class TrainingStore {
 
     /// The copy `deduplicate()` would keep, so an edit lands on the row that
     /// survives rather than on one about to be deleted (#268).
-    private func storedExercise(id: UUID) throws -> StoredExercise? {
+    func storedExercise(id: UUID) throws -> StoredExercise? {
         let descriptor = FetchDescriptor<StoredExercise>(
             predicate: #Predicate { $0.id == id }
         )

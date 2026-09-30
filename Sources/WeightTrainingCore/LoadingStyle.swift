@@ -46,12 +46,17 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
     /// undo that.
     public var usesGymRack: Bool
 
+    /// Whether `baseWeight` is the gym's bar rather than something weighed
+    /// (#270). Nil means nobody has said — every row written before this.
+    public var followsGymBar: Bool?
+
     public init(
         baseWeight: Load?,
         sleeves: Int,
         availablePlates: [Double]? = nil,
         unit: MassUnit = .pounds,
-        usesGymRack: Bool = true
+        usesGymRack: Bool = true,
+        followsGymBar: Bool? = nil
     ) {
         precondition(sleeves > 0, "an apparatus with no sleeves cannot be loaded")
         self.baseWeight = baseWeight
@@ -59,6 +64,7 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
         self.unit = unit
         self.availablePlates = availablePlates ?? unit.standardPlates
         self.usesGymRack = usesGymRack
+        self.followsGymBar = followsGymBar
     }
 
     /// Rows written before #67 carry no unit and are pounds by definition.
@@ -78,6 +84,7 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
         self.usesGymRack =
             try container.decodeIfPresent(Bool.self, forKey: .usesGymRack)
             ?? (self.availablePlates == MassUnit.pounds.standardPlates)
+        self.followsGymBar = try container.decodeIfPresent(Bool.self, forKey: .followsGymBar)
     }
 
     /// Plate sizes down to 2.5s, which are what make 5 lb barbell jumps
