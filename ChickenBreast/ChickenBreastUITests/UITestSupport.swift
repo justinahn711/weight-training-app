@@ -399,10 +399,30 @@ class ChickenBreastUITestCase: XCTestCase {
         // session either way.
         let resume = app.buttons["home.resume"]
         let push = app.buttons["day.push"]
+        func reachable() -> Bool {
+            (resume.exists && resume.isHittable) || (push.exists && push.isHittable)
+        }
+        // Given a moment after the split cover's Save before any swipe: the
+        // cover may still be animating away. Every test meets the cover
+        // since #285, so this is the common path now.
+        let settle = Date().addingTimeInterval(5)
+        while !reachable() && Date() < settle {
+            Thread.sleep(forTimeInterval: 0.2)
+        }
         // Either can be below the fold at the accessibility sizes (#249).
         var swipes = 0
-        while !(resume.exists && resume.isHittable) && !(push.exists && push.isHittable) && swipes < 4 {
+        while !reachable() && swipes < 4 {
             app.swipeUp()
+            swipes += 1
+        }
+        // And back down. On an SE at AccessibilityXXXL with a fresh store
+        // (day buttons, not a Resume card), Push was not hittable at rest
+        // and a full swipe up carries it past the top; one swipe back down
+        // leaves it hittable. Before #285 these tests resumed a draft and
+        // never met that layout (#285, measured on ChickenBreast-SE).
+        swipes = 0
+        while !reachable() && swipes < 6 {
+            app.swipeDown()
             swipes += 1
         }
         if resume.exists && resume.isHittable {
