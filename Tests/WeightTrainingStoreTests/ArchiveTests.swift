@@ -534,12 +534,12 @@ final class ArchiveTests: XCTestCase {
         let backup = try store.archive(exportedAt: midday())
 
         var push = try XCTUnwrap(try store.dayTemplate(kind: .push))
-        push.name = "Chest Day"
+        push.slots.removeLast()
         try store.upsert(push)
 
         try store.restore(from: backup)
 
-        XCTAssertEqual(try store.dayTemplate(kind: .push)?.name, "Chest Day")
+        XCTAssertEqual(try store.dayTemplate(kind: .push), push, "the dropped slot stays dropped")
     }
 
     /// A deload applied from the digest after the export changes the target
@@ -572,7 +572,7 @@ final class ArchiveTests: XCTestCase {
         try store.upsert(renamed)
         try store.seedTemplatesIfNeeded()
         var push = try XCTUnwrap(try store.dayTemplate(kind: .push))
-        push.name = "Chest Day"
+        push.slots.removeLast()
         try store.upsert(push)
         let backup = try store.archive(exportedAt: midday())
 
@@ -582,7 +582,7 @@ final class ArchiveTests: XCTestCase {
         try fresh.restore(from: backup)
 
         XCTAssertEqual(try fresh.exercise(id: bench.id)?.name, "Paused Bench")
-        XCTAssertEqual(try fresh.dayTemplate(kind: .push)?.name, "Chest Day")
+        XCTAssertEqual(try fresh.dayTemplate(kind: .push), push)
     }
 
     /// The gym the lifter set here after the export is theirs.

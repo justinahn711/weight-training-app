@@ -201,8 +201,13 @@ public struct RestoreReport: Hashable, Sendable {
     /// the gym was archived carry none, and leave this device's gym alone.
     public var restoredGym: Bool = false
 
+    /// Rows added — or, for a catalogue row nobody had touched, filled in
+    /// from the file.
     public var total: Int {
         exercises + sets + progressStates + dayTemplates + bodyweights
     }
-    public var isEmpty: Bool { total == 0 }
+
+    /// True when the file had nothing in it at all — not when everything in
+    /// it was already here, which is `total == 0` with rows `kept`.
+    public var isEmpty: Bool { total == 0 && kept == 0 }
 }
