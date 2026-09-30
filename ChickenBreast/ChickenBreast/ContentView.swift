@@ -155,15 +155,23 @@ struct ContentView: View {
     private func volumeRow(_ volume: VolumeReport) -> some View {
         let starved = !volume.starved.isEmpty
         return Button { showingVolume = true } label: {
-            HStack(spacing: 6) {
+            // First-baseline, so a wrapped sentence keeps the glyph beside its
+            // first line rather than floating at the middle of the paragraph.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 // `Theme.attention`, not the accent: a hole in the week is
                 // news, not the button to press, and the dashboard used one
                 // orange for both. The glyph and the sentence say the same
                 // thing, so it never rests on colour alone.
                 Image(systemName: starved ? "exclamationmark.triangle.fill" : "chart.bar")
                     .foregroundStyle(starved ? AnyShapeStyle(Theme.attention) : AnyShapeStyle(.secondary))
+                // Wraps (#277). It was one line, which is what kept the #115
+                // reservation exact — and at AccessibilityLarge it read
+                // "Behind on chest, front…", losing the part that says what is
+                // behind. The reservation below now sizes for the longest
+                // sentence this can ever be, so wrapping moves nothing.
                 Text(starved ? starvedSummary(volume) : "Volume this week")
-                    .lineLimit(1)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 if !starved {
                     Image(systemName: "chevron.right").font(.caption.weight(.bold))
@@ -196,16 +204,53 @@ struct ContentView: View {
     /// the accessibility sizes the row is taller than its slot and drew over
     /// the digest row above it (#249). An invisible copy of one line of the
     /// row, at whatever size the text is, reserves exactly what arrives.
+    ///
+    /// That copy was one line, which only held while the row was one line
+    /// too — and a one-line row truncated the finding at the accessibility
+    /// sizes (#277). So the copy is now the longest sentence the row can ever
+    /// say, laid out by the same `HStack` at the same width and font, and
+    /// allowed to wrap. Whatever arrives is that sentence or a shorter one, so
+    /// the slot is claimed at first paint at its final height and the row
+    /// lands inside it: nothing above or below moves when the insights do.
+    ///
+    /// Not the arrived text itself: that isn't known until the insights land,
+    /// and a slot that resized to it then would be the #115 jump again. The
+    /// cost is a line or so of empty space under a short row at the larger
+    /// sizes, below everything else on Train.
     private var volumeRowReservation: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-            Text("Volume this week")
-                .lineLimit(1)
+            Text(Self.longestVolumeFinding)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
         .font(.subheadline)
         .frame(maxWidth: .infinity, minHeight: 44)
         .hidden()
         .accessibilityHidden(true)
+    }
+
+    /// The longest sentence `starvedSummary` can produce: the three longest
+    /// muscle names, and every other muscle as the remainder (#277).
+    ///
+    /// Longest by characters, not by rendered width. Two names of equal
+    /// length can differ by a point or two in a proportional font; the
+    /// reservation would come up short only if that difference alone pushed
+    /// a word onto another line.
+    static let longestVolumeFinding: String = {
+        let names = Muscle.allCases
+            .map { $0.displayName.lowercased() }
+            .sorted { $0.count > $1.count }
+            .prefix(3)
+        return behindSentence(names: Array(names), remainder: Muscle.allCases.count - names.count)
+    }()
+
+    private static func behindSentence(names: [String], remainder: Int) -> String {
+        let list = names.joined(separator: ", ")
+        return remainder > 0
+            ? "Behind on \(list) and \(remainder) more"
+            : "Behind on \(list)"
     }
 
     private var trainTab: some View {
@@ -440,7 +485,9 @@ struct ContentView: View {
             // stack is centred between two Spacers, so a late height change
             // anywhere in it re-centres everything above as well. Dropping the
             // reservation here would relocate the #115 jump, not remove it.
-            ZStack {
+            // Top-aligned: the slot can be taller than a short row, and the
+            // row belongs at the top of it rather than floating mid-slot.
+            ZStack(alignment: .topLeading) {
                 volumeRowReservation
                 if let volume {
                     volumeRow(volume)
@@ -643,11 +690,7 @@ struct ContentView: View {
     private func starvedSummary(_ report: VolumeReport) -> String {
         let worst = report.starved.sorted { $0.sets < $1.sets }.prefix(3)
         let names = worst.map { $0.muscle.displayName.lowercased() }
-        let remainder = report.starved.count - worst.count
-        let list = names.joined(separator: ", ")
-        return remainder > 0
-            ? "Behind on \(list) and \(remainder) more"
-            : "Behind on \(list)"
+        return Self.behindSentence(names: names, remainder: report.starved.count - worst.count)
     }
 
     /// The due day first, then the rest of the active split's rotation in

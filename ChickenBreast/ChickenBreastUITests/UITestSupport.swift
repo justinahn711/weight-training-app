@@ -193,14 +193,7 @@ class ChickenBreastUITestCase: XCTestCase {
         let issue: Int
     }
 
-    static let heldElements: [HeldElement] = [
-        // `.lineLimit(1)` is what keeps #115's reservation exact; letting it
-        // wrap is a layout decision (#277).
-        HeldElement(type: .textClipped, labelPrefix: "Behind on ", issue: 277),
-        // Wraps and grows at AccessibilityXXXL by screenshot, yet reported
-        // deterministically; suspected audit false positive (#277).
-        HeldElement(type: .textClipped, labelPrefix: "Sleep and HRV from Health", issue: 277),
-    ]
+    static let heldElements: [HeldElement] = []
 
     /// The types actually audited — everything except what `knownIssues`
     /// holds open.
