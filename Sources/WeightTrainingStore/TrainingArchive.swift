@@ -190,6 +190,10 @@ public struct RestoreReport: Hashable, Sendable {
     public var dayTemplates: Int = 0
     public var bodyweights: Int = 0
 
+    /// Rows the file also had that were already on this phone, and were left
+    /// exactly as they are here (#271).
+    public var kept: Int = 0
+
     /// Rows `deduplicate()` merged once the import had landed.
     public var deduplicated: DeduplicationReport = DeduplicationReport()
 
