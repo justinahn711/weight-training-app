@@ -14,11 +14,9 @@ import XCTest
 /// digest and volume rows sat behind the tab bar where swiping could never
 /// bring them out. On an iPhone SE that happened at the *default* text size.
 ///
-/// Its own class, and named to sort after `SystemAuditUITests`, on purpose:
-/// the digest row only exists once something has been logged, so this test
-/// may finish a workout to make one. The earlier classes are written around
-/// the drafts they leave each other (see `SystemAuditUITests`' header), and a
-/// finished workout arriving before them would change what they inherit.
+/// The digest row only exists once something has been logged, so this test
+/// finishes a workout to make one. Since #285 every test starts from an empty
+/// store, so that finished workout no longer leaks into any other test.
 final class TrainLayoutUITests: ChickenBreastUITestCase {
 
     func testTrainNeverOverlapsTitleOrTabBarAtDefaultSize() throws {
@@ -43,18 +41,18 @@ final class TrainLayoutUITests: ChickenBreastUITestCase {
     private func assertTrainLayout(arguments: [String], sizeName: String) throws {
         XCUIDevice.shared.orientation = .portrait
         var app = launch(arguments: arguments)
-        XCTAssertTrue(try reachTrainScreen(app), "Train should become reachable")
+        XCTAssertTrue(reachTrainScreen(app), "Train should become reachable")
 
         // Measured with the day buttons showing, which is the taller of the
-        // two stacks: one Resume card replaces three day buttons, so a draft
-        // left by an earlier class would make this easier to pass.
+        // two stacks: one Resume card replaces three day buttons.
         if app.buttons["home.resume"].exists || !digestRow(in: app).waitForExistence(timeout: 10) {
-            // A fresh simulator has nothing to digest. One logged set is a
-            // first record, which is a bullet; finishing also clears a draft.
+            // A fresh store has nothing to digest. One logged set is a first
+            // record, which is a bullet; finishing also clears the draft.
+            // Relaunched on the same store, which is the point (#285).
             try logOneSetAndFinish(app)
             app.terminate()
-            app = launch(arguments: arguments)
-            XCTAssertTrue(try reachTrainScreen(app), "Train should come back after finishing")
+            app = launch(arguments: arguments, freshState: false)
+            XCTAssertTrue(reachTrainScreen(app), "Train should come back after finishing")
         }
 
         let digest = digestRow(in: app)
@@ -157,11 +155,7 @@ final class TrainLayoutUITests: ChickenBreastUITestCase {
         startSessionIfPreviewed(app)
         let logSet = app.buttons["Log Set"]
         XCTAssertTrue(logSet.waitForExistence(timeout: 20), "Log Set should be reachable")
-        if !logSet.isEnabled {
-            let heavier = app.buttons["session.weight.increment"]
-            XCTAssertTrue(heavier.waitForExistence(timeout: 5))
-            heavier.tap()
-        }
+        makeLogSetAvailable(app, logSet)
         logSet.tap()
 
         let finish = app.buttons["Finish workout"].firstMatch

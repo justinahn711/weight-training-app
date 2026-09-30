@@ -8,20 +8,15 @@ import XCTest
 /// Tap-through flows and layout invariants that don't need a system audit to
 /// check them — split out of what was originally `AccessibilityAuditTests.swift`
 /// for #193 so a stalled or killed audit run and a broken flow are never the
-/// same red XCTestCase. `reachTrainScreen`/`openPushDay` (via
-/// `ChickenBreastUITestCase` in `UITestSupport.swift`) still call the system
-/// audit once, on the onboarding cover if it's up — that path got its own
-/// #193 fix so it can't re-run on every poll — but none of the tests below
-/// invoke it directly, so a real regression in one of these keeps failing
-/// exactly as loudly and specifically as it always did.
+/// same red XCTestCase. Nothing in this class runs the system audit any more:
+/// `reachTrainScreen` used to audit the onboarding cover, which made the
+/// first test of every CI run the one that paid for an audit on a
+/// just-booted simulator — and the one that failed with -56 (#285). The
+/// cover is audited in `SystemAuditUITests` now.
 ///
-/// This class's name matters as much as its contents: it has to keep sorting
-/// alphabetically *before* `SystemAuditUITests` (see that file's header for
-/// why cross-class order is load-bearing here). Renaming this class without
-/// renaming that one back into the same relative order reopens the exact CI
-/// failure a #193 follow-up fixed — a session draft the audit tests create
-/// getting inherited a run earlier than the tests below were written to
-/// expect it.
+/// Each test launches from an empty isolated store (#285), so none of them
+/// inherits a draft, a rest or a logged set from the test before it, and the
+/// class's name no longer has to sort in any particular place.
 final class SessionFlowUITests: ChickenBreastUITestCase {
 
     /// Start session -> log a set -> undo, the flow the issue names.
@@ -42,14 +37,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
         let logSet = app.buttons["Log Set"]
         XCTAssertTrue(logSet.waitForExistence(timeout: 5), "Log Set must be reachable by name")
-        // A cold-start lift opens with no weight set, and Log Set refuses a
-        // zero load rather than writing "0 lb" into history.
-        if !logSet.isEnabled {
-            let heavier = app.buttons["session.weight.increment"]
-            XCTAssertTrue(heavier.waitForExistence(timeout: 5))
-            heavier.tap()
-        }
-        XCTAssertTrue(logSet.isEnabled, "Log Set should be available once a weight is set")
+        makeLogSetAvailable(app, logSet)
         logSet.tap()
 
         let undo = app.buttons["Undo"]
@@ -81,11 +69,10 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
-        // A workout left mid-session by an earlier test in this run can
-        // resume anywhere — first exercise, last, or in between — so this
-        // doesn't assume a fresh start. It moves at most one step to reach a
-        // middle exercise where Back and Next both exist, which is all the
-        // separation check below actually needs.
+        // Moves at most one step to reach a middle exercise where Back and
+        // Next both exist, which is all the separation check below needs.
+        // Since #285 this always starts on the first exercise; the other
+        // branch is kept so the check doesn't depend on where it starts.
         if !back.exists {
             XCTAssertTrue(next.waitForExistence(timeout: 20), "Next exercise should be reachable")
             next.tap()
@@ -131,12 +118,8 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
-        // A workout left in progress by an earlier test in this run can
-        // resume already parked on the last exercise (openPushDay's own
-        // comment above documents the same order-dependency for Resume), so
-        // this doesn't assume starting on the first exercise — it advances
-        // for as long as Next exercise is still there. Bounded well past
-        // Push's six slots so a real regression here fails instead of
+        // Advances for as long as Next exercise is still there. Bounded well
+        // past Push's six slots so a real regression here fails instead of
         // looping forever.
         var taps = 0
         while next.waitForExistence(timeout: 2), next.isHittable {
@@ -232,7 +215,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
     /// derived result; this guards the app-level wiring that Core tests cannot.
     func testHistoryExposesWeeklyConsistency() throws {
         let app = launch()
-        XCTAssertTrue(try reachTrainScreen(app))
+        XCTAssertTrue(reachTrainScreen(app))
 
         let history = app.tabBars.buttons["History"]
         XCTAssertTrue(history.waitForExistence(timeout: 5) && history.isHittable)
@@ -247,7 +230,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
 
     func testHistoryMonthNavigationHasFullTouchTargets() throws {
         let app = launch()
-        XCTAssertTrue(try reachTrainScreen(app))
+        XCTAssertTrue(reachTrainScreen(app))
 
         let history = app.tabBars.buttons["History"]
         XCTAssertTrue(history.waitForExistence(timeout: 5) && history.isHittable)
@@ -275,11 +258,10 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
                       "the session screen should be up")
 
-        // A workout left mid-session by an earlier test in this run can
-        // resume anywhere — first exercise, last, or in between — so this
-        // doesn't assume a fresh start. It moves at most one step to reach a
-        // middle exercise where Back and Next both exist, which is all the
-        // separation check below actually needs.
+        // Moves at most one step to reach a middle exercise where Back and
+        // Next both exist, which is all the separation check below needs.
+        // Since #285 this always starts on the first exercise; the other
+        // branch is kept so the check doesn't depend on where it starts.
         if !back.exists {
             XCTAssertTrue(next.waitForExistence(timeout: 20), "Next exercise should be reachable")
             next.tap()
@@ -400,10 +382,10 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
                       "the session screen should be up")
 
         // Only a measured, plate-built lift offers the plate row — on Push
-        // that's Flat Bench, a barbell lift. A draft resumed from an earlier
-        // test can be parked anywhere (and at accessibility sizes Previous
-        // and Next can sit scrolled out of the action bar), so jump there
-        // through the exercise chooser in the header rather than walking.
+        // that's Flat Bench, a barbell lift. The session need not open on it
+        // (and at accessibility sizes Previous and Next can sit scrolled out
+        // of the action bar), so jump there through the exercise chooser in
+        // the header rather than walking.
         // Queried as any element type: the readout collapses its children
         // into one accessibility element, which XCUI doesn't report as a button.
         let plates = app.descendants(matching: .any)["session.plates.toggle"]
@@ -426,18 +408,14 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         // after, not before.
         let logSet = app.buttons["session.log-set"]
         XCTAssertTrue(logSet.waitForExistence(timeout: 5))
-        if !logSet.isEnabled {
-            let heavier = app.buttons["session.weight.increment"]
-            XCTAssertTrue(heavier.waitForExistence(timeout: 5))
-            heavier.tap()
-        }
-        XCTAssertTrue(logSet.isEnabled)
+        makeLogSetAvailable(app, logSet)
         logSet.tap()
         XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5), "the set should have been logged")
         // If that set finished the lift, the app offers the next one without
         // moving; staying is the lifter's choice, and the one this test needs.
+        // Given a moment to appear rather than read once (#285).
         let stay = app.buttons["session.nextUp.stay"]
-        if stay.exists && stay.isHittable { stay.tap() }
+        if wait(for: stay, toMatch: "hittable == true", timeout: 2) { stay.tap() }
         XCTAssertEqual(liftName.label, liftLabel, "the test should still be on the lift it logged")
 
         let latestSet = app.buttons["session.set.latest"]
@@ -544,18 +522,13 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let app = launch()
 
         // The Progress tab draws nothing at all until something has been
-        // logged, so this test makes its own data rather than inheriting
-        // whatever an earlier test in the run happened to leave behind.
+        // logged, and every test starts from an empty store (#285), so this
+        // one makes its own data.
         try openPushDay(app)
         startSessionIfPreviewed(app)
         let logSet = app.buttons["Log Set"]
         XCTAssertTrue(logSet.waitForExistence(timeout: 20))
-        if !logSet.isEnabled {
-            let heavier = app.buttons["session.weight.increment"]
-            XCTAssertTrue(heavier.waitForExistence(timeout: 5))
-            heavier.tap()
-        }
-        XCTAssertTrue(logSet.isEnabled)
+        makeLogSetAvailable(app, logSet)
         logSet.tap()
         XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5),
                       "the set should have been logged")
@@ -564,8 +537,8 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         // the tab bar, and it also guarantees the Progress tab reads the set
         // from the store rather than from whatever was in memory.
         app.terminate()
-        let relaunched = launch()
-        XCTAssertTrue(try reachTrainScreen(relaunched))
+        let relaunched = launch(freshState: false)
+        XCTAssertTrue(reachTrainScreen(relaunched))
 
         let progress = relaunched.tabBars.buttons["Progress"]
         XCTAssertTrue(progress.waitForExistence(timeout: 5) && progress.isHittable)
@@ -600,7 +573,8 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let selectedWidthOfAll = all.frame.width
         chest.tap()
 
-        XCTAssertTrue(chest.isSelected, "tapping a region chip should select it")
+        XCTAssertTrue(wait(for: chest, toMatch: "selected == true", timeout: 5),
+                      "tapping a region chip should select it")
         XCTAssertFalse(all.isSelected, "selection should move, not accumulate")
 
         // Printed so the measured difference is in the test log rather than
