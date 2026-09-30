@@ -273,7 +273,12 @@ struct SessionView: View {
     private func stackedLayout(_ exercise: SessionExercise, height: CGFloat, isCompact: Bool) -> some View {
         VStack(spacing: 0) {
             restBar
-            contextScroll(exercise, isCompact: isCompact, includesStatus: isCompact)
+            contextScroll(
+                exercise,
+                isCompact: isCompact,
+                includesStatus: isCompact,
+                isShortScreen: height < 650
+            )
             if !isCompact {
                 statusBanners
             }
@@ -309,7 +314,7 @@ struct SessionView: View {
 
     private func landscapeColumns(_ exercise: SessionExercise, size: CGSize) -> some View {
         HStack(spacing: 0) {
-            contextScroll(exercise, isCompact: true, includesStatus: true)
+            contextScroll(exercise, isCompact: true, includesStatus: true, isShortScreen: true)
                 .frame(width: min(size.width * 0.48, max(280, size.width * 0.42)))
 
             Divider()
@@ -340,12 +345,13 @@ struct SessionView: View {
     private func contextScroll(
         _ exercise: SessionExercise,
         isCompact: Bool,
-        includesStatus: Bool
+        includesStatus: Bool,
+        isShortScreen: Bool
     ) -> some View {
         ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: isCompact ? 12 : 20) {
-                header(exercise, isCompact: isCompact)
+                header(exercise, isCompact: isCompact, isShortScreen: isShortScreen)
                     // A new lift arrives from the side, on the spring the
                     // body keys on `currentIndex`; the old one fades under it.
                     // Reduce Motion drops the slide for a plain crossfade —
@@ -484,7 +490,17 @@ struct SessionView: View {
 
     // MARK: - Context above
 
-    private func header(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
+    /// `isShortScreen` rather than `isCompact` picks the title's style (#278).
+    /// `isCompact` also turns on at the accessibility text sizes, and swapping
+    /// largeTitle for title2 there made the name *shrink* as the lifter asked
+    /// for larger text — 40pt at xxxLarge, 34pt at AccessibilityMedium — which
+    /// is what the Dynamic Type audit reported. One style per screen keeps the
+    /// name growing at every step; the dock still compacts at those sizes.
+    private func header(
+        _ exercise: SessionExercise,
+        isCompact: Bool = false,
+        isShortScreen: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             // On a short screen the narrowed context (#216) can't hold this
             // row as well as the name and the newest set — measured on an SE,
@@ -567,7 +583,7 @@ struct SessionView: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(exercise.exercise.name)
-                        .font(isCompact ? .title2.bold() : .largeTitle.bold())
+                        .font(isShortScreen ? .title2.bold() : .largeTitle.bold())
                         .minimumScaleFactor(0.6)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
