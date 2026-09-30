@@ -69,6 +69,28 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         if !issues.isEmpty { print("Session screen a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
+    /// The same screen with a rest running (#289). Its own test, on purpose,
+    /// rather than a rest folded into the one above: the session spends most
+    /// of its time in one of these two states, both have to pass, and each
+    /// test decides its state instead of inheriting it. The rest is started
+    /// from More so no set is logged and the card above the bar stays what
+    /// the no-rest audit saw.
+    func testSessionScreenWithRestRunningPassesSystemAudit() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let more = app.buttons["session.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 20), "the session screen should be up")
+        more.tap()
+        let startRest = app.buttons["session.more.startRest"]
+        XCTAssertTrue(startRest.waitForExistence(timeout: 5))
+        startRest.tap()
+        XCTAssertTrue(app.buttons["Skip"].waitForExistence(timeout: 5),
+                      "the rest bar should be on screen before the audit runs")
+        let issues = try audit(app)
+        if !issues.isEmpty { print("Session screen (resting) a11y backlog:\n" + issues.joined(separator: "\n")) }
+    }
+
     /// The lift library is the second door into `ExerciseConfigView` (#178)
     /// — the one that works without being mid-session on a specific lift.
     /// This guards that the door is actually reachable from Settings, that
