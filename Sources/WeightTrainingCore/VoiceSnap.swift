@@ -93,7 +93,9 @@ public enum VoiceSnapper {
                 rejections.append("\(heardLoad) doesn't look right")
             } else {
                 load = snapped
-                wasSnapped = wasSnapped || snapped != heardLoad
+                // Within float dust, not exact: a kg load the equipment makes
+                // exactly comes back from the pounds round trip a bit off (#275).
+                wasSnapped = wasSnapped || !exercise.increment.isSameLoad(snapped, heardLoad)
             }
         }
 

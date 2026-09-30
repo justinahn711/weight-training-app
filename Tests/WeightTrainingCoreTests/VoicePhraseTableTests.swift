@@ -204,6 +204,73 @@ final class VoicePhraseTableTests: XCTestCase {
         XCTAssertTrue(snapped.canAutoCommit)
     }
 
+    // MARK: - #275: a buildable kg load is not a snap
+
+    /// A kg load the equipment makes exactly must auto-commit, as in pounds.
+    ///
+    /// Canonical loads are pounds, so `62.5 kg` heard and `62.5 kg` snapped to
+    /// a 2.5 kg step arrive by different float paths and can differ in the
+    /// last bit. Exact `Load` equality called that a snap, and the set waited
+    /// for a tap on a weight nothing had moved (#275). Safe, but it made voice
+    /// unreliable in kilograms for part of the rack.
+    func testAnExactlyBuildableKilogramLoadAutoCommits() throws {
+        var stack = bench
+        stack.loading = nil
+
+        for step in [2.5, 1.25, 1, 5] {
+            stack.increment = LoadIncrement(step, .kilograms)
+            // Every buildable load from one step to 200 kg, spoken as digits.
+            for n in 1...Int(200 / step) {
+                let kg = Double(n) * step
+                let phrase = String(format: "%g for 5", kg)
+                let parse = try XCTUnwrap(VoiceGrammar.parse(phrase, in: .kilograms), phrase)
+                let snapped = try XCTUnwrap(
+                    VoiceSnapper.snap(parse, for: stack, reference: Load(kg, .kilograms)),
+                    phrase
+                )
+                XCTAssertFalse(snapped.wasSnapped, "\(phrase) on a \(step) kg step")
+                XCTAssertTrue(snapped.canAutoCommit, "\(phrase) on a \(step) kg step")
+            }
+        }
+    }
+
+    /// The same on a measured kg barbell, which answers from its plates.
+    func testAnExactlyBuildableKilogramBarbellLoadAutoCommits() throws {
+        var kgBench = bench
+        kgBench.increment = LoadIncrement(2.5, .kilograms)
+        kgBench.loading = LoadingStyle(baseWeight: Load(20, .kilograms), sleeves: 2,
+                                       unit: .kilograms)
+        for n in 0...72 {
+            let kg = 20 + Double(n) * 2.5
+            let phrase = String(format: "%g for 5", kg)
+            let parse = try XCTUnwrap(VoiceGrammar.parse(phrase, in: .kilograms), phrase)
+            let snapped = try XCTUnwrap(
+                VoiceSnapper.snap(parse, for: kgBench, reference: Load(kg, .kilograms)),
+                phrase
+            )
+            XCTAssertFalse(snapped.wasSnapped, phrase)
+            XCTAssertTrue(snapped.canAutoCommit, phrase)
+        }
+    }
+
+    /// The tolerance is float dust, not slack: a kg load the stack can't make
+    /// still moves, and still waits.
+    func testAKilogramLoadOffTheStepStillSnapsAndWaits() throws {
+        var stack = bench
+        stack.loading = nil
+        stack.increment = LoadIncrement(2.5, .kilograms)
+        for phrase in ["63 for 5", "61 for 5", "62.4 for 5", "62.6 for 5",
+                       "one hundred and one for 5"] {
+            let parse = try XCTUnwrap(VoiceGrammar.parse(phrase, in: .kilograms), phrase)
+            let snapped = try XCTUnwrap(
+                VoiceSnapper.snap(parse, for: stack, reference: Load(62.5, .kilograms)),
+                phrase
+            )
+            XCTAssertTrue(snapped.wasSnapped, phrase)
+            XCTAssertFalse(snapped.canAutoCommit, phrase)
+        }
+    }
+
     // MARK: - #267: number words stop at a complete load
 
     func testATrailingNumberWordIsNotAddedToTheLoad() {

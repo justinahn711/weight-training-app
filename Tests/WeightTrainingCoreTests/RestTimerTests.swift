@@ -323,3 +323,58 @@ final class RestExpiryTests: XCTestCase {
         XCTAssertTrue(short.hasExpired(at: start.addingTimeInterval(630)))
     }
 }
+
+/// The lock screen and Dynamic Island draw the rest from `restEndsAt` alone,
+/// with no app running to call `expireRestIfNeeded` (#265). They have to give
+/// up at the same cap the app does, not count on for an hour.
+final class LockScreenRestFaceTests: XCTestCase {
+    private let endsAt = Date(timeIntervalSince1970: 1_760_000_180)
+
+    private func face(at offset: TimeInterval) -> RestTimer.LockScreenFace {
+        RestTimer.lockScreenFace(restEndsAt: endsAt, now: endsAt.addingTimeInterval(offset))
+    }
+
+    func testNoRestShowsNoClock() {
+        XCTAssertEqual(
+            RestTimer.lockScreenFace(restEndsAt: nil, now: endsAt),
+            .noRest
+        )
+    }
+
+    func testCountsDownBeforeTheTarget() {
+        XCTAssertEqual(face(at: -60), .countingDown(to: endsAt))
+    }
+
+    /// The count-up's range ends at the app's cap, not an hour out, so the
+    /// system's own ticking stops where the app's clock does.
+    func testOverrunRangeEndsAtTheAppsCap() {
+        let expected = RestTimer.LockScreenFace.overrun(
+            endsAt...endsAt.addingTimeInterval(RestTimer.maximumOverrun)
+        )
+        XCTAssertEqual(face(at: 0), expected)
+        XCTAssertEqual(face(at: 90), expected)
+        XCTAssertEqual(face(at: RestTimer.maximumOverrun - 1), expected)
+    }
+
+    /// A render past the cap draws what `expireRestIfNeeded` would have
+    /// published: no rest at all.
+    func testAtAndPastTheCapShowsNoRest() {
+        XCTAssertEqual(face(at: RestTimer.maximumOverrun), .noRest)
+        XCTAssertEqual(face(at: 3600), .noRest)
+    }
+
+    /// The render time decides, not the activity's staleness flag, which can
+    /// lag the clock: a countdown range whose start is past its end would trap.
+    func testJustPastTheTargetCountsUp() {
+        XCTAssertEqual(
+            face(at: 5),
+            .overrun(endsAt...endsAt.addingTimeInterval(RestTimer.maximumOverrun))
+        )
+    }
+
+    func testCaptionsNameTheClockBeingRead() {
+        XCTAssertEqual(RestTimer.LockScreenFace.noRest.caption, "ready")
+        XCTAssertEqual(RestTimer.LockScreenFace.countingDown(to: endsAt).caption, "resting")
+        XCTAssertEqual(RestTimer.LockScreenFace.overrun(endsAt...endsAt).caption, "over")
+    }
+}
