@@ -19,6 +19,9 @@ import WeightTrainingStore
 final class SessionViewModel {
     private let store: TrainingStore
     private let liveActivity: SessionActivityController
+    /// The "Rest's up" and "Still working out?" alerts. Injected so tests can
+    /// see what was scheduled and cancelled (#261, #263).
+    private let restAlerts: RestAlertScheduling
     private let draftID: UUID
     /// Finish can be tapped twice while navigation animates. Persistent
     /// progression and Live Activity teardown still belong to one explicit
@@ -62,7 +65,14 @@ final class SessionViewModel {
 
     /// The rest currently running, or nil between exercises. Wall-clock based,
     /// so it needs nothing running to stay correct across a backgrounding (#6).
-    private(set) var rest: RestTimer?
+    ///
+    /// The rest alerts follow this and nothing else (#261, #263): every
+    /// assignment — started, skipped, undone, swapped away, expired, adopted
+    /// from the lock screen — goes through `syncRestAlerts()`, so a new path
+    /// that changes the rest can't forget them the way the swap did.
+    private(set) var rest: RestTimer? {
+        didSet { syncRestAlerts() }
+    }
 
     /// The one set the session UI may offer to undo. This is deliberately not
     /// derived from all history: old sets remain editable in Today, while Undo
@@ -102,8 +112,14 @@ final class SessionViewModel {
     /// the set takes the badge with it.
     private(set) var recordSetIDs: Set<UUID> = []
 
-    init(store: TrainingStore, session: Session, draftID: UUID) {
+    init(
+        store: TrainingStore,
+        session: Session,
+        draftID: UUID,
+        restAlerts: RestAlertScheduling = SystemRestAlerts()
+    ) {
         self.store = store
+        self.restAlerts = restAlerts
         self.session = session
         self.draftID = draftID
         self.liveActivity = SessionActivityController(workoutID: draftID)
@@ -253,8 +269,7 @@ final class SessionViewModel {
                 beginRest(
                     duration: current.exercise.restTarget,
                     setID: record.id,
-                    at: record.performedAt,
-                    for: current
+                    at: record.performedAt
                 )
             } else {
                 publishActivity()
@@ -280,21 +295,11 @@ final class SessionViewModel {
     /// point at; before this, voice fabricated a `UUID()` that named a
     /// `SetRecord` which never existed. `RestTimer.setID` is optional now so a
     /// caller with nothing to point at can say so instead of lying.
-    private func beginRest(
-        duration: TimeInterval,
-        setID: UUID?,
-        at now: Date,
-        for exercise: SessionExercise
-    ) {
-        let timer = RestTimer(startedAt: now, duration: duration, setID: setID)
-        rest = timer
-        // The alert is what makes resting with the phone away possible (#69);
-        // the Live Activity only helps if you're looking.
-        let name = exercise.exercise.name
-        let next = exercise.prescription.isColdStart
-            ? nil
-            : exercise.prescription.displayLine(in: GymSettings.shared.unit)
-        Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
+    private func beginRest(duration: TimeInterval, setID: UUID?, at now: Date) {
+        // Assigning schedules the alert (`syncRestAlerts`), which is what
+        // makes resting with the phone away possible (#69); the Live Activity
+        // only helps if you're looking.
+        rest = RestTimer(startedAt: now, duration: duration, setID: setID)
         publishActivity()
     }
 
@@ -312,13 +317,12 @@ final class SessionViewModel {
     /// rest nobody logged a set to start.
     func startRest() {
         guard let current else { return }
-        beginRest(duration: current.exercise.restTarget, setID: nil, at: Date(), for: current)
+        beginRest(duration: current.exercise.restTarget, setID: nil, at: Date())
     }
 
     /// Dismisses the rest clock without touching the logged set.
     func skipRest() {
         rest = nil
-        RestNotification.cancel()
         // Skipping the rest that was going to move you on means "I'm ready":
         // go now rather than leaving a card that promised a move on a rest
         // that no longer exists.
@@ -337,7 +341,6 @@ final class SessionViewModel {
     func expireRestIfNeeded(now: Date = Date()) {
         guard let rest, rest.hasExpired(at: now) else { return }
         self.rest = nil
-        RestNotification.cancel()
         publishActivity()
     }
 
@@ -393,9 +396,9 @@ final class SessionViewModel {
             // that *this* set started is cleared, so undoing an older mistake
             // mid-rest doesn't cancel the rest you're actually taking (#8).
             if rest?.setID == record.id {
+                // A buzz for a set you took back is worse than no buzz at
+                // all; clearing the rest cancels it.
                 rest = nil
-                // A buzz for a set you took back is worse than no buzz at all.
-                RestNotification.cancel()
             }
             // The set that armed the move is gone, so the move is too.
             pendingAdvance = nil
@@ -534,13 +537,12 @@ final class SessionViewModel {
         // Checked independently of the banner above, not nested inside it:
         // `dismissRecentSetUndo` clears `recentlyLoggedSet` without touching
         // the rest that set started, so a rest can still be counting down for
-        // a set whose banner is already gone. Cancelling here goes through
-        // the same two calls `skipRest()` makes, so the alert and the
+        // a set whose banner is already gone. Clearing it here goes through
+        // the same assignment `skipRest()` makes, so the alert and the
         // lock-screen countdown never disagree about whether a rest is still
         // running (#169, #172).
         if let setID = rest?.setID, !survivingIDs.contains(setID) {
             rest = nil
-            RestNotification.cancel()
         }
 
         // Leaving the workout already took the Live Activity down on
@@ -839,6 +841,62 @@ final class SessionViewModel {
     /// than tapping. Anything uncertain never starts the clock at all.
     static let autoCommitDelay: TimeInterval = 3
 
+    /// The load a spoken adjustment is measured from, for the utterance in
+    /// progress (#266).
+    ///
+    /// The recogniser reports partial transcripts, and each prefix of one
+    /// phrase can parse to a different adjustment — "drop 20", then "drop 25".
+    /// Applying each to whatever is dialled in stacked them (-45). Instead the
+    /// first adjustment of an utterance captures the load it started from, and
+    /// every later partial replaces the earlier one against that base.
+    ///
+    /// Final results alone would not do: stopping the microphone by hand
+    /// cancels the task, and a cancelled task never delivers a final result.
+    private struct VoiceAdjustment {
+        let exerciseID: UUID
+        let base: Load
+        /// What voice last set, so an edit by hand is recognisable.
+        let applied: Load
+    }
+
+    private var voiceAdjustment: VoiceAdjustment?
+
+    /// Set once the lifter has changed the weight by hand mid-utterance, so the
+    /// rest of that utterance's partials leave their edit alone.
+    private var voiceAdjustmentOverridden = false
+
+    /// Marks the start of a new utterance: the next spoken adjustment is a new
+    /// decision, measured from whatever is dialled in at that moment.
+    func beginVoiceUtterance() {
+        voiceAdjustment = nil
+        voiceAdjustmentOverridden = false
+    }
+
+    private func applyVoiceAdjustment(_ delta: Load, to current: SessionExercise) {
+        guard !voiceAdjustmentOverridden else { return }
+
+        let base: Load
+        if let adjustment = voiceAdjustment, adjustment.exerciseID == current.id {
+            // Something other than voice moved the weight since the last
+            // partial — the lifter's tap. Theirs wins for the rest of this
+            // utterance, rather than being re-based over or stacked on.
+            guard pendingLoad == adjustment.applied else {
+                voiceAdjustmentOverridden = true
+                voiceAdjustment = nil
+                return
+            }
+            base = adjustment.base
+        } else {
+            base = pendingLoad
+        }
+
+        let exercise = current.exercise
+        let target = max(exercise.minimumLoad, Load(base.pounds + delta.pounds))
+        let landed = exercise.nearestAchievable(target)
+        pendingLoad = landed
+        voiceAdjustment = VoiceAdjustment(exerciseID: current.id, base: base, applied: landed)
+    }
+
     /// Applies a heard command.
     ///
     /// Set-shaped commands fill the form and wait. Everything else — next,
@@ -857,10 +915,11 @@ final class SessionViewModel {
             // alert (the same class of omission as #172, just missed here
             // instead). Routing through `beginRest` fixes that and closes off
             // this becoming a third independent way to start a rest (#173).
-            beginRest(duration: seconds, setID: nil, at: now, for: current)
+            beginRest(duration: seconds, setID: nil, at: now)
         case .adjustLoad(let delta):
-            pendingLoad = max(current.exercise.minimumLoad,
-                              Load(pendingLoad.pounds + delta.pounds))
+            // Partials of one utterance replace each other, and the result
+            // lands on the equipment's grid like any other proposal (#266).
+            applyVoiceAdjustment(delta, to: current)
         case .repeatLast:
             if let last = current.loggedSets.last(where: { !$0.isWarmup }) {
                 pendingLoad = last.load
@@ -1031,9 +1090,10 @@ final class SessionViewModel {
                     loggedSet: activitySet.map { (id: $0.id, performedAt: $0.performedAt) }
                 )
                 : nil
-            if rest == nil {
-                RestNotification.cancel()
-            }
+            // The assignment above rescheduled or cancelled the alerts to
+            // match — an adopted rest gets its pair back, which is how a set
+            // logged from the lock screen keeps its alert once the app is
+            // open again (#261).
             publishActivity()
         } catch {
             failure = "Couldn't refresh lock-screen changes: \(error.localizedDescription)"
@@ -1073,8 +1133,39 @@ final class SessionViewModel {
             restStartedAt: rest?.startedAt,
             restSetID: rest?.setID
         )
+        let wasEnded = isActivityEnded
         isActivityEnded = false
         liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)
+        // Coming back from Leave (#263). The alerts went down with the lock
+        // screen and come back with it, for the rest the model kept.
+        if wasEnded { syncRestAlerts() }
+    }
+
+    /// Makes the pending rest alerts match `rest`: the pair for it while a
+    /// rest is running and the session's lock-screen surface is up, nothing
+    /// otherwise. The one place the view model decides them (#261, #263).
+    ///
+    /// Leave takes them down and Resume puts them back, rather than leaving
+    /// them pending across Leave. They belong with the Live Activity: Leave
+    /// already ends that on purpose, and a process that dies after Leave
+    /// would otherwise buzz for a rest nothing on the phone shows any more —
+    /// a relaunch rebuilds from the draft, which never carries the rest.
+    ///
+    /// Named by the lift on screen, which is what the lock screen shows too.
+    /// Rescheduling an unchanged rest replaces the pair with an identical
+    /// one, which is harmless.
+    private func syncRestAlerts() {
+        guard !isActivityEnded, let rest, let current else {
+            restAlerts.cancel()
+            return
+        }
+        restAlerts.schedule(
+            for: rest,
+            exercise: current.exercise.name,
+            next: current.prescription.isColdStart
+                ? nil
+                : current.prescription.displayLine(in: GymSettings.shared.unit)
+        )
     }
 
     /// Leaving the workout route pauses its glanceable surface without
@@ -1091,8 +1182,9 @@ final class SessionViewModel {
         liveActivity.end()
         // Rest belongs to a session in progress. Leaving ends the session
         // route, so a pending alert would arrive for training that's already
-        // finished.
-        RestNotification.cancel()
+        // finished. `isActivityEnded` is what makes this cancel; Resume's
+        // `publishActivity()` reschedules if the rest is still running.
+        syncRestAlerts()
     }
 
     /// Corrects what the app assumes about this machine (#20, #39).
@@ -1212,7 +1304,8 @@ final class SessionViewModel {
             // Cleared before `didChangeCurrentExercise` publishes, not after:
             // the old lift's rest doesn't belong to the one replacing it, and
             // the lock screen should never show a countdown ticking against an
-            // exercise that isn't running it anymore.
+            // exercise that isn't running it anymore. Its alerts go with it
+            // (#263) — the assignment cancels them.
             rest = nil
             // A swap onto the visible slot is a different exercise arriving
             // where the old one was — the same shape as advancing to one, so

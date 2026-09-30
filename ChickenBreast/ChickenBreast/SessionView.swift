@@ -181,6 +181,11 @@ struct SessionView: View {
             guard let parsed else { return }
             model.handle(parsed)
         }
+        // Every listen is one utterance: its partial transcripts replace each
+        // other's load adjustment rather than stacking (#266).
+        .onChange(of: voice.isListening) { _, listening in
+            if listening { model.beginVoiceUtterance() }
+        }
         .onChange(of: model.current?.id) { _, _ in
             isPlateRowExpanded = false
         }
