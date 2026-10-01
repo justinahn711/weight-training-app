@@ -1228,7 +1228,7 @@ struct SessionView: View {
                 Label("Previous lift", systemImage: "chevron.backward")
                     .font(.subheadline)
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Theme.quietLabel)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
             .accessibilityIdentifier("session.exercise.previous")
@@ -1255,7 +1255,7 @@ struct SessionView: View {
         } label: {
             Label("More", systemImage: "ellipsis.circle")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.quietLabel)
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         }
@@ -1266,6 +1266,14 @@ struct SessionView: View {
     }
 
     /// The one orange control besides Log Set: the way forward.
+    ///
+    /// 44pt tall, not the 58 `.bordered` makes of a 44pt label (#276). At 58
+    /// the system contrast audit failed the label whatever colour it was
+    /// given — still failing with near-white text measured at 10.9:1 — and
+    /// at 44, with the accent unchanged (5.7:1 on its tint), it passes. The
+    /// audit reads the label's frame, which on a bordered button is the
+    /// whole capsule. 44 is still the minimum target, which the hit-region
+    /// audit checks.
     @ViewBuilder
     private var forwardAction: some View {
         if !model.session.isOnLastExercise {
@@ -1274,7 +1282,8 @@ struct SessionView: View {
             } label: {
                 Label("Next exercise", systemImage: "chevron.forward")
                     .font(.subheadline.weight(.semibold))
-                    .frame(minHeight: 44)
+                    // + the bordered style's 7pt above and below = 44.
+                    .frame(minHeight: 30)
                     .padding(.horizontal, 2)
             }
             .buttonStyle(.bordered)
@@ -1284,7 +1293,8 @@ struct SessionView: View {
             Button(action: requestFinish) {
                 Text("Finish workout")
                     .font(.subheadline.weight(.semibold))
-                    .frame(minHeight: 44)
+                    // + the bordered style's 7pt above and below = 44.
+                    .frame(minHeight: 30)
                     .padding(.horizontal, 2)
             }
             .buttonStyle(.bordered)
@@ -2014,8 +2024,10 @@ private struct RestBanner: View {
             Text("Skip").lineLimit(1).fixedSize(horizontal: true, vertical: false)
         }
             .font(.body.weight(.semibold))
-            .buttonStyle(.bordered)
-            .tint(Theme.quietTint)
+            // Drawn rather than `.bordered` (#276): on the SE simulator the
+            // contrast audit failed the bordered Skip — white on its grey
+            // capsule, 9.2:1 measured — and passes the same look drawn here.
+            .buttonStyle(QuietCapsuleButtonStyle())
     }
 
     var body: some View {
@@ -2046,7 +2058,7 @@ private struct RestBanner: View {
                     Image(systemName: done ? "checkmark.circle.fill" : "timer")
                 }
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.quietLabel)
                 .fixedSize(horizontal: false, vertical: true)
 
                 // Skip moves under the clock at accessibility sizes (#289):
@@ -2517,8 +2529,11 @@ private struct WeightStepper: View {
                         .accessibilityHidden(true)
                 }
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            // caption semibold, as the Previous / Next captions beside it
+            // (#276): caption2 failed the SE simulator's contrast audit
+            // even in pure white, and passes at this size and weight.
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Theme.quietLabel)
         }
     }
 
@@ -2534,7 +2549,9 @@ private struct WeightStepper: View {
                 // Dropped at accessibility sizes, where "Previous"/"Next" only
                 // truncated to "Pr…"; the spoken label still says it.
                 if let caption, !dynamicTypeSize.isAccessibilitySize {
-                    Text(caption).font(.caption2.weight(.semibold))
+                    // caption, not caption2 (#276): at 11pt the SE simulator's
+                    // contrast audit failed these white on the stepper card.
+                    Text(caption).font(.caption.weight(.semibold))
                 }
             }
                 // Oversized on purpose: tapped with chalky hands, mid-set.
@@ -2865,5 +2882,21 @@ private struct WeightEntrySheet: View {
     private var isExact: Bool {
         if case .exact = resolution { return true }
         return false
+    }
+}
+
+/// A secondary control on a grey capsule — the look `.bordered` with
+/// `Theme.quietTint` gives, drawn here because the system contrast audit
+/// failed the bordered version of Skip on the SE simulator (#276).
+private struct QuietCapsuleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            // Opaque, the grey `.bordered` rendered on the rest card. An
+            // 18% white overlay of the same colour still failed the SE audit.
+            .background(Color(white: configuration.isPressed ? 0.36 : 0.27), in: Capsule())
+            .contentShape(Capsule())
     }
 }

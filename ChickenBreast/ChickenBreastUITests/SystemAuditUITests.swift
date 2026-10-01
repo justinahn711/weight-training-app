@@ -167,7 +167,43 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         XCTAssertGreaterThanOrEqual(first.frame.width, 44)
         XCTAssertGreaterThanOrEqual(first.frame.height, 44)
 
-        let issues = try audit(app)
+        // Audited in two states, each for what it can show honestly (#276).
+        //
+        // At rest the list runs on under the floating tab bar, and the rows
+        // there are dimmed by its glass and scroll-edge effect: the system
+        // marking content as passing under chrome, not a colour this screen
+        // chose. The contrast audit samples rendered pixels, so it failed
+        // those rows while rows of the identical style higher up passed.
+        // Scrolling to the end only moves the overlap under the navigation
+        // bar's edge (seven failures instead of three), and on an iPhone 17
+        // these arrive with `issue.element == nil`, so the audit's own
+        // content-under-chrome hold (`isUnderChrome`) cannot place them. So
+        // at rest, every type but contrast — hit regions, labels, clipping —
+        // over the whole unfiltered list.
+        var contrastless = XCUIAccessibilityAuditType.all
+        contrastless.remove(.contrast)
+        var issues = try audit(app, only: contrastless)
+
+        // Then contrast, on a query whose matches all sit clear of the tab
+        // bar: the same row style, every part of it, with nothing over it.
+        // Contrast only, because searching puts UIKit's own 19pt "Clear
+        // text" button on screen, which the hit-region audit fails and this
+        // app cannot resize; the rows' hit regions were audited above.
+        let search = app.searchFields.firstMatch
+        if !search.exists { app.swipeDown() }
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "the library should be searchable")
+        search.tap()
+        search.typeText("Curl\n")
+        XCTAssertTrue(wait(for: rows.firstMatch, toMatch: "label CONTAINS 'Curl'", timeout: 5),
+                      "searching should narrow the library")
+        let tabBar = app.tabBars.firstMatch
+        if tabBar.exists {
+            for index in 0..<rows.count {
+                XCTAssertLessThanOrEqual(rows.element(boundBy: index).frame.maxY, tabBar.frame.minY,
+                                         "every row the contrast audit sees should be clear of the tab bar")
+            }
+        }
+        issues += try audit(app, only: .contrast)
         if !issues.isEmpty { print("Lift library a11y backlog:\n" + issues.joined(separator: "\n")) }
 
         // Opens the same sheet the session's config line does — one editor,
