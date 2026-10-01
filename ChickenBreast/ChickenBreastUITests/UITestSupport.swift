@@ -164,20 +164,20 @@ class ChickenBreastUITestCase: XCTestCase {
     /// justified by #113 and #138, which had both closed. Re-audited one type
     /// at a time: `.textClipped` and `.dynamicType` now gate every audited
     /// screen, with the few elements still firing held individually in
-    /// `heldElements` below. What is left here:
+    /// `heldElements` below.
     ///
-    /// - `.contrast` — #276. Still fires on the session's quiet controls
-    ///   ("Next exercise", "More", the "Dumbbell rack" caption), which is a
-    ///   colour decision rather than a swap, and on the lift library's last
-    ///   rows, under the floating tab bar. It cannot be held per element: on
-    ///   repeat runs of one build the audit reported the same failures with
-    ///   `issue.element == nil`. Time was not the reason: on an iPhone 17
-    ///   simulator an audit took 0.5-0.9s with all three held, 2.0-2.4s with
-    ///   only `.contrast` held, and 2.0-6.6s with nothing held — nowhere
-    ///   near where -56 was seen (#193).
-    static let knownIssues: XCUIAccessibilityAuditType = [
-        .contrast,
-    ]
+    /// `.contrast` was the last entry, and #276 took it out: the session's
+    /// controls were fixed (see `Theme.quietLabel` and `SessionView`'s
+    /// forward action, Skip and weight stepper), content scrolled under a
+    /// bar is held by `isUnderChrome` below, and the lift library audits
+    /// contrast on a filtered list (see
+    /// `testLiftLibraryIsReachableFromSettingsAndPassesAudit`). Contrast
+    /// failures often arrive with `issue.element == nil`, so a new one names
+    /// no element; find it by elimination (#276 did, one control at a time).
+    /// Timing, for #193: on an iPhone 17 simulator an audit took 0.5-0.9s
+    /// with all three types held, 2.0-2.4s with only `.contrast` held, and
+    /// 2.0-6.6s with nothing held — nowhere near where -56 was seen.
+    static let knownIssues: XCUIAccessibilityAuditType = []
 
     /// Single elements held open inside a type that otherwise gates (#260).
     ///
@@ -254,19 +254,25 @@ class ChickenBreastUITestCase: XCTestCase {
     ///    a defect, but retrying more than once would stop being an honest
     ///    signal that something is actually wrong with the environment.
     ///
+    /// `types` narrows the audit for a screen that has to be audited in
+    /// two states, each for what that state can show honestly (#276: the
+    /// lift library). It is intersected with `auditedTypes`, so it can never
+    /// re-open a type `knownIssues` holds.
+    ///
     /// - Returns: the issues seen, so a caller can assert on them.
     @discardableResult
     func audit(_ app: XCUIApplication,
+               only types: XCUIAccessibilityAuditType = .all,
                file: StaticString = #filePath,
                line: UInt = #line) throws -> [String] {
         do {
-            return try runAuditOnce(app)
+            return try runAuditOnce(app, types: types)
         } catch let error as NSError where Self.isAuditTimeout(error) {
             XCTContext.runActivity(named: "a11y audit stalled once, retrying (#193)") {
                 $0.add(.init(string: error.localizedDescription))
             }
             do {
-                return try runAuditOnce(app)
+                return try runAuditOnce(app, types: types)
             } catch let secondError as NSError where Self.isAuditTimeout(secondError) {
                 // Failed to finish twice in a row. Worded so it never reads as
                 // a finding (#193's whole point): nothing was audited, nothing
@@ -282,13 +288,15 @@ class ChickenBreastUITestCase: XCTestCase {
         }
     }
 
-    private func runAuditOnce(_ app: XCUIApplication) throws -> [String] {
+    private func runAuditOnce(_ app: XCUIApplication,
+                              types: XCUIAccessibilityAuditType) throws -> [String] {
         var seen: [String] = []
         // Printed, so the -56 history (#193) has numbers in every CI log
         // rather than only in the result bundle. Not printed on a thrown
         // timeout, which `audit(_:)` reports on its own.
         let started = Date()
-        try app.performAccessibilityAudit(for: Self.auditedTypes) { issue in
+        let chrome = Self.chrome(in: app)
+        try app.performAccessibilityAudit(for: Self.auditedTypes.intersection(types)) { issue in
             // The label is read once and shared by the log line and the hold
             // check: each read is a round trip to the app (#193).
             let label = issue.element?.label
@@ -302,6 +310,10 @@ class ChickenBreastUITestCase: XCTestCase {
             XCTContext.runActivity(named: "a11y issue") { $0.add(.init(string: detail)) }
             // Suppressed only for what is named above; every issue is still
             // recorded either way.
+            if Self.isUnderChrome(issue, label: label, chrome: chrome) {
+                print("a11y issue held: content under chrome (#276) — \(element)")
+                return true
+            }
             return Self.knownIssues.contains(issue.auditType)
                 || Self.isHeld(issue.auditType, label: label)
         }
@@ -315,6 +327,46 @@ class ChickenBreastUITestCase: XCTestCase {
     private static func describe(_ element: XCUIElement?, label: String?) -> String {
         guard let element else { return "unknown element" }
         return "\(element.elementType) id=\"\(element.identifier)\" label=\"\(label ?? "")\" frame=\(element.frame)"
+    }
+
+    /// The bars content scrolls under: the tab bar, the navigation bar, and
+    /// the session's action bar. Read once per audit, before it starts.
+    private static func chrome(in app: XCUIApplication) -> [XCUIElement] {
+        [app.tabBars.firstMatch, app.navigationBars.firstMatch,
+         app.otherElements["session.actionBar"]].filter { $0.exists }
+    }
+
+    /// A contrast failure on content that has scrolled under a bar (#276).
+    ///
+    /// The contrast audit samples rendered pixels at an element's frame,
+    /// and it audits elements scrolled out of sight as well as those in
+    /// view. Content under the session's opaque action bar, or under the
+    /// floating tab bar's glass and scroll-edge dimming, was failed for the
+    /// colour of the bar over it: on the SE simulator "No sets yet" (behind
+    /// the action bar) and Train's "1 thing to look at" (behind the tab bar)
+    /// both failed while the same styles in the clear passed. That is not a
+    /// colour this app chose, and the same text is audited wherever it is in
+    /// the clear.
+    ///
+    /// Narrow on purpose: contrast only; an element XCTest could resolve
+    /// (a failure with `issue.element == nil` still fails, since nothing
+    /// says where it is); never anything inside a bar, so the controls on
+    /// the bars stay fully audited; and only when the frame actually
+    /// overlaps one.
+    private static func isUnderChrome(_ issue: XCUIAccessibilityAuditIssue, label: String?,
+                                      chrome: [XCUIElement]) -> Bool {
+        guard issue.auditType == .contrast, let element = issue.element,
+              let label, !label.isEmpty else { return false }
+        let frame = element.frame
+        // Same label *and* frame: a label alone can be on both sides — Log
+        // Set's "5 lb × 8" on the action bar and the logged set "5 lb × 8"
+        // scrolled under it.
+        let sameLabel = NSPredicate(format: "label == %@", label)
+        let isOnABar = chrome.contains { bar in
+            bar.descendants(matching: .any).matching(sameLabel)
+                .allElementsBoundByIndex.contains { $0.frame == frame }
+        }
+        return !isOnABar && chrome.contains { $0.frame.intersects(frame) }
     }
 
     private static func isHeld(_ type: XCUIAccessibilityAuditType, label: String?) -> Bool {

@@ -48,6 +48,18 @@ enum Theme {
     /// these legible without competing with Log Set.
     static let quietTint = Color.primary
 
+    /// Small grey text on the session's working surfaces — More, Previous
+    /// lift, the weight stepper's caption ("Dumbbell rack", "5 lb steps"),
+    /// the rest bar's "RESTING".
+    ///
+    /// `.secondary` (60% white) measured 5.1-6.3:1 on those surfaces and the
+    /// system contrast audit failed them (#276). 75% white keeps them a
+    /// visible step below `.primary` and clears 7:1 on every surface they
+    /// sit on: 10.1:1 on the action bar, 9.0:1 on the rest card, and 7.1:1
+    /// on the stepper card, the lightest of the three. Opaque rather than an
+    /// opacity of `.primary`, so the ratio doesn't move with what's behind.
+    static let quietLabel = Color(white: 0.75)
+
     /// A set logged, a rest complete: the thing you were doing is done.
     static let done = Color.green
 
