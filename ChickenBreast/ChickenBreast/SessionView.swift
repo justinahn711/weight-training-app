@@ -2449,6 +2449,11 @@ private struct WeightStepper: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var repeater = StepRepeater()
+    /// The number read from the bench: 40pt at the default text size, as it
+    /// always was, and scaled with the lifter's setting like `.largeTitle`
+    /// from there (#297). A fixed `.system(size: 40)` never grew, and
+    /// `minimumScaleFactor` below can only shrink it to fit the stepper.
+    @ScaledMetric(relativeTo: .largeTitle) private var readoutSize: CGFloat = 40
 
     var body: some View {
         HStack(spacing: 0) {
@@ -2483,6 +2488,7 @@ private struct WeightStepper: View {
                 .accessibilityLabel("Enter exact weight")
                 .accessibilityValue(isWeightUnset ? "No weight set" : load.formatted(in: gym.unit))
                 .accessibilityHint("Plus and minus remain the primary controls")
+                .accessibilityIdentifier("session.weight.entry")
             }
             button("plus", caption: incrementCaption, label: incrementLabel, action: onIncrement)
         }
@@ -2493,7 +2499,7 @@ private struct WeightStepper: View {
     private func plateReadout(detail: String?) -> some View {
         VStack(spacing: 1) {
             Text(displayedLoad)
-                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: readoutSize, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
@@ -2515,7 +2521,7 @@ private struct WeightStepper: View {
     private func readout(detail: String, showsEntry: Bool) -> some View {
         VStack(spacing: 0) {
             Text(displayedLoad)
-                .font(.system(size: 40, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: readoutSize, weight: .bold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())

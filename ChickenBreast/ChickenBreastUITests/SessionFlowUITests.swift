@@ -473,9 +473,19 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
                                      "the lift name should sit wholly above the action bar")
         } else {
             XCTAssertTrue(latestSet.exists, "the latest set should still be in the context, if scrolled")
+            // Dragged on the part of the action bar that is on screen, not on
+            // the plate row: once the readout grew with the text size (#297)
+            // the row sat at the screen's bottom edge, its centre off screen,
+            // and a swipe "on" it scrolled nothing.
+            let bar = app.otherElements["session.actionBar"].frame
+            let visibleTop = max(bar.minY, window.minY)
+            let visibleBottom = min(bar.maxY, window.maxY)
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: window.midX, dy: visibleTop + (visibleBottom - visibleTop) * 0.8))
+            let end = origin.withOffset(CGVector(dx: window.midX, dy: visibleTop + (visibleBottom - visibleTop) * 0.2))
             var swipes = 0
-            while !logSet.isHittable && swipes < 3 {
-                plateRow.swipeUp()
+            while !logSet.isHittable && swipes < 4 {
+                start.press(forDuration: 0.05, thenDragTo: end)
                 swipes += 1
             }
             print("#216 [\(sizeName)] Log Set after \(swipes) action-bar swipe(s): \(logSet.frame)")

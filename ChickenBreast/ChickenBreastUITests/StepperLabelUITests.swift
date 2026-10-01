@@ -251,4 +251,29 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
         }
         return element.exists && element.isHittable
     }
+
+    /// The session's weight readout grows with the text size (#297). It
+    /// was a fixed `.system(size: 40)`, so only the caption under it grew.
+    /// Measured as the "Enter exact weight" button around it, since the
+    /// button merges the number into one element: the caption alone adds
+    /// about 10pt by AccessibilityMedium, so +20pt can only come from the
+    /// number growing too. Printed so a failure shows both heights.
+    func testSessionWeightReadoutGrowsWithTextSize() throws {
+        XCUIDevice.shared.orientation = .portrait
+        func entryHeight(_ arguments: [String]) throws -> CGFloat {
+            let app = launch(arguments: arguments)
+            try openPushDay(app)
+            startSessionIfPreviewed(app)
+            let entry = app.buttons["session.weight.entry"]
+            XCTAssertTrue(entry.waitForExistence(timeout: 20), "the dumbbell readout should be on screen")
+            let height = entry.frame.height
+            app.terminate()
+            return height
+        }
+        let normal = try entryHeight([])
+        let larger = try entryHeight(["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityM"])
+        print("Weight readout height: default \(normal), AccessibilityM \(larger)")
+        XCTAssertGreaterThanOrEqual(larger - normal, 20,
+                                    "the readout should grow with the text size, not only its caption")
+    }
 }
