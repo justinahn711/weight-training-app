@@ -6,6 +6,7 @@
 import ActivityKit
 import Foundation
 import UserNotifications
+import WeightTrainingCore
 import WeightTrainingStore
 
 /// The process's one `TrainingStore`.
@@ -58,7 +59,7 @@ final class AppStore {
 /// not a known state, and a rest carried in from an earlier test made one
 /// audit's result depend on test order (#289).
 ///
-/// Two launch arguments, passed only by `ChickenBreastUITestCase.launch`:
+/// Launch arguments, passed only by `ChickenBreastUITestCase`:
 ///
 /// - `-UITestIsolatedStore` opens a separate store file that never mirrors
 ///   to CloudKit, instead of the lifter's store. A UI test never reads or
@@ -67,6 +68,12 @@ final class AppStore {
 ///   ends any Live Activity and pending rest alert an earlier launch left.
 ///   It only ever deletes the isolated store: without the first argument it
 ///   does nothing, so no argument combination can wipe the real one.
+/// - `-UITestSeedYesterday` logs one working set of Incline DB Press, dated
+///   yesterday at midday, into that isolated store (#293). A lift with
+///   history from an earlier day is what most sessions open on — the full
+///   Target / Last time card — and no UI test can reach it by tapping,
+///   because a set logged today shows as today's work instead. Isolated
+///   store only, like the reset.
 ///
 /// Debug-only. The file header of `UITestSupport.swift` used to argue against
 /// any test-only branch in startup because it would outlive the test; a
@@ -75,6 +82,7 @@ final class AppStore {
 enum UITestLaunchState {
     static let isolatedStoreArgument = "-UITestIsolatedStore"
     static let resetArgument = "-UITestResetState"
+    static let seedYesterdayArgument = "-UITestSeedYesterday"
 
     static var usesIsolatedStore: Bool {
         ProcessInfo.processInfo.arguments.contains(isolatedStoreArgument)
@@ -96,6 +104,21 @@ enum UITestLaunchState {
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "ChickenBreast-UITests.store")
+    }
+
+    /// See `-UITestSeedYesterday` above. Runs after the library is seeded,
+    /// since the set needs a lift to belong to; midday, not an offset from
+    /// now, so a run near midnight can't land it on the wrong day (#79).
+    static func seedYesterdayIfAsked(_ store: TrainingStore) throws {
+        guard usesIsolatedStore,
+              ProcessInfo.processInfo.arguments.contains(seedYesterdayArgument),
+              let lift = try store.exercises().first(where: { $0.name == "Incline DB Press" })
+        else { return }
+        let calendar = Calendar.current
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()),
+              let midday = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: yesterday)
+        else { return }
+        try store.log(SetRecord(exerciseID: lift.id, load: Load(40), reps: 8, rpe: RPE(8), performedAt: midday))
     }
 
     /// Ends what outlives the process: a Live Activity (and the rest on it)

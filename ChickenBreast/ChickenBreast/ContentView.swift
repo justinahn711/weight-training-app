@@ -885,6 +885,9 @@ struct ContentView: View {
             try opened.deduplicate()
             try opened.seedLibraryIfNeeded()
             try opened.seedTemplatesIfNeeded()
+            #if DEBUG
+            try UITestLaunchState.seedYesterdayIfAsked(opened)
+            #endif
             // After the seeds, so a freshly seeded library lands on the gym's
             // rack rather than the pound default (#73). Also the only thing
             // that re-racks this device after another one changed the gym: the

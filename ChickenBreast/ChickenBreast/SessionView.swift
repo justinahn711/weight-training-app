@@ -757,9 +757,11 @@ struct SessionView: View {
     private func collapsedContext(_ exercise: SessionExercise, isFirstOuting: Bool) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
+                // No line cap: "Target … · Last …" ran past two lines at
+                // larger sizes and was reported as clipped (#293).
                 Text(isFirstOuting ? "First time on this lift" : collapsedLine(exercise))
                     .font(.subheadline.weight(.semibold))
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 if isFirstOuting {
                     Text("Set a weight, then log it.")
                         .font(.footnote)
@@ -830,18 +832,16 @@ struct SessionView: View {
             // below, which are read every set and are not controls at all.
             Divider()
 
-            if isCompact {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 20) {
-                        targetSummary(exercise)
-                        lastTimeSummary(exercise)
-                    }
-                    VStack(alignment: .leading, spacing: 10) {
-                        targetSummary(exercise)
-                        lastTimeSummary(exercise)
-                    }
-                }
-            } else {
+            // Side by side on a short screen at ordinary sizes, stacked
+            // otherwise. `AnyLayout` rather than `ViewThatFits` over two
+            // copies (#293): swapping copies as the text grew made the
+            // Dynamic Type audit lose "LAST TIME" and report it as text that
+            // doesn't follow the setting. One pair of views, rearranged, is
+            // the fix #289 used for the rest bar's clock.
+            let pair = isCompact && !dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(HStackLayout(alignment: .top, spacing: 20))
+                : AnyLayout(VStackLayout(alignment: .leading, spacing: isCompact ? 10 : 12))
+            pair {
                 targetSummary(exercise)
                 lastTimeSummary(exercise)
             }
@@ -1461,18 +1461,23 @@ private struct NextUpCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            // Decoration; the caption beside it says it. Unhidden, VoiceOver
+            // read the symbol's name, "arrow.turn.down.right" (#293).
             Image(systemName: "arrow.turn.down.right")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(isResting ? "Next up when rest ends" : "Next up")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
+                // Wraps rather than truncating: one line was reported as
+                // clipped as soon as the text grew (#293).
                 Text(next.exercise.name)
                     .font(.body.weight(.semibold))
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
@@ -1520,9 +1525,10 @@ private struct AutoAdvancedBanner: View {
                 Text("Moved on")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
+                // Wraps, like `NextUpCard`'s lift name (#293).
                 Text("\(from.exercise.name) done")
                     .font(.body.weight(.semibold))
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)

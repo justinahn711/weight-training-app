@@ -91,6 +91,46 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         if !issues.isEmpty { print("Session screen (resting) a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
+    /// The same screen on a lift with history from an earlier day (#293):
+    /// the full Target / Last time card most sessions open on. Every test
+    /// starts from an empty store (#285), so the audits above only ever see
+    /// "First time on this lift"; `-UITestSeedYesterday` logs one set of
+    /// the first lift, dated yesterday, since tapping can only log today.
+    func testSessionScreenWithHistoryPassesSystemAudit() throws {
+        let app = launch(arguments: ["-UITestSeedYesterday"])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        XCTAssertTrue(app.staticTexts["LAST TIME"].waitForExistence(timeout: 20),
+                      "a lift with yesterday's set should open on the full Target / Last time card")
+        let issues = try audit(app)
+        if !issues.isEmpty { print("Session screen (history) a11y backlog:\n" + issues.joined(separator: "\n")) }
+    }
+
+    /// The same lift once today's first working set is in (#293). That set
+    /// matches yesterday's count, so the Next up card comes first; Stay
+    /// dismisses it, and the card underneath has collapsed to one
+    /// "Target … · Last …" line, the longest text it ever holds. Both are
+    /// audited.
+    func testSessionScreenAfterASetWithHistoryPassesSystemAudit() throws {
+        let app = launch(arguments: ["-UITestSeedYesterday"])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        makeLogSetAvailable(app, logSet)
+        logSet.tap()
+        let stay = app.buttons["session.nextUp.stay"]
+        XCTAssertTrue(stay.waitForExistence(timeout: 10),
+                      "matching yesterday's one set should offer the next lift")
+        var issues = try audit(app)
+        stay.tap()
+        let collapsed = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Target ' AND label CONTAINS 'Last '")).firstMatch
+        XCTAssertTrue(collapsed.waitForExistence(timeout: 10),
+                      "after a working set the card should collapse to one Target · Last line")
+        issues += try audit(app)
+        if !issues.isEmpty { print("Session screen (history, after a set) a11y backlog:\n" + issues.joined(separator: "\n")) }
+    }
+
     /// The lift library is the second door into `ExerciseConfigView` (#178)
     /// — the one that works without being mid-session on a specific lift.
     /// This guards that the door is actually reachable from Settings, that
