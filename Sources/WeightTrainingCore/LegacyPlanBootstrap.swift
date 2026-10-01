@@ -4,7 +4,7 @@ import Foundation
 /// Legacy sets cannot prove that a plan was completed or that effort was easy,
 /// so this establishes a baseline only; it never earns progression.
 public enum LegacyPlanBootstrapEngine {
-    public static let ruleVersion = "legacy-plan-bootstrap-v1"
+    public static let ruleVersion = "legacy-plan-bootstrap-v2"
 
     public static func recommend(
         exercise: Exercise,
@@ -40,8 +40,21 @@ public enum LegacyPlanBootstrapEngine {
               let lightestRecentLoad = latest.sets.map(\.load).min()
         else { return nil }
 
-        let load = exercise.nearestAchievable(lightestRecentLoad)
-        guard load >= exercise.lightestUsableLoad, exercise.canBuild(load) else { return nil }
+        // Bodyweight history stores frozen total loads. Do not snap the
+        // lifter's weight or flatten mixed weighted/unweighted sets into a new
+        // prescription. A straight-set baseline must already be comparable.
+        let load: Load
+        if exercise.isBodyweight {
+            guard lightestRecentLoad.pounds.isFinite,
+                  lightestRecentLoad.pounds > 0, lightestRecentLoad.pounds <= 100_000,
+                  latest.sets.allSatisfy({
+                      $0.load.pounds.isFinite && abs($0.load.pounds - lightestRecentLoad.pounds) < 0.000_001
+                  }) else { return nil }
+            load = lightestRecentLoad
+        } else {
+            load = exercise.nearestAchievable(lightestRecentLoad)
+            guard load >= exercise.lightestUsableLoad, exercise.canBuild(load) else { return nil }
+        }
         let range = exercise.recommendationPolicy.repRange
         let targetRPE = exercise.progressionRule.displayRPETarget
         let targets = latest.sets.prefix(8).map {

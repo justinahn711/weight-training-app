@@ -836,6 +836,9 @@ final class SessionViewModel {
         if current.acceptedPlan != nil || current.recommendation != nil {
             // The plan panel owns progression. Keep only an immediate downward
             // response to a set whose effort the lifter actually reported.
+            // A bodyweight plan stores frozen total load, so lowering that
+            // number would pretend the lifter's bodyweight changed mid-session.
+            guard !current.exercise.isBodyweight else { return [] }
             guard let last = current.workingSets.last, last.effortWasReported == true,
                   let rpe = last.rpe, rpe.value >= current.prescription.rpe.value + 1 else { return [] }
             let lighter = current.exercise.nearestAchievable(Load(pendingLoad.pounds - current.exercise.increment.pounds))

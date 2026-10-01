@@ -4,7 +4,7 @@ import Foundation
 /// had the first chance to act. It can add one set and cannot write or accept
 /// the result on the lifter's behalf.
 public enum VolumeAllocationEngine {
-    public static let ruleVersion = "weekly-volume-v2"
+    public static let ruleVersion = "weekly-volume-v3"
 
     /// A fixed UTC week (Monday through Sunday), independent of locale, DST,
     /// screen openings, and when the lifter first installs the app.
@@ -90,7 +90,8 @@ public enum VolumeAllocationEngine {
               recommendation.action == .hold,
               recommendation.evidence == .consistent,
               recommendation.reason == .noHeavierLoad
-                || recommendation.reason == .loadStepTooLarge,
+                || recommendation.reason == .loadStepTooLarge
+                || (exercise.isBodyweight && recommendation.reason == .bodyweightRepCeiling),
               !recommendation.sets.isEmpty,
               recommendation.sets.count < maximumSetsPerExercise else {
             return recommendation

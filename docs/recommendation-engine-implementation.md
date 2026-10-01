@@ -35,7 +35,14 @@ Implemented in `WeightTrainingCore`:
 
 The policy increases one total rep after two consecutive easy workouts on the same accepted plan. At the rep ceiling it proposes the next achievable load within the configured increase limit and resets reps. It holds for missing effort, interrupted workouts, unexpectedly difficult sets, stale history, changed execution, and coarse equipment increments. It can suggest a local load reduction after two comparable full workouts miss the rep floor. Recorded pain takes precedence for both planned and legacy/no-plan history. An accepted deload blocks increases, and deload history cannot earn progression after resuming.
 
-The policy is currently for straight sets with external loads. Bodyweight, assistance, unmeasured plate-built equipment, and mixed top/back-off prescriptions require explicit policies before support. An unavailable reduction returns a hold with an explanation rather than forcing a large equipment step.
+The policy supports straight sets with external loads and unassisted bodyweight
+sets. Bodyweight progression preserves the recorded total load, adds reps after
+the same repeated-easy evidence used by loaded movements, and can add one
+budgeted set at the rep ceiling; it never invents a bodyweight change or load
+reduction. Assisted movements, unmeasured plate-built equipment, bodyweight
+variations, and mixed top/back-off prescriptions require explicit domain models
+before support. An unavailable reduction returns a hold with an explanation
+rather than forcing a large equipment step.
 
 Historical duplicates are collapsed by exposure ID only when identical. Conflicting duplicates or reused working-set IDs prevent progression. Actual records remain the source of truth: rebuilding exposures after a correction or deletion recomputes the recommendation.
 

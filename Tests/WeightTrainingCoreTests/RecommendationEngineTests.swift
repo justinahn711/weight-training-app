@@ -338,11 +338,9 @@ final class RecommendationEngineTests: XCTestCase {
         XCTAssertEqual(recommend(target, [exposure(target, daysAgo: 4), legacy]).reason, .newPrescription)
     }
 
-    func testBodyweightAndUnmeasuredApparatusDeclineGenericLoadProgression() {
-        for equipment in [Equipment.bodyweight, .plateLoaded] {
-            let target = plan(exercise(equipment: equipment))
-            XCTAssertEqual(recommend(target, []).reason, .unsupportedEquipment)
-        }
+    func testUnmeasuredApparatusDeclinesGenericLoadProgression() {
+        let target = plan(exercise(equipment: .plateLoaded))
+        XCTAssertEqual(recommend(target, []).reason, .unsupportedEquipment)
     }
 
     func testInvalidAndUnbuildablePlansNeverProduceInvalidLoads() {

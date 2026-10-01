@@ -126,6 +126,66 @@ final class AutomaticPrescriptionTests: XCTestCase {
         }
     }
 
+    func testBodyweightRepOnlyRecommendationActivatesPersistsAndReachesFeedback() throws {
+        let store = try TrainingStore.inMemory()
+        let exercise = Exercise(
+            name: "Pull-up", muscles: [.primary(.lats)], equipment: .bodyweight,
+            progressionRule: .doubleProgression(range: RepRange(6, 10))
+        )
+        try store.upsert(exercise)
+        for (index, reps) in [8, 8, 7].enumerated() {
+            try store.log(SetRecord(
+                exerciseID: exercise.id, load: 175, reps: reps,
+                performedAt: now.addingTimeInterval(-86_400 + Double(index) * 60)
+            ))
+        }
+
+        let displayed = try store.recommendation(for: exercise, now: now)
+        XCTAssertEqual(displayed.action, .establish)
+        XCTAssertEqual(displayed.sets.map(\.load), Array(repeating: Load(175), count: 3))
+        XCTAssertEqual(displayed.sets.map(\.reps), [8, 8, 7])
+
+        let workout = UUID()
+        let active = try XCTUnwrap(store.activateExerciseRecommendation(
+            displayed, workoutID: workout, startedAt: now, now: now
+        ))
+        XCTAssertEqual(active.sets, displayed.sets)
+        XCTAssertEqual(
+            try store.exerciseSession(workoutID: workout, exerciseID: exercise.id)?.plan,
+            active
+        )
+
+        for (index, target) in active.sets.enumerated() {
+            _ = try store.logWorkoutSet(
+                SetRecord(
+                    exerciseID: exercise.id, load: target.load, reps: target.reps,
+                    rpe: .seven, performedAt: now.addingTimeInterval(Double(index + 1) * 60)
+                ),
+                workoutID: workout, startedAt: now, effortReported: true
+            )
+        }
+        try store.finishExerciseSessions(workoutID: workout, at: now.addingTimeInterval(600))
+
+        let entry = try XCTUnwrap(
+            store.recommendationFeedbackReport(now: now.addingTimeInterval(1_200)).entries.first
+        )
+        XCTAssertEqual(entry.exerciseID, exercise.id)
+        XCTAssertEqual(entry.decision, .automaticallyActivated)
+        XCTAssertTrue(entry.completedAsPlanned)
+        XCTAssertEqual(entry.reportedEffortSets, 3)
+
+        try store.save(ProgressState(
+            exerciseID: exercise.id, targetLoad: Load(175), targetReps: 7, stallCount: 2
+        ))
+        let digest = try store.digest(now: now.addingTimeInterval(1_200))
+        XCTAssertFalse(digest.bullets.contains { bullet in
+            if case .deload(let exerciseID, _) = bullet.action {
+                return exerciseID == exercise.id
+            }
+            return false
+        }, "legacy deloads must not lower a frozen total-bodyweight load")
+    }
+
     func testTwoAutomaticallyActivatedEasyWorkoutsEarnProgressionWithoutAcceptance() throws {
         let (store, exercise, _) = try fixture()
         var revisions: [UUID] = []

@@ -627,6 +627,9 @@ struct SessionView: View {
         }
         let next = min(exercise.workingSets.count, plan.sets.count - 1)
         let target = plan.sets[next]
+        if exercise.exercise.isBodyweight {
+            return "Set \(next + 1) of \(plan.sets.count) · \(target.reps) reps @ \(target.rpe)"
+        }
         return "Set \(next + 1) of \(plan.sets.count) · \(target.load.formatted(in: gym.unit)) × \(target.reps) @ \(target.rpe)"
     }
 
@@ -1173,6 +1176,8 @@ private struct PlanningTarget: Identifiable {
 /// Reviews a recommendation before it becomes the workout's accepted intent.
 /// Straight-set load and effort stay shared; reps remain per-set so a proposal
 /// such as 10/10/9 can add exactly one rep without pretending every set matched.
+/// Bodyweight keeps its frozen total load in the plan but exposes only reps and
+/// effort here, because the recommendation never changes that recorded total.
 private struct ExercisePlanEditor: View {
     let plan: ExercisePlan
     let recommendation: ExerciseRecommendation?
@@ -1218,7 +1223,9 @@ private struct ExercisePlanEditor: View {
                     Stepper(value: setCount, in: 1...8) {
                         LabeledContent("Sets", value: "\(reps.count)")
                     }
-                    loadControl
+                    if !plan.exercise.isBodyweight {
+                        loadControl
+                    }
                     Picker("Target RPE", selection: $targetRPE) {
                         ForEach(RPE.sessionChips, id: \.self) { rpe in
                             Text(rpe.description).tag(rpe)
@@ -1227,7 +1234,9 @@ private struct ExercisePlanEditor: View {
                 } header: {
                     Text("Working sets")
                 } footer: {
-                    Text("The load and effort target apply to every working set. Reps can differ by set.")
+                    Text(plan.exercise.isBodyweight
+                         ? "The effort target applies to every working set. Reps can differ by set; total bodyweight stays unchanged."
+                         : "The load and effort target apply to every working set. Reps can differ by set.")
                 }
 
                 Section {

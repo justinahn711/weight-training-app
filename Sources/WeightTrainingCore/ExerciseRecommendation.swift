@@ -74,6 +74,8 @@ public struct ExerciseRecommendation: Hashable, Codable, Sendable {
         case weeklyVolumeBelowBudget(muscles: [Muscle])
         case loadStepTooLarge
         case noHeavierLoad
+        case bodyweightRepCeiling
+        case bodyweightRepeatedMisses
         case repeatedMisses
         case minimumLoad
         case reductionUnavailable
@@ -144,6 +146,8 @@ public struct ExerciseRecommendation: Hashable, Codable, Sendable {
             return "\(names) remain below your weekly target — add one set"
         case .loadStepTooLarge: return "The next available weight is too large a jump — hold steady"
         case .noHeavierLoad: return "No heavier achievable load is configured — hold steady"
+        case .bodyweightRepCeiling: return "Repeated easy workouts at the rep ceiling — keep the same total load"
+        case .bodyweightRepeatedMisses: return "Repeated misses — review the movement or set count while keeping total load unchanged"
         case .repeatedMisses: return "Repeated comparable misses — reduce weight and rebuild"
         case .minimumLoad: return "Already at the equipment minimum — review the exercise or set count"
         case .reductionUnavailable: return "No suitable smaller load is configured — review the exercise or set count"

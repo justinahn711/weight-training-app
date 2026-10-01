@@ -311,7 +311,7 @@ extension TrainingStore {
         let history = try allSets()
 
         var states: [UUID: ProgressState] = [:]
-        for exercise in exercises {
+        for exercise in exercises where !exercise.isBodyweight {
             if let state = try progressState(forExercise: exercise.id) {
                 states[exercise.id] = state
             }

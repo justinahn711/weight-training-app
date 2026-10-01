@@ -4,7 +4,7 @@ import Foundation
 /// engine until the app can supply accepted plans and reported-effort provenance.
 /// This function never writes progress, consumes a streak, or changes a log.
 public enum RecommendationEngine {
-    public static let ruleVersion = "planned-progression-v1"
+    public static let ruleVersion = "planned-progression-v2"
 
     public static func recommend(
         exercise: Exercise,
@@ -37,21 +37,20 @@ public enum RecommendationEngine {
         }
         guard let plan else { return result(.establish, .firstPlanNeeded) }
         guard validEquipment(exercise) else { return result(.establish, .invalidInput) }
-        // Bodyweight and assistance need explicit effective-load semantics;
-        // applying the external-load direction to these would be misleading.
-        guard exercise.equipment != .bodyweight,
-              !(exercise.equipment.isPlateBuilt && exercise.loading?.isMeasured != true)
+        guard !(exercise.equipment.isPlateBuilt && exercise.loading?.isMeasured != true)
         else { return result(.establish, .unsupportedEquipment) }
         guard plan.exercise == exercise else { return result(.establish, .equipmentChanged) }
         guard validPlan(plan, policy: policy) else { return result(.establish, .invalidInput) }
 
-        // Route even unchanged targets through the shared equipment boundary.
-        // If that changes the prescription, new evidence is needed at that load.
+        // Bodyweight records freeze total load, including the lifter's weight.
+        // It need not fit a rack increment and cannot be changed automatically.
+        // External loads still pass through the shared equipment boundary.
         let targets = plan.sets.map {
-            PlannedWorkingSet(load: exercise.nearestAchievable($0.load), reps: $0.reps, rpe: $0.rpe)
+            PlannedWorkingSet(load: exercise.isBodyweight ? $0.load : exercise.nearestAchievable($0.load),
+                              reps: $0.reps, rpe: $0.rpe)
         }
-        guard targets.allSatisfy({ validLoad($0.load) && $0.load >= exercise.lightestUsableLoad
-            && exercise.canBuild($0.load) }) else {
+        guard targets.allSatisfy({ validLoad($0.load) && (exercise.isBodyweight
+            || ($0.load >= exercise.lightestUsableLoad && exercise.canBuild($0.load))) }) else {
             return result(.establish, .equipmentChanged)
         }
         guard zip(targets, plan.sets).allSatisfy({ sameLoad($0.load, $1.load) }) else {
@@ -106,6 +105,10 @@ public enum RecommendationEngine {
         if lastTwo.count == 2,
            latest.completedAt.timeIntervalSince(lastTwo[0].completedAt) <= policy.historyFreshness,
            lastTwo.allSatisfy({ assess($0, against: plan, policy: policy) == .miss }) {
+            if exercise.isBodyweight {
+                return result(.hold, .bodyweightRepeatedMisses, sets: targets,
+                              evidence: .consistent, exposures: lastTwo)
+            }
             if let reduced = reducedTargets(targets, exercise: exercise) {
                 return result(.reduce, .repeatedMisses, sets: reduced,
                               evidence: .consistent, exposures: lastTwo)
@@ -156,6 +159,11 @@ public enum RecommendationEngine {
             var increased = targets
             increased[index].reps += 1
             return result(.addReps, .addedRep(set: index + 1), sets: increased,
+                          evidence: .consistent, exposures: easy)
+        }
+
+        if exercise.isBodyweight {
+            return result(.hold, .bodyweightRepCeiling, sets: targets,
                           evidence: .consistent, exposures: easy)
         }
 
@@ -242,7 +250,7 @@ public enum RecommendationEngine {
               plan.restSeconds.map({ $0 > 0 }) ?? true,
               let first = plan.sets.first else { return false }
         return plan.sets.allSatisfy {
-            validLoad($0.load) && $0.load >= plan.exercise.lightestUsableLoad
+            validLoad($0.load) && (plan.exercise.isBodyweight || $0.load >= plan.exercise.lightestUsableLoad)
                 && sameLoad($0.load, first.load)
                 && policy.repRange.contains($0.reps) && RPE.allowedValues.contains($0.rpe.value)
         }

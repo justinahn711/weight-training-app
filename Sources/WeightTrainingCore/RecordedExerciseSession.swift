@@ -32,7 +32,7 @@ public struct RecordedExerciseSession: Hashable, Codable, Sendable, Identifiable
 
 public extension Exercise {
     var supportsPlannedProgression: Bool {
-        equipment != .bodyweight && (!equipment.isPlateBuilt || loading?.isMeasured == true)
+        !equipment.isPlateBuilt || loading?.isMeasured == true
     }
 
     var recommendationPolicy: RecommendationPolicy {

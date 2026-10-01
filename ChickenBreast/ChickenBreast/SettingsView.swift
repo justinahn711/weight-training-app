@@ -809,6 +809,8 @@ private struct RecommendationFeedbackView: View {
         case .weeklyVolumeBelowBudget: return "Below weekly set target"
         case .loadStepTooLarge: return "Weight jump too large"
         case .noHeavierLoad: return "No heavier configured weight"
+        case .bodyweightRepCeiling: return "Bodyweight rep ceiling reached"
+        case .bodyweightRepeatedMisses: return "Repeated bodyweight misses"
         case .repeatedMisses: return "Repeated missed targets"
         case .minimumLoad: return "Equipment minimum reached"
         case .reductionUnavailable: return "Smaller weight unavailable"
