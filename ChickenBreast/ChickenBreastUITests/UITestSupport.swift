@@ -259,20 +259,44 @@ class ChickenBreastUITestCase: XCTestCase {
     /// lift library). It is intersected with `auditedTypes`, so it can never
     /// re-open a type `knownIssues` holds.
     ///
+    /// `.dynamicType` findings get one second look (#295). On CI the
+    /// Dynamic Type check sometimes reads the session screen before it has
+    /// redrawn at the text size it just set, and reports whichever label it
+    /// reached first: 4 of 23 iterations on the CI image (run 36804873703),
+    /// a different element each time, never locally. So the first pass holds
+    /// `.dynamicType` findings instead of failing on them (every other type
+    /// fails as usual, and every finding is still logged), and if it held
+    /// any, a second, ordinary pass decides. A real Dynamic Type defect
+    /// fails both — #292's and #294's did, every run — so this can only
+    /// pass a finding that didn't reproduce. Not the fix #295 asks for; the
+    /// owner chose it as the stopgap while the cause stays open.
+    ///
     /// - Returns: the issues seen, so a caller can assert on them.
     @discardableResult
     func audit(_ app: XCUIApplication,
                only types: XCUIAccessibilityAuditType = .all,
                file: StaticString = #filePath,
                line: UInt = #line) throws -> [String] {
+        let first = try auditPass(app, types: types, holdsDynamicType: true, file: file, line: line)
+        guard first.heldDynamicType else { return first.seen }
+        XCTContext.runActivity(named: "a11y .dynamicType finding held once, auditing again (#295)") { _ in }
+        print("a11y .dynamicType finding held once, auditing again (#295)")
+        return try auditPass(app, types: types, holdsDynamicType: false, file: file, line: line).seen
+    }
+
+    private func auditPass(_ app: XCUIApplication,
+                           types: XCUIAccessibilityAuditType,
+                           holdsDynamicType: Bool,
+                           file: StaticString,
+                           line: UInt) throws -> (seen: [String], heldDynamicType: Bool) {
         do {
-            return try runAuditOnce(app, types: types)
+            return try runAuditOnce(app, types: types, holdsDynamicType: holdsDynamicType)
         } catch let error as NSError where Self.isAuditTimeout(error) {
             XCTContext.runActivity(named: "a11y audit stalled once, retrying (#193)") {
                 $0.add(.init(string: error.localizedDescription))
             }
             do {
-                return try runAuditOnce(app, types: types)
+                return try runAuditOnce(app, types: types, holdsDynamicType: holdsDynamicType)
             } catch let secondError as NSError where Self.isAuditTimeout(secondError) {
                 // Failed to finish twice in a row. Worded so it never reads as
                 // a finding (#193's whole point): nothing was audited, nothing
@@ -283,14 +307,16 @@ class ChickenBreastUITestCase: XCTestCase {
                     "issue (#193): \(secondError.localizedDescription)",
                     file: file, line: line
                 )
-                return []
+                return ([], false)
             }
         }
     }
 
     private func runAuditOnce(_ app: XCUIApplication,
-                              types: XCUIAccessibilityAuditType) throws -> [String] {
+                              types: XCUIAccessibilityAuditType,
+                              holdsDynamicType: Bool) throws -> (seen: [String], heldDynamicType: Bool) {
         var seen: [String] = []
+        var heldDynamicType = false
         // Printed, so the -56 history (#193) has numbers in every CI log
         // rather than only in the result bundle. Not printed on a thrown
         // timeout, which `audit(_:)` reports on its own.
@@ -314,11 +340,18 @@ class ChickenBreastUITestCase: XCTestCase {
                 print("a11y issue held: content under chrome (#276) — \(element)")
                 return true
             }
-            return Self.knownIssues.contains(issue.auditType)
-                || Self.isHeld(issue.auditType, label: label)
+            if Self.knownIssues.contains(issue.auditType) || Self.isHeld(issue.auditType, label: label) {
+                return true
+            }
+            if holdsDynamicType, issue.auditType == .dynamicType {
+                print("a11y issue held for a second pass (#295) — \(element)")
+                heldDynamicType = true
+                return true
+            }
+            return false
         }
         print(String(format: "a11y audit took %.1fs (%@)", Date().timeIntervalSince(started), name))
-        return seen
+        return (seen, heldDynamicType)
     }
 
     /// A cheap stand-in for `debugDescription` (see `audit(_:)` above): four
