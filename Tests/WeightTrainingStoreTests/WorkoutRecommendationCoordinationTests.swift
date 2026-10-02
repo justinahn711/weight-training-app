@@ -135,6 +135,20 @@ final class WorkoutRecommendationCoordinationTests: XCTestCase {
         XCTAssertEqual(asOfStart[sibling.id]?.sets, asOfNow[sibling.id]?.sets)
     }
 
+    /// The weekly digest judges volume against the lifter's own set targets,
+    /// as the Volume screen and the recommendations do (#316 review). Every
+    /// target here is set to zero, so nothing can be under target; with the
+    /// built-in defaults instead, nearly every muscle would be.
+    func testDigestJudgesVolumeAgainstCustomTargets() throws {
+        let (store, _) = try eligibleFixture()
+        var config = try store.gymConfig()
+        config.volumeBudgets = config.volumeBudgets.map { MuscleSetBudget(muscle: $0.muscle, minimum: 0, maximum: 40) }
+        _ = try store.saveGymConfig(config)
+        let digest = try store.digest(now: monday)
+        XCTAssertFalse(digest.bullets.contains { $0.action == .review(.volume) },
+                       "no muscle is under a zero target: \(digest.bullets.map(\.text))")
+    }
+
     private func eligibleFixture() throws -> (TrainingStore, Exercise) {
         let store = try TrainingStore.inMemory()
         let exercise = exercise()

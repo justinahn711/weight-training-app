@@ -339,7 +339,10 @@ extension TrainingStore {
         return Digest.build(
             trends: E1RMTrendBuilder.trends(history: history, exercises: exercises,
                                             calendar: calendar),
+            // The lifter's own weekly targets, as the Volume screen and the
+            // recommendations use; the defaults disagreed with both (#316).
             volume: VolumeReport.trailing(history: history, exercises: exercises,
+                                          budgets: try gymConfig().volumeBudgets,
                                           now: now, calendar: calendar),
             states: states,
             history: history,
