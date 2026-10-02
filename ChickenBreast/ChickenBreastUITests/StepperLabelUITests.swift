@@ -231,7 +231,8 @@ final class StepperLabelUITests: ChickenBreastUITestCase {
         swipes = 0
         while !finish.isHittable, swipes < 4 { app.swipeUp(); swipes += 1 }
         finish.tap()
-        let confirm = app.buttons["finish.confirmation.finish"]
+        // An early finish asks why (#316); "Another reason" finishes without a cause.
+        let confirm = app.buttons["finish.reason.unknown"]
         if confirm.waitForExistence(timeout: 5) { confirm.tap() }
         let done = app.buttons["completion.done"]
         if done.waitForExistence(timeout: 25) {

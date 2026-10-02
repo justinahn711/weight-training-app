@@ -1,40 +1,35 @@
 import XCTest
 
-/// Run on a fresh disposable simulator. All history is created through the UI;
-/// no launch-time seed branch or physical-device training data is involved.
-final class ActiveTargetRelaunchTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        continueAfterFailure = false
-    }
+/// All history is created through the UI, in the isolated UI-test store;
+/// no launch-time seed and no real training data is involved.
+final class ActiveTargetRelaunchTests: ChickenBreastUITestCase {
 
     func testStoredPerSetTargetSurvivesRelaunchAfterLogging() throws {
         #if !targetEnvironment(simulator)
         throw XCTSkip("Synthetic workout regression is restricted to the simulator.")
         #endif
+        // The isolated, reset store every other UI test launches into (#285),
+        // rather than whatever the simulator's real store holds: a resumed
+        // draft or prior history used to skip this test, so CI, whose
+        // simulator other tests have used, could never really run it.
+        let locale = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         let app = XCUIApplication()
-        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-UITestIsolatedStore", "-UITestResetState"] + locale
         app.launch()
+        // Relaunches below keep the same isolated store, without resetting it.
+        app.launchArguments = ["-UITestIsolatedStore"] + locale
         defer { app.terminate() }
 
-        let onboardingSave = app.buttons["splitEditor.save"]
-        if onboardingSave.waitForExistence(timeout: 8), onboardingSave.isHittable {
-            onboardingSave.tap()
-        }
-        let push = app.buttons["day.push"]
         let resume = app.buttons["home.resume"]
-        if resume.waitForExistence(timeout: 2) {
-            throw XCTSkip("Run this regression on a fresh simulator; an existing workout must remain untouched.")
-        }
-        XCTAssertTrue(push.waitForExistence(timeout: 20))
-        push.tap()
-        let start = app.buttons["Start workout"]
-        XCTAssertTrue(start.waitForExistence(timeout: 8))
-        start.tap()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
 
         let review = app.buttons["session.plan.review"]
         XCTAssertTrue(review.waitForExistence(timeout: 20))
-        try XCTSkipUnless(review.label == "Review set plan", "A fresh simulator with no exercise history is required.")
+        // Either label: recommendations now activate automatically, so a
+        // fresh lift may already carry a plan to edit. The test only needs
+        // the plan sheet, whichever door opens it.
+        XCTAssertTrue(["Review set plan", "Edit set plan"].contains(review.label), review.label)
         reveal(review, in: app.scrollViews.firstMatch)
         review.tap()
         XCTAssertTrue(app.navigationBars["Set plan"].waitForExistence(timeout: 5))
@@ -63,7 +58,7 @@ final class ActiveTargetRelaunchTests: XCTestCase {
         XCTAssertTrue(log.waitForExistence(timeout: 5) && log.isHittable)
         log.tap()
         assertTarget(target, equals: expectedSecond)
-        XCTAssertTrue(app.buttons["9 reps"].isSelected)
+        assertPendingReps(9, in: app)
 
         app.terminate()
         app.launch()
@@ -71,9 +66,8 @@ final class ActiveTargetRelaunchTests: XCTestCase {
         resume.tap()
         XCTAssertTrue(target.waitForExistence(timeout: 20))
         assertTarget(target, equals: expectedSecond)
-        XCTAssertTrue(app.buttons["9 reps"].isSelected,
-                      "the logging controls must restore the next stored target too")
-        XCTAssertFalse(app.buttons["8 reps"].isSelected)
+        // The logging controls must restore the next stored target too.
+        assertPendingReps(9, in: app)
 
         // Persist another set after relaunch and verify the third target is
         // selected, then reopen once more to guard against a replayed set.
@@ -86,12 +80,29 @@ final class ActiveTargetRelaunchTests: XCTestCase {
         resume.tap()
         XCTAssertTrue(target.waitForExistence(timeout: 20))
         assertTarget(target, equals: expectedThird)
-        XCTAssertTrue(app.buttons["8 reps"].isSelected)
+        assertPendingReps(8, in: app)
     }
 
-    private func reveal(_ element: XCUIElement, in scrollView: XCUIElement) {
-        for _ in 0..<5 where !element.exists || !element.isHittable { scrollView.swipeUp() }
-        XCTAssertTrue(element.exists && element.isHittable)
+    private func reveal(_ element: XCUIElement, in scrollView: XCUIElement,
+                        file: StaticString = #filePath, line: UInt = #line) {
+        // The container this names may not exist after main's revamp (the
+        // plan sheet is not always a collection view), so fall back to the
+        // app, and give the element a moment to appear before swiping.
+        _ = element.waitForExistence(timeout: 3)
+        for _ in 0..<5 where !element.exists || !element.isHittable {
+            (scrollView.exists ? scrollView : XCUIApplication()).swipeUp()
+        }
+        XCTAssertTrue(element.exists && element.isHittable, "\(element) should be reachable", file: file, line: line)
+    }
+
+    /// The reps stepper's value (main's revamp replaced the rep chips this
+    /// test first checked with a −/+ stepper).
+    private func assertPendingReps(_ reps: Int, in app: XCUIApplication,
+                                   file: StaticString = #filePath, line: UInt = #line) {
+        let value = app.buttons["session.reps.value"]
+        XCTAssertTrue(wait(for: value, toMatch: "value == '\(reps) reps'", timeout: 5),
+                      "Expected \(reps) reps; stepper shows \(String(describing: value.value))",
+                      file: file, line: line)
     }
 
     private func assertTarget(_ target: XCUIElement, equals expected: String,

@@ -762,7 +762,10 @@ struct SessionView: View {
     @ViewBuilder
     private func context(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
         let isFirstOuting = exercise.prescription.isColdStart && exercise.lastPerformance == nil
-        if isFirstOuting || !exercise.workingSets.isEmpty {
+        // An active set plan keeps the full card for the whole lift: its
+        // per-set target ("Set 2 of 3 · …") is the plan, and collapsing after
+        // the first working set hid it mid-plan (#316 merge with main).
+        if exercise.acceptedPlan == nil, isFirstOuting || !exercise.workingSets.isEmpty {
             collapsedContext(exercise, isFirstOuting: isFirstOuting)
         } else {
             fullContext(exercise, isCompact: isCompact)
@@ -770,35 +773,40 @@ struct SessionView: View {
     }
 
     private func collapsedContext(_ exercise: SessionExercise, isFirstOuting: Bool) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                // No line cap: "Target … · Last …" ran past two lines at
-                // larger sizes and was reported as clipped (#293).
-                Text(isFirstOuting ? "First time on this lift" : collapsedLine(exercise))
-                    .font(.subheadline.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                if isFirstOuting {
-                    Text("Set a weight, then log it.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    // No line cap: "Target … · Last …" ran past two lines at
+                    // larger sizes and was reported as clipped (#293).
+                    Text(isFirstOuting ? "First time on this lift" : collapsedLine(exercise))
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if isFirstOuting {
+                        Text("Set a weight, then log it.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .accessibilityElement(children: .combine)
+                Spacer(minLength: 8)
+                Button {
+                    configuring = exercise.exercise
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Configure \(exercise.exercise.name)")
+                .accessibilityValue(configSummary(exercise))
+                .accessibilityHint("Corrects what the app assumes about this lift")
+                .accessibilityIdentifier("session.exercise.configure")
             }
-            .accessibilityElement(children: .combine)
-            Spacer(minLength: 8)
-            Button {
-                configuring = exercise.exercise
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Configure \(exercise.exercise.name)")
-            .accessibilityValue(configSummary(exercise))
-            .accessibilityHint("Corrects what the app assumes about this lift")
-            .accessibilityIdentifier("session.exercise.configure")
+            planAvailability(exercise)
+                .padding(.trailing, 12)
+                .padding(.bottom, 4)
         }
         .padding(.leading, 16)
         .padding(.trailing, 4)
@@ -888,32 +896,41 @@ struct SessionView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("session.target.reason")
             }
-            if model.canPlanCurrentExercise, model.current?.id == exercise.id {
-                Button(exercise.acceptedPlan == nil ? "Review set plan" : "Edit set plan") {
-                    if let plan = model.planProposal() {
-                        planning = PlanningTarget(
-                            plan: plan,
-                            recommendation: exercise.recommendation,
-                            isEditing: exercise.acceptedPlan != nil
-                        )
-                    }
-                }
-                .font(.subheadline.weight(.semibold))
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-                .accessibilityIdentifier("session.plan.review")
-            } else if model.current?.id == exercise.id,
-                      let reason = model.planUnavailableReason {
-                Text(reason)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("session.plan.unavailable")
-            }
+            planAvailability(exercise)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("session.target.card")
+    }
+
+    /// "Review set plan", or why there isn't one. Shown on the full card and
+    /// on the collapsed first-outing card alike: the collapsed card arrived
+    /// from main without it, which hid the planner on exactly the outing it
+    /// bootstraps a plan for (#316's ActiveTargetRelaunchTests).
+    @ViewBuilder
+    private func planAvailability(_ exercise: SessionExercise) -> some View {
+        if model.canPlanCurrentExercise, model.current?.id == exercise.id {
+            Button(exercise.acceptedPlan == nil ? "Review set plan" : "Edit set plan") {
+                if let plan = model.planProposal() {
+                    planning = PlanningTarget(
+                        plan: plan,
+                        recommendation: exercise.recommendation,
+                        isEditing: exercise.acceptedPlan != nil
+                    )
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            .accessibilityIdentifier("session.plan.review")
+        } else if model.current?.id == exercise.id,
+                  let reason = model.planUnavailableReason {
+            Text(reason)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("session.plan.unavailable")
+        }
     }
 
     private func planTargetLine(_ exercise: SessionExercise) -> String {
