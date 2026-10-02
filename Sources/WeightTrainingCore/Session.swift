@@ -256,6 +256,10 @@ public struct Session: Hashable, Sendable {
         // Nothing to do if it's already there, and re-inserting would discard
         // sets logged against it this session.
         guard exercises[index].id != replacement.id else { return }
+        // A row's id is its exercise's id, so a lift already elsewhere in the
+        // day would make two rows that lookups can't tell apart — sets logged
+        // on the second would land on the first (#302).
+        guard !exercises.contains(where: { $0.id == replacement.id }) else { return }
         exercises[index] = replacement
     }
 
