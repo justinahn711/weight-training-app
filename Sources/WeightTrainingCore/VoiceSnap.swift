@@ -11,8 +11,33 @@ public struct SnappedInput: Hashable, Sendable {
     public let rpe: RPE?
 
     /// Values that were thrown out, with the reason, so the screen can say what
-    /// it ignored instead of silently dropping half an utterance.
-    public let rejections: [String]
+    /// it ignored instead of silently dropping half an utterance. Pound-only;
+    /// see `rejections(in:)`.
+    public var rejections: [String] { rejections(in: .pounds) }
+
+    /// The same reasons in the lifter's unit (#306). They're shown in the
+    /// heard banner and read aloud beside a weight already in that unit.
+    public func rejections(in unit: MassUnit) -> [String] {
+        rejected.map { $0.text(in: unit) }
+    }
+
+    /// A thrown-out value, kept as the value so its unit is chosen where it
+    /// is shown.
+    enum Rejection: Hashable, Sendable {
+        case load(Load)
+        case reps(Int)
+        case text(String)
+
+        func text(in unit: MassUnit) -> String {
+            switch self {
+            case .load(let load): return "\(load.formatted(in: unit)) doesn't look right"
+            case .reps(let reps): return "\(reps) reps doesn't look right"
+            case .text(let text): return text
+            }
+        }
+    }
+
+    private let rejected: [Rejection]
 
     /// Whether a value was quietly moved to fit the equipment — 187 heard on a
     /// barbell becomes 185, which is worth a glance before it commits.
@@ -25,10 +50,18 @@ public struct SnappedInput: Hashable, Sendable {
         load: Load?, reps: Int?, rpe: RPE?,
         rejections: [String] = [], wasSnapped: Bool = false, isConfident: Bool = true
     ) {
+        self.init(load: load, reps: reps, rpe: rpe, rejected: rejections.map(Rejection.text),
+                  wasSnapped: wasSnapped, isConfident: isConfident)
+    }
+
+    init(
+        load: Load?, reps: Int?, rpe: RPE?,
+        rejected: [Rejection], wasSnapped: Bool, isConfident: Bool
+    ) {
         self.load = load
         self.reps = reps
         self.rpe = rpe
-        self.rejections = rejections
+        self.rejected = rejected
         self.wasSnapped = wasSnapped
         self.isConfident = isConfident
     }
@@ -83,14 +116,14 @@ public enum VoiceSnapper {
             return nil
         }
 
-        var rejections: [String] = []
+        var rejections: [SnappedInput.Rejection] = []
         var wasSnapped = false
 
         var load: Load?
         if let heardLoad {
             let snapped = exercise.nearestAchievable(heardLoad)
             if !isPlausible(snapped, reference: reference, exercise: exercise) {
-                rejections.append("\(heardLoad) doesn't look right")
+                rejections.append(.load(heardLoad))
             } else {
                 load = snapped
                 // Within float dust, not exact: a kg load the equipment makes
@@ -104,7 +137,7 @@ public enum VoiceSnapper {
             if plausibleReps.contains(heardReps) {
                 reps = heardReps
             } else {
-                rejections.append("\(heardReps) reps doesn't look right")
+                rejections.append(.reps(heardReps))
             }
         }
 
@@ -116,7 +149,7 @@ public enum VoiceSnapper {
 
         let snappedInput = SnappedInput(
             load: load, reps: reps, rpe: rpe,
-            rejections: rejections,
+            rejected: rejections,
             wasSnapped: wasSnapped,
             isConfident: parse.isConfident
         )
