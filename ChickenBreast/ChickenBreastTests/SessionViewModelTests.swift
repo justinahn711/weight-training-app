@@ -813,6 +813,31 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.pendingReps, seededReps)
     }
 
+    /// A first outing has no target, so the ramp is built from whatever is
+    /// dialled in (#300). Logging a rung used to seed the form onto the next
+    /// rung, which rebuilt the ramp around that lighter rung; the form then
+    /// matched no rung, and the next Log Set wrote a warmup as a working set.
+    func test_logWarmup_onAColdStart_keepsTheRampAnchoredToTheDialledWeight() throws {
+        let bench = benchPress(loading: .olympicBarbell)
+        let vm = try makeViewModel(sessionExercises: [SessionExercise(
+            exercise: bench,
+            prescription: Prescription(load: nil, reps: 5, rpe: .eight)
+        )])
+        vm.pendingLoad = Load(225)
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(225))
+        XCTAssertGreaterThan(ramp.count, 1, "sanity: a ramp with more than one rung")
+        XCTAssertEqual(vm.warmupRamp, ramp, "sanity: the ramp is built from the dialled weight")
+
+        vm.logWarmup(ramp[0])
+        for _ in ramp.dropFirst() { vm.logSet() }
+
+        let logged = vm.session.current?.loggedSets ?? []
+        XCTAssertEqual(logged.map(\.load), ramp.map(\.load), "every rung logged at its own number")
+        XCTAssertTrue(logged.allSatisfy(\.isWarmup), "no rung was logged as a working set")
+        XCTAssertNil(vm.nextWarmupRung)
+        XCTAssertEqual(vm.pendingLoad, Load(225), "the form ends on the weight the lifter dialled")
+    }
+
     // MARK: - adjustRPE — the inline stepper's step through RPE.sessionChips
 
     func test_adjustRPE_stepsThroughSessionChipsInOrder() throws {

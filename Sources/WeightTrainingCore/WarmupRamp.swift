@@ -124,13 +124,12 @@ public enum WarmupRamp {
     /// Down, so a warmup is never accidentally heavier than intended — the one
     /// direction of error that costs working sets.
     private static func snap(_ load: Load, for exercise: Exercise, bar: Load) -> Load {
-        guard let base = exercise.loading?.baseWeight else {
+        guard let loading = exercise.loading, loading.isMeasured else {
             return exercise.increment.snap(load)
         }
-        guard load > base else { return base }
-        // Rungs move in whole increments above the empty apparatus, so the
-        // result is always loadable with real plates.
-        let aboveBase = exercise.increment.snap(Load(load.pounds - base.pounds))
-        return Load(base.pounds + aboveBase.pounds)
+        // From the plates, not whole increments above the empty apparatus:
+        // a 5 lb step on a rack without 2.5s makes 50 lb a rung nobody can
+        // load (#305). Never below the empty apparatus.
+        return loading.heaviestBuildable(atMost: load)
     }
 }

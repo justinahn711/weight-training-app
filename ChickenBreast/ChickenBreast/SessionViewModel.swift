@@ -197,6 +197,12 @@ final class SessionViewModel {
     /// whatever the stepper happens to hold.
     func logWarmup(_ rung: WarmupSet) {
         guard let current else { return }
+        // A first outing's ramp is built from the dialled weight, and seeding
+        // below is about to replace that weight with the next rung. Pin it
+        // first, or the ramp rebuilds around a warmup (#300).
+        if current.prescription.load == nil, coldStartWorkingLoads[current.id] == nil {
+            coldStartWorkingLoads[current.id] = rampWorkingLoad
+        }
         commit(
             SetRecord(
                 exerciseID: current.exercise.id,
@@ -805,7 +811,9 @@ final class SessionViewModel {
             // On a cold start there's no target, so the stepper opens at the
             // lightest thing the equipment can actually be set to — an empty
             // bar, not zero.
-            pendingLoad = current.prescription.load ?? current.exercise.minimumLoad
+            pendingLoad = current.prescription.load
+                ?? coldStartWorkingLoads[current.id]
+                ?? current.exercise.minimumLoad
         }
         // A draft made after the last logged set wins. Without this ordering,
         // entering 25 after set one, checking another exercise, and returning
@@ -1453,6 +1461,20 @@ final class SessionViewModel {
     /// this session — clearing the block on bench says nothing about RDL later.
     private var clearedRamps: Set<UUID> = []
 
+    /// The working weight a first outing's ramp was built from, pinned when
+    /// its first rung is logged (#300). With no target, the ramp follows
+    /// `pendingLoad` — but logging a rung moves `pendingLoad` onto the next
+    /// rung, so without this the ramp would rebuild around a warmup. Kept per
+    /// exercise and only for this session, like `clearedRamps`.
+    private var coldStartWorkingLoads: [UUID: Load] = [:]
+
+    /// What the ramp leads up to: the target, or on a first outing the weight
+    /// the lifter dialled.
+    private var rampWorkingLoad: Load? {
+        guard let current else { return nil }
+        return current.prescription.load ?? coldStartWorkingLoads[current.id] ?? pendingLoad
+    }
+
     /// Whether the ramp block is expanded.
     ///
     /// Collapsed by default (#15): on most days the ramp is glanced at, not
@@ -1474,7 +1496,7 @@ final class SessionViewModel {
               current.workingSets.isEmpty else { return [] }
         return WarmupRamp.generate(
             for: current.exercise,
-            workingLoad: current.prescription.load ?? pendingLoad
+            workingLoad: rampWorkingLoad
         )
     }
 
