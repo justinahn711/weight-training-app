@@ -196,6 +196,19 @@ public struct LoadingStyle: Hashable, Codable, Sendable {
         return Load(baseNative + Double(best ?? 0) / 100 * Double(sleeves), unit)
     }
 
+    /// The heaviest load this apparatus can build at or below `load`, never
+    /// below the empty apparatus.
+    ///
+    /// `nearestBuildable` rounded *down*. For proposals whose whole point is
+    /// to be no heavier than asked — a deload, a warmup rung — where nearest
+    /// could hand back the heavier neighbour (#305).
+    public func heaviestBuildable(atMost load: Load) -> Load {
+        guard let base = baseWeight else { return load }
+        guard load > base else { return base }
+        if canBuild(load) { return nearestBuildable(load) }
+        return previousBuildable(before: load) ?? base
+    }
+
     /// The next exact plate combination above `load`.
     ///
     /// Correction controls use this instead of adding a scalar increment. A
