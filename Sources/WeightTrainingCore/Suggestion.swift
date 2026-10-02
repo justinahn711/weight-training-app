@@ -28,11 +28,35 @@ public struct Suggestion: Identifiable, Hashable, Sendable {
     ///
     /// Not optional, because a chip that can't explain itself is just a number
     /// to argue with. "+10" invites a shrug; "set 1 was RPE 6.5" is a coach.
-    public let reason: String
+    /// Pound-only; see `reason(in:)`.
+    public var reason: String { reason(in: .pounds) }
+
+    /// The reason in the lifter's unit (#306), to match `title(in:)`.
+    public func reason(in unit: MassUnit) -> String {
+        switch because {
+        case .text(let text): return text
+        case .deload(let deload): return deload.summary(in: unit)
+        }
+    }
+
+    /// Kept as the value it describes rather than a finished sentence when
+    /// the sentence names a weight, so the unit is chosen where it's shown.
+    private enum Because: Hashable, Sendable {
+        case text(String)
+        case deload(DeloadSuggestion)
+    }
+
+    private let because: Because
 
     public init(kind: Kind, reason: String) {
         self.kind = kind
-        self.reason = reason
+        self.because = .text(reason)
+    }
+
+    /// A deload chip, whose reason names the weight it backs off to.
+    public init(deload: DeloadSuggestion) {
+        self.kind = .deload(deload.to)
+        self.because = .deload(deload)
     }
 
     /// Stable across regeneration, so dismissing a chip keeps it dismissed
@@ -98,7 +122,7 @@ public enum SuggestionEngine {
         if let deload = DeloadDetector.evaluate(
             exercise: exercise, state: state, history: history, calendar: calendar
         ), deload.to != pendingLoad {
-            chips.append(Suggestion(kind: .deload(deload.to), reason: deload.summary))
+            chips.append(Suggestion(deload: deload))
         }
 
         let workingToday = loggedToday.filter { !$0.isWarmup }

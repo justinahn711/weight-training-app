@@ -169,6 +169,29 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.pendingLoad, benchPress().minimumLoad)
     }
 
+    /// A heard set was snapped for the lift on screen when it was spoken
+    /// (#301). If the session moves before the countdown ends, committing it
+    /// would log that lift's numbers against whichever lift is current now.
+    func test_heardSet_isDroppedWhenTheSessionMovesToAnotherLift() throws {
+        let vm = try makeViewModel(exercises: [lateralRaise()], extraCount: 1)
+        let first = try XCTUnwrap(vm.session.exercises.first?.id)
+        let second = try XCTUnwrap(vm.session.exercises.last?.id)
+
+        vm.handle(VoiceParse(command: .logSet(load: Load(135), reps: 12, rpe: nil)))
+        XCTAssertNotNil(vm.heard, "sanity: a set is pending")
+        XCTAssertNotNil(vm.autoCommitAt, "sanity: its countdown is running")
+
+        vm.select(exerciseID: second)
+        XCTAssertNil(vm.heard, "moving on drops the pending set")
+        XCTAssertNil(vm.autoCommitAt)
+
+        vm.commitHeard()   // what the countdown does when it runs out
+
+        let logged = vm.session.exercises.filter { [first, second].contains($0.id) }
+            .flatMap(\.loggedSets)
+        XCTAssertTrue(logged.isEmpty, "nothing logged on either lift")
+    }
+
     // MARK: - Next up: moving on once last time's set count is matched
 
     /// A dumbbell lift with no ramp, so `logSet()` writes a working set from
@@ -788,6 +811,31 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertNil(logged.rpe, "warmups are never scored")
         XCTAssertEqual(vm.pendingLoad, seededLoad, "Extra warmup leaves the stepper exactly where it was (#170)")
         XCTAssertEqual(vm.pendingReps, seededReps)
+    }
+
+    /// A first outing has no target, so the ramp is built from whatever is
+    /// dialled in (#300). Logging a rung used to seed the form onto the next
+    /// rung, which rebuilt the ramp around that lighter rung; the form then
+    /// matched no rung, and the next Log Set wrote a warmup as a working set.
+    func test_logWarmup_onAColdStart_keepsTheRampAnchoredToTheDialledWeight() throws {
+        let bench = benchPress(loading: .olympicBarbell)
+        let vm = try makeViewModel(sessionExercises: [SessionExercise(
+            exercise: bench,
+            prescription: Prescription(load: nil, reps: 5, rpe: .eight)
+        )])
+        vm.pendingLoad = Load(225)
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(225))
+        XCTAssertGreaterThan(ramp.count, 1, "sanity: a ramp with more than one rung")
+        XCTAssertEqual(vm.warmupRamp, ramp, "sanity: the ramp is built from the dialled weight")
+
+        vm.logWarmup(ramp[0])
+        for _ in ramp.dropFirst() { vm.logSet() }
+
+        let logged = vm.session.current?.loggedSets ?? []
+        XCTAssertEqual(logged.map(\.load), ramp.map(\.load), "every rung logged at its own number")
+        XCTAssertTrue(logged.allSatisfy(\.isWarmup), "no rung was logged as a working set")
+        XCTAssertNil(vm.nextWarmupRung)
+        XCTAssertEqual(vm.pendingLoad, Load(225), "the form ends on the weight the lifter dialled")
     }
 
     // MARK: - adjustRPE — the inline stepper's step through RPE.sessionChips

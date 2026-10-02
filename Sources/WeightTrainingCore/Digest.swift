@@ -114,10 +114,10 @@ public struct Digest: Hashable, Sendable {
             // stalling lift turns an explanation into nagging.
             let qualified: String
             if let qualifier, !qualifierUsed {
-                qualified = "\(reason), \(qualifier) — deload to \(suggestion.to)?"
+                qualified = "\(reason), \(qualifier) — deload to \(suggestion.to.formatted(in: unit))?"
                 qualifierUsed = true
             } else {
-                qualified = "\(reason) — deload to \(suggestion.to)?"
+                qualified = "\(reason) — deload to \(suggestion.to.formatted(in: unit))?"
             }
             candidates.append(DigestBullet(
                 text: qualified,

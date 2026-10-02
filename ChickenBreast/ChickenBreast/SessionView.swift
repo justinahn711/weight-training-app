@@ -1803,7 +1803,7 @@ private struct SuggestionChip: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(suggestion.title(in: gym.unit))
                         .font(.subheadline.weight(.semibold))
-                    Text(suggestion.reason)
+                    Text(suggestion.reason(in: gym.unit))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1813,7 +1813,7 @@ private struct SuggestionChip: View {
             // Title and reason are two labels sighted readers take in at once;
             // combined they are one announcement rather than two stops.
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(suggestion.title(in: gym.unit)). \(suggestion.reason)")
+            .accessibilityLabel("\(suggestion.title(in: gym.unit)). \(suggestion.reason(in: gym.unit))")
             .accessibilityHint("Double tap to apply this suggestion.")
             .accessibilityIdentifier("suggestion.accept")
 
