@@ -105,10 +105,33 @@ public final class TrainingStore {
         try saveChanges()
     }
 
+    /// Saves, or discards everything staged when the save throws (#304).
+    ///
+    /// SwiftData does not roll back a failed save on its own. Every write
+    /// stages its change and saves straight away, so whatever is pending here
+    /// belongs to the write that just failed — and left pending, the next
+    /// unrelated save commits it: a retried `log` lands twice, a delete the
+    /// lifter was told failed happens anyway.
     func saveChanges() throws {
         guard context.hasChanges else { return }
-        try context.save()
+        do {
+            if let saveFault {
+                self.saveFault = nil
+                throw saveFault
+            }
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
     }
+
+    /// Test-only: the next save throws this instead of reaching SwiftData,
+    /// then clears itself (#304). Internal, so only `@testable` tests can set
+    /// it. A real failing save — a full disk, a store CloudKit refuses — can't
+    /// be produced on demand in a unit test, and the bug is in what happens
+    /// *after* the throw, which this reproduces exactly.
+    var saveFault: Error?
 
     // MARK: - Exercises
 
