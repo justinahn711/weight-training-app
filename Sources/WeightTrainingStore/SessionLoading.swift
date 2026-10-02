@@ -14,7 +14,7 @@ extension TrainingStore {
         let existing = Set(try dayTemplates().map(\.id))
         let missing = DayTemplateLibrary.all.filter { !existing.contains($0.id) }
         for template in missing {
-            try upsert(template)
+            try upsert(template, stampedAt: EditStamp.stock)
         }
         return missing
     }
@@ -298,6 +298,21 @@ extension TrainingStore {
             calendar: calendar
         )
     }
+
+    /// Hard-set volume per calendar week, for the Progress tab's chart.
+    public func weeklyVolume(
+        weeks: Int = WeeklyVolumeBuilder.defaultWeeks,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> [WeeklyVolumePoint] {
+        WeeklyVolumeBuilder.weeks(
+            weeks,
+            history: try allSets(),
+            exercises: try exercises(),
+            now: now,
+            calendar: calendar
+        )
+    }
 }
 
 extension TrainingStore {
@@ -333,7 +348,8 @@ extension TrainingStore {
             // set (#61) takes its record with it.
             records: PersonalRecords.recent(
                 in: history,
-                since: calendar.date(byAdding: .day, value: -7, to: now) ?? now
+                since: calendar.date(byAdding: .day, value: -7, to: now) ?? now,
+                calendar: calendar
             ),
             readiness: readiness,
             // The store is the one place that knows the gym, so it is where

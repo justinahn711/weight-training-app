@@ -36,6 +36,9 @@ struct ContentView: View {
     @State private var volume: VolumeReport?
     @State private var showingVolume = false
     @State private var trends: [E1RMTrend] = []
+    /// Hard sets per calendar week, for the Progress tab's chart and rings.
+    @State private var weeklyVolume: [WeeklyVolumePoint] = []
+    @State private var weeklySessionTarget = 3
     @State private var digest: Digest?
     @State private var showingDigest = false
     @State private var sync = SyncStatus()
@@ -46,6 +49,11 @@ struct ContentView: View {
     @State private var healthNeedsPermission = false
     @State private var days: [TrainingDay] = []
     @State private var showingSettings = false
+    /// Presented only after Finish has persisted progression and cleared the
+    /// draft. The sheet acknowledges the result; it never gates or repeats it.
+    @State private var completionSummary: [ProgressionSummaryEntry] = []
+    @State private var completionRecords: [SessionRecordEntry] = []
+    @State private var showingCompletionSummary = false
 
     /// The rotation currently in play, used for day names and ordering
     /// (#136). Read alongside `cycle` because both come from the same
@@ -73,6 +81,7 @@ struct ContentView: View {
             progressTab
                 .tabItem { Label("Progress", systemImage: "chart.xyaxis.line") }
         }
+        .background(Theme.background.ignoresSafeArea())
         .task { await openStore() }
         // Asked once, on a store that has never had an answer — including a
         // pre-#136 install updating into this feature, which reads the same
@@ -89,6 +98,11 @@ struct ContentView: View {
                     )
                 }
                 .interactiveDismissDisabled()
+            }
+        }
+        .sheet(isPresented: $showingCompletionSummary) {
+            ProgressionCompletionView(entries: completionSummary, records: completionRecords) {
+                showingCompletionSummary = false
             }
         }
         // Keyed on the store arriving, so this runs after SwiftUI has updated
@@ -141,11 +155,23 @@ struct ContentView: View {
     private func volumeRow(_ volume: VolumeReport) -> some View {
         let starved = !volume.starved.isEmpty
         return Button { showingVolume = true } label: {
-            HStack(spacing: 6) {
+            // First-baseline, so a wrapped sentence keeps the glyph beside its
+            // first line rather than floating at the middle of the paragraph.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                // `Theme.attention`, not the accent: a hole in the week is
+                // news, not the button to press, and the dashboard used one
+                // orange for both. The glyph and the sentence say the same
+                // thing, so it never rests on colour alone.
                 Image(systemName: starved ? "exclamationmark.triangle.fill" : "chart.bar")
-                    .foregroundStyle(starved ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
-                Text(starved ? starvedSummary(volume) : "Muscle sets this week")
-                    .lineLimit(1)
+                    .foregroundStyle(starved ? AnyShapeStyle(Theme.attention) : AnyShapeStyle(.secondary))
+                // Wraps (#277). It was one line, which is what kept the #115
+                // reservation exact — and at AccessibilityLarge it read
+                // "Behind on chest, front…", losing the part that says what is
+                // behind. The reservation below now sizes for the longest
+                // sentence this can ever be, so wrapping moves nothing.
+                Text(starved ? starvedSummary(volume) : "Volume this week")
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 if !starved {
                     Image(systemName: "chevron.right").font(.caption.weight(.bold))
@@ -157,7 +183,7 @@ struct ContentView: View {
             // training problem — the case where being read matters most (#114).
             // The icon keeps the colour, so the row still reads as a warning at
             // a glance without the words depending on hue to be legible.
-            .foregroundStyle(starved ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
+            .foregroundStyle(starved ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             // 44pt, not the 18pt the text happened to be. The row spans the
             // screen so it never looked hard to hit, but a control sized by its
             // font is one a shaking hand or a thumb on a rack misses — the
@@ -167,6 +193,64 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The volume row's height, claimed at first paint (#115).
+    ///
+    /// Was a fixed `.frame(height: 44)` — 44 rather than 22, matching the
+    /// row's own minimum, because reserving less than the control needs made
+    /// the outer frame the real hit area, which is how a full-width row ended
+    /// up 18pt tall. But a fixed 44 is one line only at the default size: at
+    /// the accessibility sizes the row is taller than its slot and drew over
+    /// the digest row above it (#249). An invisible copy of one line of the
+    /// row, at whatever size the text is, reserves exactly what arrives.
+    ///
+    /// That copy was one line, which only held while the row was one line
+    /// too — and a one-line row truncated the finding at the accessibility
+    /// sizes (#277). So the copy is now the longest sentence the row can ever
+    /// say, laid out by the same `HStack` at the same width and font, and
+    /// allowed to wrap. Whatever arrives is that sentence or a shorter one, so
+    /// the slot is claimed at first paint at its final height and the row
+    /// lands inside it: nothing above or below moves when the insights do.
+    ///
+    /// Not the arrived text itself: that isn't known until the insights land,
+    /// and a slot that resized to it then would be the #115 jump again. The
+    /// cost is a line or so of empty space under a short row at the larger
+    /// sizes, below everything else on Train.
+    private var volumeRowReservation: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(Self.longestVolumeFinding)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .font(.subheadline)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .hidden()
+        .accessibilityHidden(true)
+    }
+
+    /// The longest sentence `starvedSummary` can produce: the three longest
+    /// muscle names, and every other muscle as the remainder (#277).
+    ///
+    /// Longest by characters, not by rendered width. Two names of equal
+    /// length can differ by a point or two in a proportional font; the
+    /// reservation would come up short only if that difference alone pushed
+    /// a word onto another line.
+    static let longestVolumeFinding: String = {
+        let names = Muscle.allCases
+            .map { $0.displayName.lowercased() }
+            .sorted { $0.count > $1.count }
+            .prefix(3)
+        return behindSentence(names: Array(names), remainder: Muscle.allCases.count - names.count)
+    }()
+
+    private static func behindSentence(names: [String], remainder: Int) -> String {
+        let list = names.joined(separator: ", ")
+        return remainder > 0
+            ? "Behind on \(list) and \(remainder) more"
+            : "Behind on \(list)"
     }
 
     private var trainTab: some View {
@@ -217,7 +301,17 @@ struct ContentView: View {
             if let store {
                 // No `insightsLoaded` gate: HistoryView loads its own days on
                 // appearance now, so it is correct as soon as the store is.
-                HistoryView(days: days, store: store)
+                //
+                // `onSetsDeleted` is the seam History uses to tell a session
+                // still open in the Train tab that rows it was holding are
+                // gone (#199) — `activeSession` is nil unless that route is
+                // actually alive, in which case this is a no-op capture of
+                // nothing to reconcile.
+                HistoryView(
+                    days: days,
+                    store: store,
+                    onSetsDeleted: { activeSession?.reconcilePersistedSetsAfterHistoryEdit() }
+                )
             } else {
                 unavailable("History")
             }
@@ -227,7 +321,18 @@ struct ContentView: View {
     private var progressTab: some View {
         NavigationStack {
             if insightsLoaded {
-                TrendsView(trends: trends)
+                ProgressTabView(
+                    trends: trends,
+                    summary: volume.map {
+                        WeeklySummary.current(
+                            days: days, weekly: weeklyVolume, volume: $0,
+                            sessionTarget: weeklySessionTarget
+                        )
+                    },
+                    weekly: weeklyVolume,
+                    days: days,
+                    consistency: TrainingHistory.weeklyConsistency(days: days, target: weeklySessionTarget)
+                )
             } else {
                 unavailable("Progress")
             }
@@ -272,7 +377,7 @@ struct ContentView: View {
             Task { await connectHealth() }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "heart.text.square").foregroundStyle(.tint)
+                Image(systemName: "heart.text.square").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Use recovery data")
                         .font(.subheadline.weight(.medium))
@@ -283,38 +388,51 @@ struct ContentView: View {
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(.secondary)
             }
-            // Tint on a 12% tint wash reads fine to me and fails WCAG — the
-            // title and the caption under it were both tint-coloured, and the
-            // caption is `.secondary` on top of that. This card is mine, from
-            // #110, and the audit caught it on its first run (#114). Primary
-            // for the words, tint kept for the icon and the chevron, where
-            // colour is decoration rather than the thing being read.
+            // Words stayed primary after #114 found tinted text on a tint
+            // wash failing contrast. The wash itself is gone now: an optional
+            // Health prompt wearing the action colour made it look as urgent
+            // as starting the workout. Neutral card, neutral glyphs.
             .foregroundStyle(.primary)
             .padding(.vertical, 10)
             .padding(.horizontal, 14)
-            .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    private var dayPicker: some View {
-        VStack(spacing: 16) {
-            Spacer()
-
-            SyncBadge(status: sync)
-
-            if let cycle {
-                Text(cycle.summary())
-                    .font(.headline)
-                    // Was `.secondary`, which fails contrast at this size (#114).
-                    // This line is the answer to "what am I training today" —
-                    // the question the screen exists for — so receding was the
-                    // wrong instinct twice over.
+    /// The optional prompts, kept below the primary action (#215).
+    ///
+    /// They used to render above Resume and the day buttons, so returning
+    /// to a workout in progress meant scanning four things that could all
+    /// wait. Order among themselves is unchanged, and so is every
+    /// condition deciding whether each one appears at all.
+    ///
+    /// Tighter spacing than the stack above it: 12 rather than 16, which
+    /// reads as one group of asides rather than four more primary rows.
+    private var secondaryPrompts: some View {
+        VStack(spacing: 12) {
+            if !completionSummary.isEmpty || !completionRecords.isEmpty {
+                Button { showingCompletionSummary = true } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle")
+                            .foregroundStyle(Theme.done)
+                        Text("Review what’s next")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
                     .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("home.completion-summary")
+                .accessibilityHint("Shows the targets saved after your last workout.")
             }
 
             if healthNeedsPermission {
@@ -324,22 +442,25 @@ struct ContentView: View {
             if let digest, !digest.isEmpty {
                 Button { showingDigest = true } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "sparkles").foregroundStyle(.tint)
+                        Image(systemName: "sparkles").foregroundStyle(.secondary)
                         Text("\(digest.bullets.count) thing\(digest.bullets.count == 1 ? "" : "s") to look at")
                             .font(.subheadline.weight(.medium))
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(.secondary)
                     }
-                    // Same correction as the recovery card above: tinted words
-                    // on a tint wash fail contrast, so the words go primary and
-                    // the tint stays on the icons, where it decorates rather
-                    // than carries meaning (#114).
+                    // Same treatment as the recovery card above: primary
+                    // words since #114, and now a neutral surface, so the
+                    // accent stays with the day's one action.
                     .foregroundStyle(.primary)
                     .padding(.vertical, 10)
                     .padding(.horizontal, 14)
-                    .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                    // 41pt at the default size without this: one subheadline
+                    // line plus the padding came up 3pt short of a target a
+                    // thumb reliably finds (#249).
+                    .frame(minHeight: 44)
+                    .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -358,17 +479,71 @@ struct ContentView: View {
             // Train is already tappable (#115), so the centred stack re-laid
             // out and every day button moved under a thumb already reaching for
             // one.
-            Group {
+            //
+            // Still required after this row moved below the day buttons (#215).
+            // The reservation is not about what sits underneath it: the whole
+            // stack is centred between two Spacers, so a late height change
+            // anywhere in it re-centres everything above as well. Dropping the
+            // reservation here would relocate the #115 jump, not remove it.
+            // Top-aligned: the slot can be taller than a short row, and the
+            // row belongs at the top of it rather than floating mid-slot.
+            ZStack(alignment: .topLeading) {
+                volumeRowReservation
                 if let volume {
                     volumeRow(volume)
                 }
             }
-            // 44 rather than 22, matching the row's own minimum. The
-            // reservation still does its #115 job — the space is claimed at
-            // first paint so the day buttons never move under a thumb — but
-            // reserving less than the control needs made the outer frame the
-            // real hit area, which is how a full-width row ended up 18pt tall.
-            .frame(height: 44)
+        }
+    }
+
+    /// Centred when it fits, scrolled when it doesn't (#249).
+    ///
+    /// Was a bare `VStack` between two `Spacer`s. Taller than the screen —
+    /// an iPhone SE at the default size with the iCloud badge showing, or any
+    /// phone at the accessibility sizes — it overflowed at both ends: the
+    /// badge and the cycle line drew over the large title, the digest and
+    /// volume rows sat behind the tab bar, and a swipe moved nothing.
+    ///
+    /// The stack is floored at the viewport's height rather than wrapped in
+    /// `ViewThatFits`. When it fits, the floor gives the Spacers the same room
+    /// they had, so the screen looks exactly as it did and #115's reservation
+    /// below does the same job. When it doesn't, the Spacers collapse and the
+    /// stack pins to the top of the scroll view, so anything that arrives late
+    /// grows downward — and since #215 every late arrival sits below the day
+    /// buttons, so they cannot move at all. `ViewThatFits` would instead swap
+    /// between two different subtrees the moment the insights tipped the
+    /// height over the edge, which is the #115 jump in its worst form.
+    ///
+    /// `GeometryReader` rather than a height read back into `@State`: the
+    /// floor has to be right on the first frame, or the stack paints top-
+    /// aligned and then re-centres under a thumb.
+    private var dayPicker: some View {
+        GeometryReader { viewport in
+            ScrollView {
+                dayStack
+                    .frame(maxWidth: .infinity, minHeight: viewport.size.height)
+            }
+            // No rubber-banding on a screen that has nothing to scroll to.
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+
+    private var dayStack: some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            SyncBadge(status: sync)
+
+            if let cycle {
+                Text(cycle.summary())
+                    .font(.headline)
+                    // Was `.secondary`, which fails contrast at this size (#114).
+                    // This line is the answer to "what am I training today" —
+                    // the question the screen exists for — so receding was the
+                    // wrong instinct twice over.
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if let workoutDraft {
                 Button {
@@ -392,7 +567,11 @@ struct ContentView: View {
                             .foregroundStyle(.tint)
                     }
                     .padding(.horizontal, 20)
-                    .frame(height: 88)
+                    // A floor, not a fixed height: at larger text the two
+                    // lines outgrew 88pt and clipped, which the system audit
+                    // reported once `.textClipped` stopped being held (#260).
+                    .padding(.vertical, 12)
+                    .frame(minHeight: 88)
                     .frame(maxWidth: .infinity)
                     .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
                     .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.tint, lineWidth: 2))
@@ -438,6 +617,11 @@ struct ContentView: View {
                     .disabled(store == nil)
                 }
             }
+
+            // Demoted below the day's one action, not removed (#215). Each
+            // of these still earns its place; none of them is what a lifter
+            // opened the app to do.
+            secondaryPrompts
 
             Spacer()
         }
@@ -496,6 +680,8 @@ struct ContentView: View {
         digest = try store.digest()
         trends = try store.e1RMTrends()
         days = try store.trainingDays()
+        weeklyVolume = try store.weeklyVolume()
+        weeklySessionTarget = try store.gymConfig().weeklySessionTarget
         insightsLoaded = true
     }
 
@@ -504,11 +690,7 @@ struct ContentView: View {
     private func starvedSummary(_ report: VolumeReport) -> String {
         let worst = report.starved.sorted { $0.sets < $1.sets }.prefix(3)
         let names = worst.map { $0.muscle.displayName.lowercased() }
-        let remainder = report.starved.count - worst.count
-        let list = names.joined(separator: ", ")
-        return remainder > 0
-            ? "Behind on \(list) and \(remainder) more"
-            : "Behind on \(list)"
+        return Self.behindSentence(names: names, remainder: report.starved.count - worst.count)
     }
 
     /// The due day first, then the rest of the active split's rotation in
@@ -639,8 +821,11 @@ struct ContentView: View {
 
     private func finishActiveSession(_ earlyCompletion: ExerciseExposure.Completion? = nil) {
         guard let activeSession, activeSession.finish(earlyCompletion: earlyCompletion) else { return }
+        completionSummary = activeSession.completionSummary
+        completionRecords = activeSession.completionRecords
         workoutDraft = nil
         route = nil
+        showingCompletionSummary = !completionSummary.isEmpty || !completionRecords.isEmpty
     }
 
     /// Loads recovery when Health has already been answered, and otherwise
@@ -704,6 +889,9 @@ struct ContentView: View {
             try opened.deduplicate()
             try opened.seedLibraryIfNeeded()
             try opened.seedTemplatesIfNeeded()
+            #if DEBUG
+            try UITestLaunchState.seedYesterdayIfAsked(opened)
+            #endif
             // After the seeds, so a freshly seeded library lands on the gym's
             // rack rather than the pound default (#73). Also the only thing
             // that re-racks this device after another one changed the gym: the
@@ -809,6 +997,10 @@ private struct WorkoutPreviewView: View {
             Button(action: onStart) {
                 Text("Start workout")
                     .font(.title3.bold())
+                    // Same pairing as onboarding's "Get started", which the
+                    // contrast audit named (#260): white on the accent fill is
+                    // 2.53:1. Muted while disabled, on the grey fill.
+                    .foregroundStyle(session.exercises.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.onAccent))
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
             }

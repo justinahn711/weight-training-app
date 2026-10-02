@@ -38,6 +38,15 @@ enum RestAlertSettings {
     /// who went looking for it, which is the only group it was ever useful to.
     static let digestKey = "digest-reminder"
 
+    /// Whether the session moves itself to the next lift once the rest after
+    /// the last usual set has ended.
+    ///
+    /// Defaults **on**: it is the whole point of the Next-up card, and the
+    /// card itself carries a `Stay` button for the set that turns out not to
+    /// be the last. Lives here rather than in `GymSettings` because it is a
+    /// preference about how the phone behaves, not a fact about the room.
+    static let autoAdvanceKey = "rest-auto-advance"
+
     /// Notifications default on because that channel survives the phone being
     /// away, which is the case #69 exists for. Timing is troubleshooting
     /// detail, so it stays available in Settings without appearing in an
@@ -46,6 +55,7 @@ enum RestAlertSettings {
         UserDefaults.standard.register(defaults: [
             notificationKey: true,
             timingKey: timingDefault,
+            autoAdvanceKey: true,
         ])
     }
 
@@ -55,5 +65,9 @@ enum RestAlertSettings {
 
     static var showsTiming: Bool {
         UserDefaults.standard.bool(forKey: timingKey)
+    }
+
+    static var autoAdvanceEnabled: Bool {
+        UserDefaults.standard.bool(forKey: autoAdvanceKey)
     }
 }

@@ -245,6 +245,81 @@ final class DoubleProgressionTests: XCTestCase {
         XCTAssertEqual(result.state.targetLoad, Load(70), "heaviest set is the reference")
     }
 
+    // MARK: - A rack that cannot make the increment (#241)
+
+    /// A barbell in a gym, the way the app places one: the gym's plates on the
+    /// loading, the increment re-marked only while it is still the default.
+    private func barbell(in gym: GymConfig, required: Int = 1) -> Exercise {
+        var bar = lift(required: required, equipment: .barbell)
+        if let loading = bar.loading { bar.loading = gym.applied(to: loading) }
+        bar.increment = gym.applied(to: bar.increment, for: .barbell)
+        return bar
+    }
+
+    private func earn(_ exercise: Exercise, at load: Load) -> ProgressionResult {
+        let performed = (0..<3).map { index in
+            SetRecord(exerciseID: exercise.id, load: load, reps: 12, rpe: RPE(8),
+                      performedAt: now.addingTimeInterval(Double(index) * 180))
+        }
+        let before = ProgressState(exerciseID: exercise.id, targetLoad: load, targetReps: 12)
+        return ProgressionEngine.advance(exercise: exercise, state: before, performed: performed)
+    }
+
+    /// Without 2.5 lb plates, 135 + 5 = 140 is a load no plates make. The
+    /// engine stored it and said "Earned it: 135 → 140"; the screen snapped it
+    /// back to 135, and the lift looped on the rep ladder forever. The raise
+    /// has to be the next load the rack can actually build, and the sentence
+    /// has to name the number the screen will show.
+    func testARackWithoutTwoAndAHalvesRaisesToTheNextBuildableLoad() {
+        let row = barbell(in: GymConfig(unit: .pounds, availablePlates: [45, 35, 25, 10, 5]))
+        let result = earn(row, at: Load(135))
+
+        XCTAssertEqual(result.change, .addedLoad(from: Load(135), to: Load(145)))
+        XCTAssertTrue(row.canBuild(result.state.targetLoad!), "the rack can build the raise")
+        XCTAssertEqual(Prescription(exercise: row, state: result.state).load, Load(145),
+                       "the screen shows the load the sentence names")
+        XCTAssertEqual(result.summary(in: .pounds), "Earned it: 135 lb → 145 lb")
+    }
+
+    /// The same loop in kilograms: without 1.25 kg plates the bar moves 5 kg.
+    func testAKilogramRackWithoutItsSmallestPlateRaisesByWhatItCanBuild() {
+        let row = barbell(in: GymConfig(unit: .kilograms,
+                                        availablePlates: [25, 20, 15, 10, 5, 2.5]))
+        let result = earn(row, at: Load(60, .kilograms))
+
+        XCTAssertEqual(result.change, .addedLoad(from: Load(60, .kilograms), to: Load(65, .kilograms)))
+        XCTAssertEqual(Prescription(exercise: row, state: result.state).load, Load(65, .kilograms))
+        XCTAssertEqual(result.summary(in: .kilograms), "Earned it: 60 kg → 65 kg")
+    }
+
+    /// A rack that can make the increment still takes it: the fix is a floor
+    /// under the step, not a bigger step.
+    func testAFullRackStillStepsByTheIncrement() {
+        let row = barbell(in: GymConfig(unit: .pounds))
+        XCTAssertEqual(earn(row, at: Load(135)).change,
+                       .addedLoad(from: Load(135), to: Load(140)))
+
+        let kgRow = barbell(in: GymConfig(unit: .kilograms))
+        XCTAssertEqual(earn(kgRow, at: Load(60, .kilograms)).change,
+                       .addedLoad(from: Load(60, .kilograms), to: Load(62.5, .kilograms)))
+    }
+
+    /// The reason the echo is gentle: a rack having 52s is likelier than the
+    /// set being imaginary. An odd dumbbell weight is held and raised as
+    /// logged, not rounded onto the increment's grid.
+    func testAnOddDumbbellIsStillEchoedAndRaisedAsLogged() {
+        let press = lift(required: 1)
+        let held = ProgressionEngine.advance(
+            exercise: press, state: state(press, load: 52, reps: 10),
+            performed: sets(press, load: 52, reps: [10, 10, 10])
+        )
+        XCTAssertEqual(held.state.targetLoad, Load(52), "held as logged")
+
+        let raised = earn(press, at: Load(52))
+        XCTAssertEqual(raised.change, .addedLoad(from: Load(52), to: Load(57)),
+                       "one increment above what was lifted, not snapped to 55")
+    }
+
     // MARK: - Across the library's rep ranges
 
     /// The done-when, checked against the real seeded ranges rather than
@@ -331,9 +406,10 @@ final class RPETargetedLoadTests: XCTestCase {
         XCTAssertEqual(result.state.targetLoad, Load(200))
     }
 
-    /// A half-point off at a light weight rounds back to the same bar, and the
-    /// engine says so rather than claiming a change it didn't make.
-    func testAdjustmentTooSmallToLoadReportsOnTarget() {
+    /// A half-point harder at a light weight rounds back to the same bar, and
+    /// the engine says so rather than claiming a change it didn't make — or
+    /// claiming the set was on target when it wasn't (#240).
+    func testAdjustmentTooSmallToLoadHoldsWithoutClaimingOnTarget() {
         let lift = bench()
         let result = ProgressionEngine.advance(
             exercise: lift,
@@ -341,7 +417,8 @@ final class RPETargetedLoadTests: XCTestCase {
             performed: [set(lift, 95, 5, RPE(8.5))]
         )
         // 95 × 0.985 = 93.6, which snaps back to 95.
-        XCTAssertEqual(result.change, .onTarget(Load(95)))
+        XCTAssertEqual(result.change, .heldOffTarget(Load(95), rpeDelta: -0.5))
+        XCTAssertEqual(result.state.targetLoad, Load(95))
     }
 
     /// Nothing to steer by means hold, not guess.
@@ -395,5 +472,116 @@ final class RPETargetedLoadTests: XCTestCase {
         )
         XCTAssertEqual(result.state.targetLoad, Load(195),
                        "the back-off set must not steer the top set")
+    }
+}
+
+/// #240: an RPE-targeted lift that reports easier than target has to get
+/// heavier, whatever the smallest step the rack can make.
+///
+/// 3% per RPE point is ~2.3 lb on a 75 lb bench and ~2.4 kg on an 80 kg one.
+/// Once that is under half the smallest buildable step, `nearestAchievable`
+/// snaps it straight back to the weight just lifted — and the chip said
+/// "On target — stay at 80 kg" to a lifter who had just reported RPE 7 against
+/// a target of 8. Every session, forever. A kg gym without 1.25s stalls an
+/// 80 kg bench permanently, and nothing in the evals could see it.
+final class CoarseStepRPETests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_760_000_000)
+
+    /// A library lift placed in a gym the way the app places one.
+    private func lift(_ name: String, in gym: GymConfig) -> Exercise {
+        var lift = ExerciseLibrary.all.first { $0.name == name }!
+        if let loading = lift.loading { lift.loading = gym.applied(to: loading) }
+        lift.increment = gym.applied(to: lift.increment, for: lift.equipment)
+        return lift
+    }
+
+    private func advance(_ lift: Exercise, at load: Load, rpe: Double) -> ProgressionResult {
+        let reps = lift.progressionRule.displayRepTarget
+        let performed = (0..<3).map { index in
+            SetRecord(exerciseID: lift.id, load: load, reps: reps, rpe: RPE(rpe),
+                      performedAt: now.addingTimeInterval(Double(index) * 180))
+        }
+        return ProgressionEngine.advance(
+            exercise: lift,
+            state: ProgressState(exerciseID: lift.id, targetLoad: load, targetReps: reps),
+            performed: performed
+        )
+    }
+
+    private let lbStandard = GymConfig(unit: .pounds)
+    private let kgStandard = GymConfig(unit: .kilograms)
+    private let lbNoTwoAndAHalves = GymConfig(unit: .pounds, availablePlates: [45, 35, 25, 10, 5])
+    private let kgNoFractionals = GymConfig(unit: .kilograms,
+                                            availablePlates: [25, 20, 15, 10, 5, 2.5])
+
+    /// The issue's table, one row each: a point easier than target moves the
+    /// bar by the smallest step the rack can build, and says so.
+    func testAnEasySetBelowTheRoundingThresholdStillMovesUpOneBuildableStep() {
+        let rows: [(String, GymConfig, Load, Load)] = [
+            ("Flat Bench", lbStandard, Load(75), Load(80)),
+            ("Flat Bench", kgStandard, Load(40, .kilograms), Load(42.5, .kilograms)),
+            ("Flat Bench", lbNoTwoAndAHalves, Load(155), Load(165)),
+            ("Flat Bench", kgNoFractionals, Load(80, .kilograms), Load(85, .kilograms)),
+            ("RDL", kgNoFractionals, Load(70, .kilograms), Load(75, .kilograms)),
+        ]
+        for (name, gym, from, to) in rows {
+            let bar = lift(name, in: gym)
+            let result = advance(bar, at: from, rpe: 7)
+            let context = "\(name) at \(from.formatted(in: gym.unit))"
+
+            XCTAssertEqual(result.change, .adjustedLoad(from: from, to: to, rpeDelta: 1), context)
+            XCTAssertEqual(result.state.targetLoad, to, context)
+            XCTAssertTrue(bar.canBuild(to), "\(context): the rack can build the raise")
+            XCTAssertEqual(Prescription(exercise: bar, state: result.state).load, to,
+                           "\(context): the screen shows the load the sentence names")
+        }
+    }
+
+    /// Half a point easier is still easier: at a light weight it takes one step
+    /// rather than claiming to be on target.
+    func testHalfAPointEasierAtALightLoadIsNotOnTarget() {
+        let bar = lift("Flat Bench", in: lbStandard)
+        let result = advance(bar, at: Load(95), rpe: 7.5)
+        XCTAssertEqual(result.change, .adjustedLoad(from: Load(95), to: Load(100), rpeDelta: 0.5))
+    }
+
+    /// An unmeasured sled has no plates to read, so its step is the increment —
+    /// and still a real step, rather than a stall.
+    func testAnUnmeasuredSledStepsByItsIncrement() {
+        let sled = lift("Hack Squat", in: lbStandard)
+        let result = advance(sled, at: Load(50), rpe: 7)
+        XCTAssertEqual(result.change, .adjustedLoad(from: Load(50), to: Load(55), rpeDelta: 1))
+        XCTAssertTrue(sled.canBuild(Load(55)))
+    }
+
+    /// Where 3% already clears a step, the rule is unchanged — the floor under
+    /// the step is not a bigger step.
+    func testAHeavyLiftStillMovesByThreePercent() {
+        let bar = lift("Flat Bench", in: lbStandard)
+        XCTAssertEqual(advance(bar, at: Load(185), rpe: 6.5).change,
+                       .adjustedLoad(from: Load(185), to: Load(195), rpeDelta: 1.5))
+        XCTAssertEqual(advance(bar, at: Load(185), rpe: 7).change,
+                       .adjustedLoad(from: Load(185), to: Load(190), rpeDelta: 1))
+    }
+
+    /// "On target" is a claim about effort. A set half a point harder than
+    /// target that rounds back to the same bar holds — harder-than-target
+    /// symmetry is out of scope — but it must not say it was on target.
+    func testAHoldOffTargetDoesNotClaimToBeOnTarget() {
+        let bar = lift("Flat Bench", in: lbStandard)
+        let result = advance(bar, at: Load(95), rpe: 8.5)
+
+        XCTAssertEqual(result.state.targetLoad, Load(95), "the load holds, as before")
+        XCTAssertEqual(result.change, .heldOffTarget(Load(95), rpeDelta: -0.5))
+        XCTAssertFalse(result.summary.hasPrefix("On target"), result.summary)
+        XCTAssertEqual(result.summary, "0.5 RPE harder than target — under one step, stay at 95 lb")
+    }
+
+    /// Reported exactly on target still says so.
+    func testOnTargetStillSaysOnTarget() {
+        let bar = lift("Flat Bench", in: kgNoFractionals)
+        let result = advance(bar, at: Load(80, .kilograms), rpe: 8)
+        XCTAssertEqual(result.change, .onTarget(Load(80, .kilograms)))
+        XCTAssertEqual(result.summary(in: .kilograms), "On target — stay at 80 kg")
     }
 }

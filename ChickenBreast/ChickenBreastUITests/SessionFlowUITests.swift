@@ -1,0 +1,620 @@
+//
+//  SessionFlowUITests.swift
+//  ChickenBreastUITests
+//
+
+import XCTest
+
+/// Tap-through flows and layout invariants that don't need a system audit to
+/// check them — split out of what was originally `AccessibilityAuditTests.swift`
+/// for #193 so a stalled or killed audit run and a broken flow are never the
+/// same red XCTestCase. Nothing in this class runs the system audit any more:
+/// `reachTrainScreen` used to audit the onboarding cover, which made the
+/// first test of every CI run the one that paid for an audit on a
+/// just-booted simulator — and the one that failed with -56 (#285). The
+/// cover is audited in `SystemAuditUITests` now.
+///
+/// Each test launches from an empty isolated store (#285), so none of them
+/// inherits a draft, a rest or a logged set from the test before it, and the
+/// class's name no longer has to sort in any particular place.
+final class SessionFlowUITests: ChickenBreastUITestCase {
+
+    /// Start session -> log a set -> undo, the flow the issue names.
+    ///
+    /// Asserted through accessibility identifiers rather than screen positions,
+    /// so it fails when a control becomes unreachable — which is the thing
+    /// being guarded — rather than when a layout moves.
+    func testLogSetAndUndoIsReachableWithoutSight() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let mic = app.buttons["session.microphone"]
+        XCTAssertTrue(mic.waitForExistence(timeout: 20))
+        // The control whose entire purpose is hands-free use must say whether
+        // it is on. Before #114 this value did not exist.
+        XCTAssertEqual(mic.value as? String, "Off")
+
+        let logSet = app.buttons["Log Set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 5), "Log Set must be reachable by name")
+        makeLogSetAvailable(app, logSet)
+        logSet.tap()
+
+        let undo = app.buttons["Undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5),
+                      "Undo must be announced, not only drawn — it is the only correction path")
+        undo.tap()
+    }
+
+    /// Back and Next exercise used to sit on separate rows — Back muted,
+    /// above a full-width Next exercise / Finish workout row (#177). #207
+    /// folded navigation back into a single row to give the set rows more
+    /// of the screen (#205): Back now sits at the row's leading edge, Next
+    /// (or Finish) at the trailing edge, with the More menu and two flexible
+    /// spacers between them. This test used to check that Back sat entirely
+    /// above Next; that invariant no longer holds by construction now that
+    /// they share a row, so it's replaced with the horizontal equivalent —
+    /// opposite ends of the row, with a third control's width of empty space
+    /// and the More menu actually between them, so a thumb sliding from one
+    /// has to cross both before it could land on the other.
+    func testBackAndNextExerciseAreSeparated() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let next = app.buttons["session.exercise.next"]
+        let back = app.buttons["session.exercise.previous"]
+        let finish = app.buttons["session.finish.footer"]
+        let warmup = app.buttons["session.more"]
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        // Moves at most one step to reach a middle exercise where Back and
+        // Next both exist, which is all the separation check below needs.
+        // Since #285 this always starts on the first exercise; the other
+        // branch is kept so the check doesn't depend on where it starts.
+        if !back.exists {
+            XCTAssertTrue(next.waitForExistence(timeout: 20), "Next exercise should be reachable")
+            next.tap()
+        } else if !next.exists {
+            XCTAssertTrue(finish.waitForExistence(timeout: 5))
+            back.tap()
+        }
+
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "Back should appear once there is a prior exercise")
+        XCTAssertTrue(next.waitForExistence(timeout: 5), "Next exercise should appear once off the last exercise")
+        XCTAssertTrue(warmup.waitForExistence(timeout: 5))
+
+        for button in [back, next] {
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+
+        // Same row now, opposite ends: Back leads, Next trails, and Extra
+        // warmup sits physically in between both of them — a thumb sliding
+        // from Back to Next has to cross the More menu's frame to get there.
+        XCTAssertLessThanOrEqual(
+            back.frame.maxX, warmup.frame.minX,
+            "Previous lift should sit entirely left of More"
+        )
+        XCTAssertLessThanOrEqual(
+            warmup.frame.maxX, next.frame.minX,
+            "More should sit entirely left of Next exercise"
+        )
+    }
+
+    /// The last exercise swaps Next exercise for Finish workout (#177); the
+    /// separation from Back has to hold for that swap too, not just the
+    /// common case checked above. Since #207, that separation is horizontal
+    /// (see `testBackAndNextExerciseAreSeparated`'s header), not row-based.
+    func testFinishWorkoutReplacesNextOnLastExerciseAndStaysSeparatedFromBack() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let next = app.buttons["session.exercise.next"]
+        let finish = app.buttons["session.finish.footer"]
+        let warmup = app.buttons["session.more"]
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        // Advances for as long as Next exercise is still there. Bounded well
+        // past Push's six slots so a real regression here fails instead of
+        // looping forever.
+        var taps = 0
+        while next.waitForExistence(timeout: 2), next.isHittable {
+            next.tap()
+            taps += 1
+            XCTAssertLessThan(taps, 10, "Next exercise should reach the last exercise well within 10 taps")
+        }
+
+        XCTAssertTrue(finish.waitForExistence(timeout: 5),
+                      "Finish workout should replace Next exercise on the last exercise")
+        XCTAssertFalse(next.exists)
+
+        let back = app.buttons["session.exercise.previous"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        XCTAssertTrue(warmup.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(
+            back.frame.maxX, warmup.frame.minX,
+            "Previous lift should sit entirely left of More"
+        )
+        XCTAssertLessThanOrEqual(
+            warmup.frame.maxX, finish.frame.minX,
+            "More should sit entirely left of the footer's Finish workout"
+        )
+    }
+
+    /// Reps and RPE replaced a disclosure-hidden pair of scrolling chip rows
+    /// with always-visible steppers, following a platform-conformance audit
+    /// that named the chip rows a web-shaped control standing in for a
+    /// native one. This is the replacement's own version of the test above:
+    /// every control is reachable without opening anything first, each
+    /// meets the 44pt touch-target floor, and the current value is exposed
+    /// as the control's accessibility value rather than a chip's `.isSelected`
+    /// trait — there is exactly one number per row because there is exactly
+    /// one control, not several competing for the selected trait.
+    func testRepsAndRPEStepperAreAlwaysVisibleAndMeetTouchTargets() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20))
+
+        let repsMinus = app.buttons["session.reps.decrement"]
+        let repsValue = app.buttons["session.reps.value"]
+        let repsPlus = app.buttons["session.reps.increment"]
+        let rpeMinus = app.buttons["session.rpe.decrement"]
+        let rpeValue = app.descendants(matching: .any)["session.rpe.value"]
+        let rpePlus = app.buttons["session.rpe.increment"]
+
+        // No disclosure to open first — every control exists immediately.
+        // The RPE value is plain text now, not a control, so it only has to
+        // exist; the tap-target floor applies to what can be tapped.
+        XCTAssertTrue(rpeValue.waitForExistence(timeout: 5))
+        for control in [repsMinus, repsValue, repsPlus, rpeMinus, rpePlus] {
+            XCTAssertTrue(control.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+        }
+
+        let repsBefore = repsValue.value as? String
+        repsPlus.tap()
+        XCTAssertNotEqual(repsBefore, repsValue.value as? String,
+                          "the reps stepper's accessibility value should change on tap")
+
+        let rpeBefore = rpeValue.value as? String
+        rpePlus.tap()
+        XCTAssertNotEqual(rpeBefore, rpeValue.value as? String,
+                          "the RPE stepper's accessibility value should change on tap")
+    }
+
+    /// A partial finish must be a bottom sheet, never an unanchored bubble at
+    /// the top of the workout (#158).
+    func testPartialFinishConfirmationIsBottomAnchored() throws {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = launch(arguments: [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        try assertPartialFinishSheet(in: app, requiresBottomPosition: true)
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.buttons["Finish workout"].firstMatch.waitForExistence(timeout: 5))
+        // Compact-height iOS may expand a sheet to full screen. That is still
+        // the platform's bottom-sheet presentation, not the stray popover this
+        // regression guards; in landscape the important invariant is that both
+        // decisions remain reachable at the largest text size.
+        try assertPartialFinishSheet(in: app, requiresBottomPosition: false)
+    }
+
+    /// The weekly goal is useful only if the calendar actually exposes the
+    /// derived result; this guards the app-level wiring that Core tests cannot.
+    func testHistoryExposesWeeklyConsistency() throws {
+        let app = launch()
+        XCTAssertTrue(reachTrainScreen(app))
+
+        let history = app.tabBars.buttons["History"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5) && history.isHittable)
+        history.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["history.weeklyStreak"]
+                .waitForExistence(timeout: 10),
+            "History should show weekly consistency above the calendar"
+        )
+    }
+
+    func testHistoryMonthNavigationHasFullTouchTargets() throws {
+        let app = launch()
+        XCTAssertTrue(reachTrainScreen(app))
+
+        let history = app.tabBars.buttons["History"]
+        XCTAssertTrue(history.waitForExistence(timeout: 5) && history.isHittable)
+        history.tap()
+
+        for identifier in ["history.month.previous", "history.month.next"] {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+    }
+
+    /// Finish persists once, then the same saved decisions can be dismissed
+    /// and reviewed again without running progression a second time (#184).
+    func testFinishShowsProgressionSummaryAndItCanBeReopened() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+
+        let next = app.buttons["session.exercise.next"]
+        let back = app.buttons["session.exercise.previous"]
+        let finish = app.buttons["session.finish.footer"]
+        let warmup = app.buttons["session.more"]
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        // Moves at most one step to reach a middle exercise where Back and
+        // Next both exist, which is all the separation check below needs.
+        // Since #285 this always starts on the first exercise; the other
+        // branch is kept so the check doesn't depend on where it starts.
+        if !back.exists {
+            XCTAssertTrue(next.waitForExistence(timeout: 20), "Next exercise should be reachable")
+            next.tap()
+        } else if !next.exists {
+            XCTAssertTrue(finish.waitForExistence(timeout: 5))
+            back.tap()
+        }
+
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "Back should appear once there is a prior exercise")
+        XCTAssertTrue(next.waitForExistence(timeout: 5), "Next exercise should appear once off the last exercise")
+        XCTAssertTrue(warmup.waitForExistence(timeout: 5))
+
+        for button in [back, next] {
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+
+        // Same-row separation since #207 — see
+        // `testBackAndNextExerciseAreSeparated`'s header for why this is
+        // horizontal now rather than row-based.
+        XCTAssertLessThanOrEqual(
+            back.frame.maxX, warmup.frame.minX,
+            "Previous lift should sit entirely left of More"
+        )
+        XCTAssertLessThanOrEqual(
+            warmup.frame.maxX, next.frame.minX,
+            "More should sit entirely left of Next exercise"
+        )
+    }
+
+    /// The measured claim #205 makes: the action bar's minimum height, with
+    /// nothing conditional open (only the plate row can still collapse;
+    /// reps and RPE stopped being conditional when their disclosure was
+    /// replaced with always-visible steppers), stays well under the ~368pt
+    /// #205 measured before that change. Asserted well above the actual
+    /// figure reported in the PR so this stays a real regression guard
+    /// rather than a brittle pixel match — the point is "still small," not
+    /// "exactly this."
+    ///
+    /// Measured from the bar's top to the bottom of its last row of controls,
+    /// not the bar's own frame (#236). The frame carries `.background(.bar)`
+    /// down under the home indicator, so on a Face ID phone it included ~34pt
+    /// of inset the SE doesn't have — iPhone 17 read 361.7pt and failed, while
+    /// taking a smaller share of its screen (41%) than the SE's passing 296.5pt
+    /// does of its own (44%). #205 counted controls, so this does too.
+    func testActionBarMinimumHeightIsReclaimedForSetRows() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        let actionBar = app.otherElements["session.actionBar"]
+        XCTAssertTrue(actionBar.waitForExistence(timeout: 5), "action bar should be reachable by identifier")
+
+        let lastRow = ["session.exercise.previous", "session.more", "session.exercise.next"]
+            .map { app.buttons[$0] }
+            .filter { $0.exists }
+            .map { $0.frame.maxY }
+        let controlsBottom = try XCTUnwrap(lastRow.max(), "the Back / More / Next row should be on screen")
+        let height = controlsBottom - actionBar.frame.minY
+        // Printed for the record (#205 asked for a measured number, not a
+        // font-metrics estimate) — visible in the xcodebuild test log.
+        print("SessionView action bar minimum height: \(height)pt (frame incl. bottom inset: \(actionBar.frame.height)pt)")
+        XCTAssertGreaterThan(height, 0, "the action bar should have a real, non-zero frame")
+        XCTAssertLessThanOrEqual(
+            height, 340,
+            "the action bar should no longer approach the ~368pt #205 measured before this change"
+        )
+    }
+
+    /// #216's last open criterion, measured rather than argued: with the
+    /// plate row open — the one editor in the action bar that still expands,
+    /// now that reps and RPE are always-visible steppers — the lift's name,
+    /// the newest logged set and Log Set must all still be on screen and
+    /// tappable. Opening an editor must not cost the lifter the context the
+    /// edit is about, or the one action it leads to.
+    func testPlateRowKeepsLiftSetAndLogInView() throws {
+        try assertPlateRowKeepsContextInView(arguments: [], sizeName: "default")
+    }
+
+    /// The same measurement at the largest accessibility text size, where the
+    /// action bar becomes its own scroll view capped at 60% of the height.
+    /// The raw value is the short `UICTContentSizeCategoryAccessibilityXXXL` —
+    /// the long spelling is silently ignored — and the test proves the
+    /// argument took by checking reps and RPE stacked, which only happens at
+    /// accessibility sizes.
+    ///
+    /// A weaker claim than the default-size test, on purpose and measured: at
+    /// this size the latest set row alone is ~150pt tall and Log Set ~138pt,
+    /// against a context area of ~180pt, so all three cannot share one screen
+    /// with the plate row open on any iPhone. What this guards is what does
+    /// fit: the lift's name stays on screen, and Log Set stays one scroll of
+    /// the action bar away rather than lost.
+    func testPlateRowKeepsLiftInViewAndLogReachableAtAccessibilityText() throws {
+        try assertPlateRowKeepsContextInView(
+            arguments: [
+                "-UIPreferredContentSizeCategoryName",
+                "UICTContentSizeCategoryAccessibilityXXXL",
+            ],
+            sizeName: "AccessibilityXXXL",
+            expectsStackedSteppers: true,
+            requiresAllOnOneScreen: false
+        )
+    }
+
+    private func assertPlateRowKeepsContextInView(
+        arguments: [String],
+        sizeName: String,
+        expectsStackedSteppers: Bool = false,
+        requiresAllOnOneScreen: Bool = true
+    ) throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(arguments: arguments)
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        XCTAssertTrue(app.buttons["session.microphone"].waitForExistence(timeout: 20),
+                      "the session screen should be up")
+
+        // Only a measured, plate-built lift offers the plate row — on Push
+        // that's Flat Bench, a barbell lift. The session need not open on it
+        // (and at accessibility sizes Previous and Next can sit scrolled out
+        // of the action bar), so jump there through the exercise chooser in
+        // the header rather than walking.
+        // Queried as any element type: the readout collapses its children
+        // into one accessibility element, which XCUI doesn't report as a button.
+        let plates = app.descendants(matching: .any)["session.plates.toggle"]
+        if !plates.waitForExistence(timeout: 2) {
+            let choose = app.buttons["session.exercise.choose"]
+            XCTAssertTrue(choose.waitForExistence(timeout: 5) && choose.isHittable)
+            choose.tap()
+            let flatBench = app.staticTexts["Flat Bench"].firstMatch
+            XCTAssertTrue(flatBench.waitForExistence(timeout: 5),
+                          "Push day should contain a plate-built lift (Flat Bench)")
+            flatBench.tap()
+        }
+        XCTAssertTrue(plates.waitForExistence(timeout: 5), "Flat Bench should offer Adjust plates")
+        let liftName = app.buttons["session.exercise.swap"]
+        XCTAssertTrue(liftName.waitForExistence(timeout: 5))
+        let liftLabel = liftName.label
+
+        // Log one set so there is a latest set to keep in view. Logging also
+        // collapses the plate row by design (#170), so the row is opened
+        // after, not before.
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 5))
+        makeLogSetAvailable(app, logSet)
+        logSet.tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5), "the set should have been logged")
+        // If that set finished the lift, the app offers the next one without
+        // moving; staying is the lifter's choice, and the one this test needs.
+        // Given a moment to appear rather than read once (#285).
+        let stay = app.buttons["session.nextUp.stay"]
+        if wait(for: stay, toMatch: "hittable == true", timeout: 2) { stay.tap() }
+        XCTAssertEqual(liftName.label, liftLabel, "the test should still be on the lift it logged")
+
+        let latestSet = app.buttons["session.set.latest"]
+        XCTAssertTrue(latestSet.waitForExistence(timeout: 5), "the logged set should have a row")
+
+        attachScreenshot("216-before-plates-\(sizeName)")
+        // At accessibility sizes the action bar is its own scroll view and
+        // can sit scrolled past the weight readout; bring it back first.
+        if !plates.isHittable { logSet.swipeDown() }
+        XCTAssertTrue(plates.isHittable, "Adjust plates should be tappable [\(sizeName)]")
+        plates.tap()
+        let plateRow = app.otherElements["session.plates.row"]
+        XCTAssertTrue(plateRow.waitForExistence(timeout: 5), "tapping Adjust plates should open the plate row")
+        // Load a plate, so the row is measured in its taller state — loaded
+        // plates and the plates to add — not only at an empty bar.
+        let addPlate = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Add ' AND label ENDSWITH ' plate'")
+        ).firstMatch
+        XCTAssertTrue(addPlate.waitForExistence(timeout: 5), "the plate row should offer plates to add")
+        if addPlate.isHittable { addPlate.tap() }
+        // Let the transitions settle before reading frames.
+        Thread.sleep(forTimeInterval: 1)
+
+        if expectsStackedSteppers {
+            let reps = app.buttons["session.reps.value"]
+            let rpe = app.descendants(matching: .any)["session.rpe.value"]
+            if reps.exists && rpe.exists {
+                // Stacked rows overlap horizontally; side by side, RPE starts
+                // where reps ends.
+                XCTAssertLessThan(
+                    rpe.frame.minX, reps.frame.maxX,
+                    "reps and RPE stack only at accessibility sizes — side by side means the launch argument didn't take"
+                )
+            }
+        }
+
+        attachScreenshot("216-plates-open-\(sizeName)")
+        let window = app.windows.firstMatch.frame
+        // Printed for the record: #216 asked for the expanded state to be
+        // measured on a device-sized screen, not reasoned about.
+        print("#216 plate row open [\(sizeName)] window=\(window) "
+              + "liftName=\(liftName.frame) latestSet=\(latestSet.frame) "
+              + "plateRow=\(plateRow.frame) logSet=\(logSet.frame) "
+              + "actionBar=\(app.otherElements["session.actionBar"].frame)")
+
+        var mustBeOnScreen = [("lift name", liftName)]
+        if requiresAllOnOneScreen {
+            mustBeOnScreen += [("latest set", latestSet), ("Log Set", logSet)]
+            // Hittable only proves the centre is uncovered. The row has to
+            // clear the action bar entirely, not be clipped by its top edge.
+            let barTop = app.otherElements["session.actionBar"].frame.minY
+            XCTAssertLessThanOrEqual(latestSet.frame.maxY, barTop + 0.5,
+                                     "the latest set should sit wholly above the action bar")
+            XCTAssertLessThanOrEqual(liftName.frame.maxY, barTop + 0.5,
+                                     "the lift name should sit wholly above the action bar")
+        } else {
+            XCTAssertTrue(latestSet.exists, "the latest set should still be in the context, if scrolled")
+            // Dragged on the part of the action bar that is on screen, not on
+            // the plate row: once the readout grew with the text size (#297)
+            // the row sat at the screen's bottom edge, its centre off screen,
+            // and a swipe "on" it scrolled nothing.
+            let bar = app.otherElements["session.actionBar"].frame
+            let visibleTop = max(bar.minY, window.minY)
+            let visibleBottom = min(bar.maxY, window.maxY)
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: window.midX, dy: visibleTop + (visibleBottom - visibleTop) * 0.8))
+            let end = origin.withOffset(CGVector(dx: window.midX, dy: visibleTop + (visibleBottom - visibleTop) * 0.2))
+            var swipes = 0
+            while !logSet.isHittable && swipes < 4 {
+                start.press(forDuration: 0.05, thenDragTo: end)
+                swipes += 1
+            }
+            print("#216 [\(sizeName)] Log Set after \(swipes) action-bar swipe(s): \(logSet.frame)")
+            XCTAssertTrue(logSet.isHittable, "Log Set should be reachable by scrolling the action bar")
+        }
+        for (name, element) in mustBeOnScreen {
+            XCTAssertTrue(element.exists, "\(name) should still exist with the plate row open")
+            XCTAssertFalse(element.frame.isEmpty, "\(name) should have a real frame")
+            XCTAssertTrue(window.contains(element.frame),
+                          "\(name) should be fully on screen with the plate row open (\(element.frame) in \(window))")
+            XCTAssertTrue(element.isHittable,
+                          "\(name) should be tappable with the plate row open, not scrolled or covered away")
+        }
+    }
+
+    /// Kept on a green run too: the screenshot is the evidence #216 asked for.
+    private func attachScreenshot(_ name: String) {
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    /// The Progress tab's region filter, checked for the two things #217 says
+    /// a selected control owes someone: the selected state has to be exposed
+    /// as a trait, and colour must not be the only way to see it.
+    ///
+    /// The non-colour cue is asserted as width rather than by finding the
+    /// checkmark glyph: the glyph is deliberately `accessibilityHidden` (the
+    /// button already carries `.isSelected`, so reading "checkmark" after the
+    /// region name is noise), which means XCUI cannot see it as an element.
+    /// What XCUI can see is that selecting a chip makes it render *more* than
+    /// an unselected one does — a bolder label and a glyph that was not there
+    /// — and that is exactly the property the criterion is about. A chip that
+    /// only changed its fill colour would come back the same width and fail
+    /// here.
+    ///
+    /// Reduce Motion itself is not exercised: there is no XCUI or `simctl`
+    /// API that flips the system preference for a single test run, so the
+    /// animation half of #217 is verified by reading the diff and on the
+    /// phone, not here. Said out loud rather than faked with a test that
+    /// passes either way.
+    func testProgressFilterChipCarriesANonColourSelectedCue() throws {
+        let app = launch()
+
+        // The Progress tab draws nothing at all until something has been
+        // logged, and every test starts from an empty store (#285), so this
+        // one makes its own data.
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["Log Set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20))
+        makeLogSetAvailable(app, logSet)
+        logSet.tap()
+        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5),
+                      "the set should have been logged")
+
+        // Relaunching is how this test gets out of the session and back to
+        // the tab bar, and it also guarantees the Progress tab reads the set
+        // from the store rather than from whatever was in memory.
+        app.terminate()
+        let relaunched = launch(freshState: false)
+        XCTAssertTrue(reachTrainScreen(relaunched))
+
+        let progress = relaunched.tabBars.buttons["Progress"]
+        XCTAssertTrue(progress.waitForExistence(timeout: 5) && progress.isHittable)
+        progress.tap()
+
+        let all = relaunched.buttons["progress.volume.filter.all"]
+        // The first region chip, not a later one: the row scrolls
+        // horizontally, and on the narrowest supported screen anything past
+        // the second chip starts the run off-screen and unhittable.
+        let chest = relaunched.buttons["progress.volume.filter.chest"]
+        XCTAssertTrue(all.waitForExistence(timeout: 15),
+                      "the volume card's filter row should be on the Progress tab")
+        XCTAssertTrue(chest.waitForExistence(timeout: 5))
+
+        // Every chip, not just these two, meets the 44pt floor (#251). The
+        // capsule still draws at 36; the tappable frame around it is what
+        // XCUI measures and what a thumb hits.
+        let chips = relaunched.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "progress.volume.filter.")
+        ).allElementsBoundByIndex
+        XCTAssertFalse(chips.isEmpty)
+        for chip in chips {
+            print("Progress filter chip \(chip.identifier) frame=\(chip.frame)")
+            XCTAssertGreaterThanOrEqual(chip.frame.height, 44,
+                                        "\(chip.identifier) is below the 44pt tap target")
+        }
+
+        XCTAssertTrue(all.isSelected, "All is the filter row's default selection")
+        XCTAssertFalse(chest.isSelected)
+
+        let unselectedWidth = chest.frame.width
+        let selectedWidthOfAll = all.frame.width
+        chest.tap()
+
+        XCTAssertTrue(wait(for: chest, toMatch: "selected == true", timeout: 5),
+                      "tapping a region chip should select it")
+        XCTAssertFalse(all.isSelected, "selection should move, not accumulate")
+
+        // Printed so the measured difference is in the test log rather than
+        // only in an assertion message.
+        print("Progress filter chip widths — chest unselected \(unselectedWidth)pt, "
+              + "selected \(chest.frame.width)pt; all selected \(selectedWidthOfAll)pt, "
+              + "unselected \(all.frame.width)pt")
+        XCTAssertGreaterThan(
+            chest.frame.width, unselectedWidth,
+            "a selected chip must show something an unselected one does not — "
+            + "colour alone is not a cue (#217)"
+        )
+        XCTAssertLessThan(
+            all.frame.width, selectedWidthOfAll,
+            "and the chip that lost the selection must give that cue back"
+        )
+
+        // #217's contrast criterion is a measured number, not an opinion, and
+        // the only honest place to measure it is the rendered pixels. Attached
+        // rather than asserted here: XCUI cannot sample a colour, so the ratio
+        // is computed off this image and recorded in the PR. Kept always, so
+        // the evidence survives a green run rather than only a red one.
+        //
+        // Scrolled first because the filter row sits under the floating tab
+        // bar at rest, and the bar's glass darkens everything behind it — a
+        // sample taken there measures the blend, not the chip.
+        relaunched.swipeUp()
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "progress-filter-selected"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+}

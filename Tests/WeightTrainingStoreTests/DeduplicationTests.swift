@@ -94,6 +94,98 @@ final class DeduplicationTests: XCTestCase {
         XCTAssertEqual(survivor.effortWasReported, true)
     }
 
+    func testDisputedSetsCannotEarnProgressionOrRepeatedMissReductions() throws {
+        let mutations: [(String, (inout SetRecord) -> Void)] = [
+            ("load", { $0.load = 105 }),
+            ("reps", { $0.reps += 1 }),
+            ("RPE", { $0.rpe = .nine }),
+            ("workout", { $0.workoutID = UUID() }),
+            ("plan", { $0.acceptedPlanID = UUID() }),
+            ("effort", { $0.effortWasReported = false }),
+            ("warmup", { $0.isWarmup = true }),
+        ]
+        for reps in [10, 7] {
+            for (name, mutate) in mutations {
+                for reversed in [false, true] {
+                    let db = try TrainingStore.inMemory()
+                    let (exercise, latest, now) = try recommendationHistory(in: db, reps: reps)
+                    var disputed = latest
+                    mutate(&disputed)
+                    // Give both copies the same authority. Arrival order must
+                    // not turn uncertain actuals into a successful workout.
+                    let originals = try db.modelContext.fetch(FetchDescriptor<StoredSetLog>())
+                        .filter { $0.id == latest.id }
+                    originals.forEach { db.modelContext.delete($0) }
+                    let copies = reversed ? [disputed, latest] : [latest, disputed]
+                    copies.forEach { db.modelContext.insert(StoredSetLog($0)) }
+                    try db.saveChanges()
+
+                    let before = try db.allSets()
+                    XCTAssertFalse(db.modelContext.hasChanges, "reads must remain pure")
+                    let canonical = try XCTUnwrap(before.first { $0.id == latest.id })
+                    XCTAssertNil(canonical.workoutID, name)
+                    XCTAssertNil(canonical.acceptedPlanID, name)
+                    let recommendation = try db.recommendation(for: exercise, now: now)
+                    XCTAssertEqual(recommendation.action, .hold, "\(name), reps \(reps)")
+
+                    try db.deduplicate()
+                    try db.deduplicate()
+                    XCTAssertEqual(try db.allSets(), before, name)
+                    XCTAssertEqual(try db.recommendation(for: exercise, now: now), recommendation, name)
+                    XCTAssertEqual(try db.modelContext.fetch(FetchDescriptor<StoredSetLog>())
+                        .filter { $0.id == latest.id }.count, 2,
+                        "retain conflicting originals until a correction can resolve them")
+                }
+            }
+        }
+    }
+
+    func testIdenticalDuplicatePreservesEasyEvidenceAndNewerCorrectionResolvesConflict() throws {
+        let db = try TrainingStore.inMemory()
+        let (exercise, latest, now) = try recommendationHistory(in: db, reps: 10)
+        db.modelContext.insert(StoredSetLog(latest))
+        try db.saveChanges()
+        XCTAssertEqual(try db.recommendation(for: exercise, now: now).action, .addReps)
+        XCTAssertEqual(try db.deduplicate().sets, 1)
+        XCTAssertEqual(try db.recommendation(for: exercise, now: now).action, .addReps)
+
+        var hard = latest
+        hard.rpe = .nine
+        db.modelContext.insert(StoredSetLog(hard))
+        try db.saveChanges()
+        XCTAssertEqual(try db.recommendation(for: exercise, now: now).action, .hold)
+        // A dated correction supplies the ordering absent from tied copies.
+        db.modelContext.insert(StoredSetLog(latest, updatedAt: now))
+        try db.saveChanges()
+        XCTAssertEqual(try db.recommendation(for: exercise, now: now).action, .addReps)
+        XCTAssertEqual(try db.deduplicate().sets, 2)
+        XCTAssertEqual(try db.recommendation(for: exercise, now: now).action, .addReps)
+    }
+
+    private func recommendationHistory(
+        in db: TrainingStore, reps: Int
+    ) throws -> (Exercise, SetRecord, Date) {
+        let exercise = Exercise(name: "Duplicate evidence press", muscles: [.primary(.chest)],
+            equipment: .machineStack, progressionRule: .doubleProgression(range: RepRange(8, 12)))
+        try db.upsert(exercise)
+        let plan = ExercisePlan(exercise: exercise, sets: [.init(load: 100, reps: 10)])
+        let epoch = Date(timeIntervalSince1970: 1_760_011_200)
+        var latest: SetRecord!
+        for day in 0...1 {
+            let start = epoch.addingTimeInterval(Double(day) * 86_400)
+            let workout = UUID()
+            latest = SetRecord(exerciseID: exercise.id, load: 100, reps: reps, rpe: .seven,
+                performedAt: start.addingTimeInterval(60), workoutID: workout,
+                acceptedPlanID: plan.id, effortWasReported: true)
+            db.modelContext.insert(StoredSetLog(latest))
+            db.modelContext.insert(StoredExerciseSession(RecordedExerciseSession(
+                workoutID: workout, exerciseID: exercise.id, startedAt: start, plan: plan,
+                completion: .completed, completedAt: start.addingTimeInterval(120), updatedAt: start)))
+        }
+        try db.saveChanges()
+        return (exercise, latest, epoch.addingTimeInterval(2 * 86_400))
+    }
+
     /// Two genuinely different sets that happen to look alike are not
     /// duplicates — identity is the id, not the values.
     func testTwoIdenticalLookingSetsAreKept() throws {

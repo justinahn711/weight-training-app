@@ -81,9 +81,10 @@ public enum VoiceGrammar {
     }
 
     /// Reps a person actually performs. Beyond this it's a weight or a
-    /// mishearing wearing a rep count's clothes.
+    /// mishearing wearing a rep count's clothes. A half rep is not a count
+    /// either — truncating 5.5 to 5 would invent one (#264).
     private static func plausibleReps(_ value: Double) -> Double? {
-        (1...100).contains(value) ? value : nil
+        (1...100).contains(value) && value == value.rounded() ? value : nil
     }
 
     /// Near enough to the RPE scale to be a mishearing of it.
@@ -97,14 +98,36 @@ public enum VoiceGrammar {
         (4...12).contains(value) ? value : nil
     }
 
+    /// Whether a word is part of a number — used to notice one that was
+    /// heard and then placed nowhere. "oh" is left out: on its own it is the
+    /// interjection, not a zero.
+    private static func isNumberWord(_ word: String) -> Bool {
+        word == "half" || (word != "oh" && SpokenNumber.single(word) != nil)
+    }
+
     // MARK: - Tokenizing
 
+    /// A dot is a decimal point between two digits and punctuation anywhere
+    /// else. Dictation writes "eight and a half" as `8.5`, and splitting on
+    /// every dot kept the 8 and threw the 5 away — RPE 8 auto-committed, and
+    /// a 32.5 kg stack set logged as 32 (#264).
+    private static let punctuationDot = try! NSRegularExpression(
+        pattern: #"(?<![0-9])\.|\.(?![0-9])"#
+    )
+
     private static func tokenize(_ transcript: String) -> [String] {
-        transcript
+        var text = transcript
             .lowercased()
             .replacingOccurrences(of: "×", with: " x ")
             .replacingOccurrences(of: "@", with: " at ")
-            .components(separatedBy: CharacterSet(charactersIn: " ,.-"))
+            // "8½" and "8 1/2" are the numeral spellings of "eight and a half".
+            .replacingOccurrences(of: "½", with: " and a half ")
+            .replacingOccurrences(of: " 1/2", with: " and a half ")
+        text = punctuationDot.stringByReplacingMatches(
+            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " "
+        )
+        return text
+            .components(separatedBy: CharacterSet(charactersIn: " ,-"))
             .filter { !$0.isEmpty }
             .flatMap(splittingUnitSuffix)
     }
@@ -188,7 +211,6 @@ public enum VoiceGrammar {
         /// What the load was said in. Starts as the gym's and is overridden the
         /// moment a unit is spoken.
         var loadUnit = unit
-        var namedUnit = false
 
         // Walk the phrase, letting each marker say which field the *next*
         // number belongs to. Markers come in two shapes and both are used:
@@ -197,18 +219,55 @@ public enum VoiceGrammar {
         var expecting = Field.load
         var pending: [String] = []
 
+        /// Whether a number was heard that ended up in no field (#262).
+        ///
+        /// Range checks below keep a misplaced number *absent* rather than
+        /// invented (#80) — but absent only helps when someone looks. Auto-
+        /// commit doesn't look: the app keeps the form's value for any field
+        /// the parse left empty, so "185 for 0" logged the prescription's reps
+        /// and "one eighty five" heard as "180 5" logged 180. A number that
+        /// went nowhere means the utterance wasn't understood, so it waits
+        /// for a tap on the banner, which still shows what was understood.
+        var droppedANumber = false
+
         func flush(into field: Field) {
             guard !pending.isEmpty else { return }
+            defer { pending = [] }
+
+            let reading = SpokenNumber.read(pending)
+            // A number the reader stopped before: "180 5", "185 for 5 and 8".
+            if let reading, pending[reading.end...].contains(where: isNumberWord) {
+                droppedANumber = true
+            }
+            let heard = reading?.value
+
             switch field {
-            case .load: load = load ?? SpokenNumber.parse(pending)
+            case .load:
+                // Filler before the first marker ("okay for 5") is not a
+                // missing number; a second number for a filled load is.
+                if load == nil { load = heard } else if heard != nil { droppedANumber = true }
             // Range-checked rather than accepted. A number that landed in the
             // wrong field is common — "8 reps at 185" put a weight where an
             // RPE goes — and absent is honest where invented is not. The
             // confirm step (#22) can only save you from what it shows you.
-            case .reps: reps = reps ?? SpokenNumber.parse(pending).flatMap(plausibleReps)
-            case .rpe:  rpe = rpe ?? SpokenNumber.parseWithHalf(pending).flatMap(plausibleRPE)
+            //
+            // A marker whose number is refused or unreadable ("for 0", "for
+            // to") is a dropped number too: the marker says one was said.
+            case .reps:
+                if reps == nil {
+                    reps = heard.flatMap(plausibleReps)
+                    if reps == nil { droppedANumber = true }
+                } else if heard != nil {
+                    droppedANumber = true
+                }
+            case .rpe:
+                if rpe == nil {
+                    rpe = heard.flatMap(plausibleRPE)
+                    if rpe == nil { droppedANumber = true }
+                } else if heard != nil {
+                    droppedANumber = true
+                }
             }
-            pending = []
         }
 
         for word in words {
@@ -216,8 +275,7 @@ public enum VoiceGrammar {
                 // A unit ends the number it follows, and says what it meant.
                 // "reps" is checked first below, so "rep"/"lb" can't collide.
                 if expecting == .load {
-                    loadUnit = spoken
-                    namedUnit = true
+                    if load == nil { loadUnit = spoken }
                     flush(into: .load)
                 }
                 continue
@@ -245,12 +303,26 @@ public enum VoiceGrammar {
         }
         flush(into: expecting)
 
+        // A marker with nothing after it — "185 for" — promised a number
+        // that never arrived.
+        if let last = words.last, repMarkers.contains(last) || rpeMarkers.contains(last) {
+            switch expecting {
+            case .reps: if reps == nil { droppedANumber = true }
+            case .rpe: if rpe == nil { droppedANumber = true }
+            case .load: break
+            }
+        }
+
         guard load != nil || reps != nil || rpe != nil else { return nil }
 
-        // A bare number with no grammar around it is the ambiguous case: it
-        // could be a weight, reps, or a misheard word. Shown, never committed.
-        // Naming the unit *is* grammar, so "sixty kilos" is not bare.
-        let isBare = words.count == 1 && load != nil && !namedUnit
+        // A weight with no reps is the ambiguous case: it could be a weight,
+        // reps, or a misheard word, and even when it plainly is a weight the
+        // set would take its reps from whatever the form had. Shown, never
+        // committed. Decided on what was heard, not how many words it took —
+        // counting words let "one eighty five" auto-commit while "185"
+        // waited (#274). A named unit settles that it's a weight, not that a
+        // set was said, so "sixty kilos" waits too.
+        let isBare = load != nil && reps == nil
 
         return VoiceParse(
             command: .logSet(
@@ -258,7 +330,7 @@ public enum VoiceGrammar {
                 reps: reps.map { Int($0) },
                 rpe: rpe.flatMap { RPE($0) ?? RPE(snapping: $0) }
             ),
-            isConfident: !isBare
+            isConfident: !isBare && !droppedANumber
         )
     }
 }

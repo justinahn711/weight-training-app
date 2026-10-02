@@ -19,11 +19,18 @@ struct ChickenBreastApp: App {
         // Without this the rest alert is discarded whenever the session is on
         // screen. See `NotificationPresenter`.
         NotificationPresenter.install()
+
+        #if DEBUG
+        // Before the store opens or a session can start (#285).
+        UITestLaunchState.clearProcessStateIfResetting()
+        #endif
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                // Dark, always — see `Theme`.
+                .preferredColorScheme(.dark)
         }
     }
 }

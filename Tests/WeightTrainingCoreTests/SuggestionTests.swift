@@ -250,3 +250,72 @@ final class SuggestionEngineTests: XCTestCase {
         }
     }
 }
+
+/// #240's second half: the in-session RPE chips stepped the pending load by
+/// the increment and snapped it to the increment's grid. On a rack without
+/// 2.5 lb plates that proposes 140 after 135 — a load no plates make — and
+/// tapping it puts a weight on the stepper the plate line can't explain.
+final class CoarseRackSuggestionTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_760_000_000)
+
+    private func bench(in gym: GymConfig) -> Exercise {
+        var lift = ExerciseLibrary.all.first { $0.name == "Flat Bench" }!
+        if let loading = lift.loading { lift.loading = gym.applied(to: loading) }
+        lift.increment = gym.applied(to: lift.increment, for: lift.equipment)
+        return lift
+    }
+
+    private func chips(_ lift: Exercise, pending: Load, rpe: Double) -> [Suggestion] {
+        let state = ProgressState(exerciseID: lift.id, targetLoad: pending, targetReps: 5,
+                                  targetRPE: .eight)
+        let logged = [SetRecord(exerciseID: lift.id, load: pending, reps: 5, rpe: RPE(rpe),
+                                performedAt: now)]
+        return SuggestionEngine.suggestions(
+            exercise: lift,
+            prescription: Prescription(exercise: lift, state: state),
+            loggedToday: logged, state: state, history: logged,
+            pendingLoad: pending, pendingReps: 5
+        )
+    }
+
+    private func loadChip(_ chips: [Suggestion]) -> Load? {
+        for chip in chips { if case .load(let load) = chip.kind { return load } }
+        return nil
+    }
+
+    func testAnEasySetOnARackWithoutTwoAndAHalvesProposesTheNextBuildableLoad() throws {
+        let lift = bench(in: GymConfig(unit: .pounds, availablePlates: [45, 35, 25, 10, 5]))
+        let proposed = try XCTUnwrap(loadChip(chips(lift, pending: Load(135), rpe: 6.5)))
+        XCTAssertEqual(proposed, Load(145))
+        XCTAssertTrue(lift.canBuild(proposed))
+    }
+
+    func testAHardSetOnARackWithoutTwoAndAHalvesProposesTheNextBuildableLoadDown() throws {
+        let lift = bench(in: GymConfig(unit: .pounds, availablePlates: [45, 35, 25, 10, 5]))
+        let proposed = try XCTUnwrap(loadChip(chips(lift, pending: Load(145), rpe: 9.5)))
+        XCTAssertEqual(proposed, Load(135))
+        XCTAssertTrue(lift.canBuild(proposed))
+    }
+
+    func testAKilogramRackWithoutFractionalsStepsByWhatItCanBuild() throws {
+        let lift = bench(in: GymConfig(unit: .kilograms, availablePlates: [25, 20, 15, 10, 5, 2.5]))
+        let up = try XCTUnwrap(loadChip(chips(lift, pending: Load(80, .kilograms), rpe: 6.5)))
+        XCTAssertEqual(up, Load(85, .kilograms))
+        let down = try XCTUnwrap(loadChip(chips(lift, pending: Load(80, .kilograms), rpe: 9.5)))
+        XCTAssertEqual(down, Load(75, .kilograms))
+    }
+
+    /// A full rack still steps by the increment.
+    func testAFullRackStillStepsByTheIncrement() {
+        let lift = bench(in: GymConfig(unit: .pounds))
+        XCTAssertEqual(loadChip(chips(lift, pending: Load(135), rpe: 6.5)), Load(140))
+        XCTAssertEqual(loadChip(chips(lift, pending: Load(135), rpe: 9.5)), Load(130))
+    }
+
+    /// The empty bar has nowhere lower to go: no chip, rather than one that
+    /// proposes the weight already on the stepper.
+    func testNoDownChipBelowTheEmptyBar() {
+        let lift = bench(in: GymConfig(unit: .pounds, availablePlates: [45, 35, 25, 10, 5]))
+        XCTAssertNil(loadChip(chips(lift, pending: Load(45), rpe: 9.5)))
+    }
+}

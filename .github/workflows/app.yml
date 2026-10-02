@@ -59,6 +59,64 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+  unit-test:
+    name: App unit tests
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    # Same image as `build` and `ui-test` (see the top-of-file comment).
+    runs-on: macos-26
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      # Not a required check by design (#181): a brand-new job name is never
+      # one of the two exact names branch protection looks for
+      # (`swift test`, `Build for simulator`), and it must not become a third
+      # — a required check that gains a `paths:` filter, or that quietly stops
+      # reporting, is exactly how #159 wedged every PR in the repo. This job
+      # is purely additive: it reports on every PR and can fail loudly without
+      # being able to block a merge on its own.
+      #
+      # ChickenBreastTests is hosted by the ChickenBreast app target (its
+      # TEST_HOST), so it still needs a real simulator rather than running as
+      # a plain `swift test` — but unlike `ui-test` below, nothing in it
+      # drives the UI, so it stays fast. Deliberately no
+      # CODE_SIGNING_ALLOWED=NO, for the same reason as `ui-test`: that flag
+      # strips the Simulated-entitlements section and the hosting app aborts
+      # at launch with the #155/#160 CKException before a single test runs.
+      - name: Choose a simulator the runner actually has
+        id: sim
+        run: |
+          name=$(xcrun simctl list devices available \
+                 | sed -nE 's/^[[:space:]]*(iPhone [^(]*[^([:space:]])[[:space:]]*\(.*/\1/p' \
+                 | head -1)
+          if [ -z "$name" ]; then
+            echo "::error::no available iPhone simulator on this runner"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: $name"
+
+      - name: Run ChickenBreastTests
+        run: |
+          xcodebuild test \
+            -project ChickenBreast/ChickenBreast.xcodeproj \
+            -scheme ChickenBreast \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -only-testing:ChickenBreastTests \
+            -resultBundlePath UnitTestResults.xcresult
+
+      - name: Upload unit test result bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: UnitTestResults.xcresult
+
   ui-test:
     name: UI launch test
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
@@ -66,7 +124,12 @@ jobs:
     # the app target, and it runs the actual simulator, so it needs a matching
     # simulator runtime too.
     runs-on: macos-26
-    timeout-minutes: 20
+    # Was 20. By #249 the suite had grown to 17 tests — SessionFlowUITests
+    # alone runs ~9 minutes on this runner, after ~5 of build — and the job was
+    # cancelled mid-TrainLayoutUITests with every earlier test green. A
+    # timeout that cancels a passing suite reads as red and teaches nobody
+    # anything; 35 leaves room for the next few tests without hiding a hang.
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v4
@@ -118,23 +181,43 @@ jobs:
       - name: Choose a simulator the runner actually has
         id: sim
         run: |
-          name=$(xcrun simctl list devices available \
-                 | sed -nE 's/^[[:space:]]*(iPhone [^(]*[^([:space:]])[[:space:]]*\(.*/\1/p' \
-                 | head -1)
-          if [ -z "$name" ]; then
+          line=$(xcrun simctl list devices available \
+                 | grep -E '^[[:space:]]*iPhone ' | head -1)
+          name=$(printf '%s\n' "$line" \
+                 | sed -nE 's/^[[:space:]]*(iPhone [^(]*[^([:space:]])[[:space:]]*\(.*/\1/p')
+          udid=$(printf '%s\n' "$line" \
+                 | sed -nE 's/.*\(([0-9A-F-]{36})\).*/\1/p')
+          if [ -z "$name" ] || [ -z "$udid" ]; then
             echo "::error::no available iPhone simulator on this runner"
             xcrun simctl list devices available
             exit 1
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
-          echo "Using simulator: $name"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          echo "Using simulator: $name ($udid)"
 
+      # Booted, and waited on until the boot has actually finished, before
+      # xcodebuild starts (#285). Otherwise xcodebuild boots it itself and the
+      # first test launches the app into a simulator that is still settling:
+      # on PR #282 that first launch timed out ("Timed out while launching
+      # application via Xcode"), and on #282 and #286 the first test's audit
+      # stalled (-56) — while every later test in the same run launched and
+      # audited in seconds. By UDID, the one the tests then run on, rather
+      # than by a name two runtimes might share.
+      - name: Boot the simulator before the suite
+        run: |
+          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+
+      # -only-testing scopes this to the UI suite specifically (#181): the
+      # scheme's TestAction now also lists ChickenBreastTests, run separately
+      # and faster by the `unit-test` job above. Without this flag the two
+      # jobs would silently duplicate each other's work on every PR.
       - name: Build and run UI tests (installs and launches the real app)
         run: |
           xcodebuild test \
             -project ChickenBreast/ChickenBreast.xcodeproj \
-            -scheme ChickenBreast \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -scheme ChickenBreastUITests \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -resultBundlePath UITestResults.xcresult
 
       # Not a required check (see PR #155): a UI test suite that boots a

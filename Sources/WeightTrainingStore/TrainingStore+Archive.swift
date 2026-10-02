@@ -50,27 +50,46 @@ extension TrainingStore {
     /// Merges an archive into this store.
     ///
     /// **Merge, not replace.** A restore onto a phone that already has training
-    /// must not silently discard it: rows sharing an id are the same row and
-    /// get overwritten, rows that don't are all real and all survive. Wiping
-    /// first would make "restore the wrong file" unrecoverable, which is a
-    /// strange failure mode for a feature that exists to prevent data loss.
+    /// must not silently discard it. Wiping first would make "restore the
+    /// wrong file" unrecoverable, which is a strange failure mode for a
+    /// feature that exists to prevent data loss.
+    ///
+    /// **What is already here wins (#271).** A restore only adds what the
+    /// phone is missing. A row that already exists with the same id is left
+    /// exactly as it is, because the phone's copy is at least as new as any
+    /// file the lifter can pick: a set corrected after the export (#61), a
+    /// lift renamed, a template edited or a deload applied since would
+    /// otherwise be quietly reverted while the alert says everything here was
+    /// kept. Per kind:
+    ///
+    /// - Sets, lifts, templates: by id. The one exception is a catalogue row
+    ///   still stamped `EditStamp.stock` — seeding put it there and nobody has
+    ///   touched it, so it is nobody's change, and the file's copy of an
+    ///   edited catalogue lift or template comes back over it. That is what a
+    ///   fresh install needs, since seeding runs before restore can.
+    /// - Progress state: by lift. The phone's state wins even when the file
+    ///   saw a later session; it used to win only on recency, which let a
+    ///   file revert a deload applied here without a new session.
+    /// - Bodyweight: by calendar day, a weigh-in's identity.
+    /// - Gym (and the split riding on it): the one row, field group by field
+    ///   group — see `mergeGym`.
+    ///
+    /// Rows restore adds are stamped with when the file was written, not with
+    /// now: they hold what was true then. A lift edited on another device
+    /// after the export carries a later stamp and survives the dedupe below,
+    /// rather than losing to the older copy restored here (#268). Rows it
+    /// leaves alone keep their own stamps.
     ///
     /// Writes are id-aware rather than blind inserts. `deduplicate()` would
     /// collapse a doubled import afterwards regardless, but only after the
     /// duplicates had already been on disk — and on a synced device they would
     /// mirror outward in that window. Cheaper and safer to not create them.
     ///
-    /// The merges land in one `save`, because a restore is one event: a
+    /// Everything lands in one `save`, because a restore is one event: a
     /// per-row commit would leave a half-imported store behind if it failed
     /// partway, and would take minutes on a real history. A failure rolls the
     /// staged changes back rather than leaving them pending for the next write
     /// to commit.
-    ///
-    /// The exception is `upsert(archive.exercises)`, which commits on its own
-    /// before the rest runs — so a failure after it leaves the lifts restored
-    /// and nothing else. That is recoverable by restoring again, which is why
-    /// it is tolerable, but it is not the single atomic write the rest of this
-    /// paragraph describes.
     @discardableResult
     public func restore(
         from archive: TrainingArchive,
@@ -79,44 +98,49 @@ extension TrainingStore {
         try archive.checkReadable()
 
         var report = RestoreReport()
-
-        // Exercises and templates first. A set whose exercise is missing stays
-        // on disk but drops out of history and volume until the lift exists,
-        // so the lift should exist by the time the set lands.
-        try upsert(archive.exercises)
-        report.exercises = archive.exercises.count
+        let stamp = EditStamp.at(archive.exportedAt)
 
         do {
+            // Exercises and templates first. A set whose exercise is missing
+            // stays on disk but drops out of history and volume until the lift
+            // exists, so the lift should exist by the time the set lands.
+            let exercises = try merge(
+                archive.exercises,
+                key: \Exercise.id,
+                storedKey: \StoredExercise.id,
+                stock: { $0.updatedAt == EditStamp.stock ? try? $0.toDomain() : nil },
+                make: { StoredExercise($0, updatedAt: stamp) },
+                update: { $0.update(from: $1); $0.updatedAt = stamp }
+            )
+            report.exercises = exercises.added
+            report.kept += exercises.kept
 
-            report.dayTemplates = try merge(
+            let templates = try merge(
                 archive.dayTemplates,
                 key: \DayTemplate.id,
                 storedKey: \StoredDayTemplate.id,
-                make: StoredDayTemplate.init,
-                update: { $0.update(from: $1) }
+                stock: { $0.updatedAt == EditStamp.stock ? try? $0.toDomain() : nil },
+                make: { StoredDayTemplate($0, updatedAt: stamp) },
+                update: { $0.update(from: $1); $0.updatedAt = stamp }
             )
+            report.dayTemplates = templates.added
+            report.kept += templates.kept
 
-            report.sets = try merge(
+            let sets = try merge(
                 archive.sets,
                 key: \SetRecord.id,
                 storedKey: \StoredSetLog.id,
-                make: StoredSetLog.init,
-                update: {
-                    let knownEffort = $0.effortWasReported
-                    $0.update(from: $1)
-                    if let workoutID = $1.workoutID {
-                        $0.workoutID = workoutID
-                        if let acceptedPlanID = $1.acceptedPlanID {
-                            $0.acceptedPlanID = acceptedPlanID
-                        }
-                    }
-                    // Missing fields identify an older archive. They cannot
-                    // disprove provenance already recorded on this device.
-                    if $1.effortWasReported == nil { $0.effortWasReported = knownEffort }
-                }
+                stock: { _ in nil },
+                make: { StoredSetLog($0, updatedAt: stamp) },
+                update: { _, _ in }
             )
+            report.sets = sets.added
+            report.kept += sets.kept
 
-            report.progressStates = try mergeProgressStates(archive.progressStates)
+            let states = try mergeProgressStates(archive.progressStates)
+            report.progressStates = states.added
+            report.kept += states.kept
+
             let existingSessions = Dictionary(try exerciseSessions().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             for session in archive.exerciseSessions ?? [] {
                 if let existing = existingSessions[session.id] {
@@ -135,19 +159,13 @@ extension TrainingStore {
                 try writeExerciseSession(session)
                 report.exerciseSessions += 1
             }
-            report.bodyweights = try mergeBodyweights(archive.bodyweights, calendar: calendar)
 
-            // The gym the file was written in, written straight to the row rather
-            // than through `saveGymConfig` — that re-racks every lift that follows
-            // the gym, which is exactly what must not happen to lifts this restore
-            // just brought back at their archived values.
+            let weighIns = try mergeBodyweights(archive.bodyweights, calendar: calendar)
+            report.bodyweights = weighIns.added
+            report.kept += weighIns.kept
+
             if let gym = archive.gymConfig {
-                if let existing = try storedGymConfig() {
-                    existing.update(from: gym, at: archive.exportedAt)
-                } else {
-                    modelContext.insert(StoredGymConfig(gym, updatedAt: archive.exportedAt))
-                }
-                report.restoredGym = true
+                report.restoredGym = try mergeGym(gym, exportedAt: archive.exportedAt)
             }
 
             try saveChanges()
@@ -166,56 +184,122 @@ extension TrainingStore {
         return report
     }
 
-    /// Overwrites rows that share an id, inserts the rest.
-    private func merge<Value, Model: PersistentModel, Key: Hashable>(
+    /// Inserts rows this store lacks and leaves the ones it has.
+    ///
+    /// - Parameter stock: the row's value when it is an untouched catalogue
+    ///   seed, nil otherwise. Only such a row is overwritten, and only when the
+    ///   file's copy differs from it — an identical copy is already here.
+    /// - Returns: rows added (or filled in over a stock seed), and rows the
+    ///   file also had that were left as they are.
+    private func merge<Value: Equatable, Model: PersistentModel, Key: Hashable>(
         _ values: [Value],
         key: KeyPath<Value, Key>,
         storedKey: KeyPath<Model, Key>,
+        stock: (Model) -> Value?,
         make: (Value) -> Model,
         update: (Model, Value) -> Void
-    ) throws -> Int {
+    ) throws -> (added: Int, kept: Int) {
         let existing = try modelContext.fetch(FetchDescriptor<Model>())
         var byKey = Dictionary(
             existing.map { ($0[keyPath: storedKey], $0) },
             uniquingKeysWith: { first, _ in first }
         )
 
+        var added = 0, kept = 0
         for value in values {
             let id = value[keyPath: key]
             if let stored = byKey[id] {
-                update(stored, value)
+                if let seeded = stock(stored), seeded != value {
+                    update(stored, value)
+                    added += 1
+                } else {
+                    kept += 1
+                }
             } else {
                 let stored = make(value)
                 modelContext.insert(stored)
                 byKey[id] = stored
+                added += 1
             }
         }
-        return values.count
+        return (added, kept)
     }
 
-    /// Progress state is the one genuinely conflicting entity, so it resolves
-    /// the way `deduplicate()` resolves it: whichever saw the later session
-    /// wins. A backup restored onto a phone that has since trained on must not
-    /// wind that lift's target back to what it was when the file was written.
-    private func mergeProgressStates(_ states: [ProgressState]) throws -> Int {
-        let existing = try modelContext.fetch(FetchDescriptor<StoredProgressState>())
-        var byExercise = Dictionary(
-            existing.map { ($0.exerciseID, $0) },
-            uniquingKeysWith: { first, _ in first }
+    /// One state per lift, and the phone's wins whenever it has one.
+    ///
+    /// This used to resolve on recency the way `deduplicate()` does, with the
+    /// file winning a tie. But a deload applied from the digest after the
+    /// export changes the target without a new session, so it tied — and the
+    /// file wound it back. The phone's state is at least as new as the file.
+    private func mergeProgressStates(_ states: [ProgressState]) throws -> (added: Int, kept: Int) {
+        var here = Set(
+            try modelContext.fetch(FetchDescriptor<StoredProgressState>()).map(\.exerciseID)
         )
-
+        var added = 0, kept = 0
         for state in states {
-            if let stored = byExercise[state.exerciseID] {
-                let here = stored.lastPerformedAt ?? .distantPast
-                let incoming = state.lastPerformedAt ?? .distantPast
-                if here <= incoming { stored.update(from: state) }
+            if here.contains(state.exerciseID) {
+                kept += 1
             } else {
-                let stored = StoredProgressState(state)
-                modelContext.insert(stored)
-                byExercise[state.exerciseID] = stored
+                modelContext.insert(StoredProgressState(state))
+                here.insert(state.exerciseID)
+                added += 1
             }
         }
-        return states.count
+        return (added, kept)
+    }
+
+    /// The gym the file was written in, merged into the one row here.
+    ///
+    /// The row holds three things the lifter chooses separately — the rack
+    /// (unit, plates, bar), the split, and the weekly target — so each is
+    /// settled on its own: **the phone's wins, unless it is still what a fresh
+    /// install starts with.** That exception is the stock-seed one again. A
+    /// fresh install forces a split pick before restore is reachable, and that
+    /// writes a row carrying the standard pound rack nobody chose; keeping it
+    /// would let `reconcileGym()` re-rack a kilogram lifter's restored lifts to
+    /// pounds at the next launch (#67, #73). The split they just picked is a
+    /// choice, and stays.
+    ///
+    /// Known edge: a lifter who switched *to* exactly the standard pound rack
+    /// (or back to a target of three) after the export gets the file's value
+    /// back for that group. Nothing on the row tells that apart from a default.
+    ///
+    /// Written straight to the row rather than through `saveGymConfig`, which
+    /// re-racks every lift that follows the gym — exactly what must not happen
+    /// to lifts this restore just brought back at their archived values.
+    ///
+    /// - Returns: whether anything was taken from the file.
+    private func mergeGym(_ theirs: GymConfig, exportedAt: Date) throws -> Bool {
+        guard let existing = try storedGymConfig(),
+              let mine = try? existing.toDomain() else {
+            // No gym here, or one that can't be read: the file's is the only
+            // readable opinion.
+            if let existing = try storedGymConfig() {
+                existing.update(from: theirs, at: exportedAt)
+            } else {
+                modelContext.insert(StoredGymConfig(theirs, updatedAt: exportedAt))
+            }
+            return true
+        }
+
+        let fresh = GymConfig()
+        var merged = mine
+        if mine.unit == fresh.unit, mine.availablePlates == fresh.availablePlates,
+           mine.barWeight == fresh.barWeight {
+            merged.unit = theirs.unit
+            merged.availablePlates = theirs.availablePlates
+            merged.barWeight = theirs.barWeight
+        }
+        if mine.trainingSplit == nil { merged.trainingSplit = theirs.trainingSplit }
+        if mine.weeklySessionTarget == fresh.weeklySessionTarget {
+            merged.weeklySessionTarget = theirs.weeklySessionTarget
+        }
+
+        guard merged != mine else { return false }
+        // The row now holds this phone's choices too, some made after the
+        // export, so it keeps whichever stamp is later.
+        existing.update(from: merged, at: max(existing.updatedAt, exportedAt))
+        return true
     }
 
     /// One reading per day, matching `record(_:calendar:)`.
@@ -228,7 +312,7 @@ extension TrainingStore {
     private func mergeBodyweights(
         _ readings: [BodyweightReading],
         calendar: Calendar
-    ) throws -> Int {
+    ) throws -> (added: Int, kept: Int) {
         var byDay: [Date: StoredBodyweight] = [:]
 
         for row in try modelContext.fetch(FetchDescriptor<StoredBodyweight>()) {
@@ -243,25 +327,21 @@ extension TrainingStore {
             modelContext.delete(loser)
         }
 
+        var added = 0, kept = 0
         for reading in readings {
             let day = calendar.startOfDay(for: reading.recordedAt)
-            // The archived reading wins, deliberately: a weigh-in carries no
-            // id, so its day *is* its identity, and "rows sharing an id are
-            // the same row and get overwritten" is the rule this whole merge
-            // is built on. `testRestoreKeepsOneWeighInPerDay` pins it.
-            //
-            // Known tension, left as a decision rather than a fix: restoring
-            // an older file therefore replaces a newer weigh-in for that day,
-            // while the restore alert says "anything already logged here was
-            // kept". Either the rule narrows to recency the way
-            // `mergeProgressStates` does, or the sentence narrows to the sets
-            // and lifts it is really about. That is a judgement about the
-            // lifter's data, so it is Justin's.
-            if let existing = byDay[day] { modelContext.delete(existing) }
+            // A weigh-in carries no id, so its day *is* its identity, and the
+            // reading already logged here for that day is this phone's copy
+            // of the row — it wins, as every other row does (#271).
+            if byDay[day] != nil {
+                kept += 1
+                continue
+            }
             let stored = StoredBodyweight(reading)
             modelContext.insert(stored)
             byDay[day] = stored
+            added += 1
         }
-        return readings.count
+        return (added, kept)
     }
 }

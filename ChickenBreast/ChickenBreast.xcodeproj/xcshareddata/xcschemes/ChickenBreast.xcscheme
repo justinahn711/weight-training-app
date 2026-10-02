@@ -11,8 +11,29 @@
                ReferencedContainer = "container:ChickenBreast.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry buildForTesting = "YES" buildForRunning = "NO" buildForProfiling = "NO" buildForArchiving = "NO" buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "DD00000000000000000000A0"
+               BuildableName = "ChickenBreastTests.xctest"
+               BlueprintName = "ChickenBreastTests"
+               ReferencedContainer = "container:ChickenBreast.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
+      <!-- One hosted test target per scheme, deliberately (#197).
+           ChickenBreastUITests launches the app through XCUIApplication while
+           ChickenBreastTests hosts the same bundle id via TEST_HOST. Running
+           both testables in a single `xcodebuild test` raced Xcode's test
+           manager: the hosted unit launch that followed the UI suite hung
+           until xcodebuild gave up, reporting TEST FAILED on a run where every
+           test had passed.
+           Marking one `skipped = "YES"` looks like the smaller fix and is not
+           one — a skipped testable is not a member of the scheme, so
+           `-only-testing:` against it fails outright and CI silently stops
+           running that suite. Separate schemes keep both explicitly runnable
+           and keep Cmd-U meaningful in each. -->
    <TestAction
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
@@ -22,9 +43,9 @@
          <TestableReference skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "CC00000000000000000000A0"
-               BuildableName = "ChickenBreastUITests.xctest"
-               BlueprintName = "ChickenBreastUITests"
+               BlueprintIdentifier = "DD00000000000000000000A0"
+               BuildableName = "ChickenBreastTests.xctest"
+               BlueprintName = "ChickenBreastTests"
                ReferencedContainer = "container:ChickenBreast.xcodeproj">
             </BuildableReference>
          </TestableReference>

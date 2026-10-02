@@ -299,7 +299,10 @@ final class ArchiveTests: XCTestCase {
         XCTAssertEqual(try fresh.bodyweights(), try store.bodyweights())
     }
 
-    /// One reading per day, the same rule `record(_:calendar:)` enforces.
+    /// One reading per day, the same rule `record(_:calendar:)` enforces —
+    /// and the one already here is it (#271). A weigh-in's day is its
+    /// identity, so a reading logged here after the export is this phone's
+    /// newer copy of that row.
     func testRestoreKeepsOneWeighInPerDay() throws {
         try store.record(BodyweightReading(pounds: 178.4, recordedAt: midday()))
         let exported = try store.archive()
@@ -312,7 +315,7 @@ final class ArchiveTests: XCTestCase {
         try other.restore(from: exported)
 
         XCTAssertEqual(try other.bodyweights().count, 1)
-        XCTAssertEqual(try other.bodyweights().first?.pounds, 178.4)
+        XCTAssertEqual(try other.bodyweights().first?.pounds, 999, "the reading already here")
     }
 
     /// Nothing else dedupes bodyweight, so two devices weighing in offline on
@@ -427,6 +430,225 @@ final class ArchiveTests: XCTestCase {
         let report = try fresh.restore(from: archive)
         XCTAssertEqual(report.dayTemplates, 1)
         XCTAssertEqual(try fresh.dayTemplate(kind: .push)?.name, "Push")
+    }
+
+    /// A file exported before #174 has no `"restOverride"` key on an exercise
+    /// at all — this is the actual shape produced by every build up to this
+    /// one, captured directly off `TrainingArchive.encoder` for a dumbbell
+    /// lift with no loading style (both fields are nil, and a nil-valued
+    /// stored property is omitted by synthesized `Encodable` rather than
+    /// written as `null`).
+    ///
+    /// #174's hard-won lesson (from #136's near miss) is that a shape change
+    /// on a domain type that flows straight into `TrainingArchive` — no
+    /// `Stored*` blob in between — has to be proven against the literal old
+    /// file, not just against `Exercise`'s own initialiser defaults, because
+    /// only the real archive-reading path exercises whatever custom decoding
+    /// the type carries. `Exercise` has none — it leans on synthesized
+    /// `Codable`, which is exactly what makes an added `Optional` stored
+    /// property safe: a missing key decodes as `nil` automatically, with no
+    /// custom `init(from:)` required to make it so.
+    func testAPreRestOverrideArchiveStillOpensAndRestores() throws {
+        let json = """
+        {
+          "version": 1,
+          "exportedAt": "2025-01-01T00:00:00Z",
+          "exercises": [
+            {
+              "id": "CB000001-0000-4000-8000-000000000001",
+              "name": "Incline DB Press",
+              "equipment": "dumbbell",
+              "increment": {"pounds": 5, "unit": "pounds"},
+              "muscles": [
+                {"muscle": "chest", "role": "primary"},
+                {"muscle": "frontDelts", "role": "secondary"},
+                {"muscle": "triceps", "role": "secondary"}
+              ],
+              "needsWarmupRamp": false,
+              "progressionRule": {
+                "doubleProgression": {
+                  "range": {"bottom": 8, "top": 12},
+                  "consecutiveTopHitsRequired": 2
+                }
+              }
+            }
+          ],
+          "sets": [],
+          "progressStates": [],
+          "dayTemplates": [],
+          "bodyweights": []
+        }
+        """
+        let archive = try TrainingArchive(json: Data(json.utf8))
+        let lift = try XCTUnwrap(archive.exercises.first)
+
+        XCTAssertNil(lift.restOverride,
+                    "no stored key reads as 'never set', not as zero seconds")
+        XCTAssertTrue(lift.isCompound, "three muscles tagged, so this is a compound")
+        XCTAssertEqual(lift.restTarget, 180,
+                       "an old file's lift keeps resting exactly as it did before #174")
+
+        let fresh = try TrainingStore.inMemory()
+        let report = try fresh.restore(from: archive)
+        XCTAssertEqual(report.exercises, 1)
+        XCTAssertEqual(try fresh.exercise(id: lift.id)?.restTarget, 180)
+    }
+
+    // MARK: - Restore keeps what is already here (#271)
+
+    private var bench: Exercise {
+        ExerciseLibrary.all.first { $0.name == "Flat Bench" }!
+    }
+
+    /// The issue's scenario. A set corrected after the export (#61) and a lift
+    /// renamed after it both survive restoring that export — otherwise the
+    /// misheard "eighty" #61 exists to fix comes back through a feature that
+    /// exists to prevent loss, while the alert says everything here was kept.
+    func testRestoreKeepsACorrectionAndALiftEditMadeAfterTheExport() throws {
+        try store.seedLibraryIfNeeded()
+        let misheard = SetRecord(
+            exerciseID: bench.id, load: Load(185), reps: 80,
+            rpe: RPE(8)!, performedAt: midday()
+        )
+        try store.log(misheard)
+        let backup = try store.archive(exportedAt: midday().addingTimeInterval(3600))
+
+        var fixed = misheard
+        fixed.reps = 8
+        XCTAssertTrue(try store.updateSet(fixed))
+        var renamed = bench
+        renamed.name = "Paused Bench"
+        renamed.restOverride = 240
+        try store.upsert(renamed)
+
+        try store.restore(from: backup)
+
+        XCTAssertEqual(try store.allSets().map(\.reps), [8], "the correction survives")
+        let lift = try XCTUnwrap(try store.exercise(id: bench.id))
+        XCTAssertEqual(lift.name, "Paused Bench", "the rename survives")
+        XCTAssertEqual(lift.restOverride, 240)
+    }
+
+    func testRestoreKeepsATemplateEditedAfterTheExport() throws {
+        try store.seedTemplatesIfNeeded()
+        let backup = try store.archive(exportedAt: midday())
+
+        var push = try XCTUnwrap(try store.dayTemplate(kind: .push))
+        push.slots.removeLast()
+        try store.upsert(push)
+
+        try store.restore(from: backup)
+
+        XCTAssertEqual(try store.dayTemplate(kind: .push), push, "the dropped slot stays dropped")
+    }
+
+    /// A deload applied from the digest after the export changes the target
+    /// without a new session, so the two states tie on `lastPerformedAt`. The
+    /// one already here wins the tie, and wins outright either way.
+    func testRestoreKeepsAProgressStateChangedAfterTheExport() throws {
+        let lift = incline
+        try store.upsert(lift)
+        let before = ProgressState(
+            exerciseID: lift.id, targetLoad: Load(80), lastPerformedAt: midday()
+        )
+        try store.save(before)
+        let backup = try store.archive(exportedAt: midday(1))
+
+        var deload = before
+        deload.targetLoad = Load(70)
+        try store.save(deload)
+
+        try store.restore(from: backup)
+
+        XCTAssertEqual(try store.progressState(forExercise: lift.id)?.targetLoad, Load(70))
+    }
+
+    /// A fresh install seeds the catalogue before anyone can reach restore.
+    /// Those stock rows are nobody's change, so the file's copy of an edited
+    /// catalogue lift or template still comes back over them.
+    func testRestoreOntoAFreshInstallStillBringsBackEditedCatalogueRows() throws {
+        var renamed = bench
+        renamed.name = "Paused Bench"
+        try store.upsert(renamed)
+        try store.seedTemplatesIfNeeded()
+        var push = try XCTUnwrap(try store.dayTemplate(kind: .push))
+        push.slots.removeLast()
+        try store.upsert(push)
+        let backup = try store.archive(exportedAt: midday())
+
+        let fresh = try TrainingStore.inMemory()
+        try fresh.seedLibraryIfNeeded()
+        try fresh.seedTemplatesIfNeeded()
+        try fresh.restore(from: backup)
+
+        XCTAssertEqual(try fresh.exercise(id: bench.id)?.name, "Paused Bench")
+        XCTAssertEqual(try fresh.dayTemplate(kind: .push), push)
+    }
+
+    /// The gym the lifter set here after the export is theirs.
+    func testRestoreKeepsAGymChangedAfterTheExport() throws {
+        try store.saveGymConfig(GymConfig(unit: .pounds, barWeight: Load(35)), at: midday())
+        let backup = try store.archive(exportedAt: midday())
+
+        try store.saveGymConfig(GymConfig(
+            unit: .kilograms,
+            trainingSplit: DayTemplateLibrary.split(.upperLower, startedAt: midday()),
+            weeklySessionTarget: 5
+        ), at: midday(1))
+        let mine = try store.gymConfig()
+
+        let report = try store.restore(from: backup)
+
+        XCTAssertEqual(try store.gymConfig(), mine)
+        XCTAssertFalse(report.restoredGym)
+    }
+
+    /// A fresh install asks for a split before anything else, which writes a
+    /// gym row holding the standard pound rack. That rack is nobody's choice:
+    /// keeping it would re-rack a kilogram lifter's restored lifts to pounds at
+    /// the next launch (#67, #73). The split they just picked is a choice.
+    func testRestoreOntoAFreshInstallTakesTheFilesRackAndKeepsThePickedSplit() throws {
+        let theirs = GymConfig(
+            unit: .kilograms, barWeight: Load(15, .kilograms),
+            trainingSplit: DayTemplateLibrary.split(.pushPullLegs, startedAt: midday(-30)),
+            weeklySessionTarget: 5
+        )
+        try store.saveGymConfig(theirs, at: midday())
+        let backup = try store.archive(exportedAt: midday())
+
+        let fresh = try TrainingStore.inMemory()
+        let picked = DayTemplateLibrary.split(.fullBody, startedAt: midday(2))
+        try fresh.saveGymConfig(GymConfig(trainingSplit: picked), at: midday(2))
+
+        let report = try fresh.restore(from: backup)
+        try fresh.reconcileGym()
+
+        let gym = try fresh.gymConfig()
+        XCTAssertEqual(gym.unit, .kilograms)
+        XCTAssertEqual(gym.availablePlates, theirs.availablePlates)
+        XCTAssertEqual(gym.barWeight, Load(15, .kilograms))
+        XCTAssertEqual(gym.trainingSplit, picked, "the split picked here is kept")
+        XCTAssertEqual(gym.weeklySessionTarget, 5, "a default target is nobody's choice")
+        XCTAssertTrue(report.restoredGym)
+    }
+
+    /// Rows restore adds are counted apart from rows it found already here,
+    /// so the alert can say what happened rather than implying an overwrite.
+    func testTheReportSeparatesWhatWasAddedFromWhatWasKept() throws {
+        try seedHistory()
+        let backup = try store.archive(exportedAt: midday(2))
+
+        let first = try TrainingStore.inMemory()
+        let added = try first.restore(from: backup)
+        XCTAssertEqual(added.sets, 3)
+        XCTAssertEqual(added.exercises, 2)
+        XCTAssertEqual(added.kept, 0)
+
+        let again = try first.restore(from: backup)
+        XCTAssertEqual(again.total, 0, "nothing new the second time")
+        XCTAssertEqual(again.kept, backup.sets.count + backup.exercises.count
+                       + backup.progressStates.count + backup.bodyweights.count)
+        XCTAssertFalse(again.isEmpty, "the file wasn't empty; it was all already here")
     }
 
 }

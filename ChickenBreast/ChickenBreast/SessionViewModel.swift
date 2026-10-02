@@ -19,6 +19,9 @@ import WeightTrainingStore
 final class SessionViewModel {
     private let store: TrainingStore
     private let liveActivity: SessionActivityController
+    /// The "Rest's up" and "Still working out?" alerts. Injected so tests can
+    /// see what was scheduled and cancelled (#261, #263).
+    private let restAlerts: RestAlertScheduling
     private let draftID: UUID
     /// Finish can be tapped twice while navigation animates. Persistent
     /// progression and Live Activity teardown still belong to one explicit
@@ -39,6 +42,17 @@ final class SessionViewModel {
     private var dismissedRecoveryExercises: Set<UUID> = []
     private var recoveryFallbackPlans: [UUID: ExercisePlan] = [:]
 
+    /// The exact decisions saved by the successful Finish. Kept separately
+    /// from the live session so navigation can end without throwing away the
+    /// explanation the progression engine just produced (#184).
+    private(set) var completionSummary: [ProgressionSummaryEntry] = []
+
+    /// Records set today, one per lift, for the finish sheet (task 5).
+    /// Computed at `finish()` from disk, so a set corrected mid-session is
+    /// judged as corrected. Lifts with no previous day are skipped: a first
+    /// outing is a data point, not a record.
+    private(set) var completionRecords: [SessionRecordEntry] = []
+
     /// The weight for the next set, seeded from the target and adjusted with
     /// the stepper. Held here rather than in the view so it survives the view
     /// being rebuilt as the day advances.
@@ -53,7 +67,7 @@ final class SessionViewModel {
 
     /// Pre-selected on the target so the common case — hit the target, log it —
     /// stays a single tap on the done button (#5).
-    private(set) var pendingRPE: RPE
+    var pendingRPE: RPE
     private(set) var pendingRPEWasReported = false
 
     func selectRPE(_ rpe: RPE) {
@@ -65,15 +79,61 @@ final class SessionViewModel {
 
     /// The rest currently running, or nil between exercises. Wall-clock based,
     /// so it needs nothing running to stay correct across a backgrounding (#6).
-    private(set) var rest: RestTimer?
+    ///
+    /// The rest alerts follow this and nothing else (#261, #263): every
+    /// assignment — started, skipped, undone, swapped away, expired, adopted
+    /// from the lock screen — goes through `syncRestAlerts()`, so a new path
+    /// that changes the rest can't forget them the way the swap did.
+    private(set) var rest: RestTimer? {
+        didSet { syncRestAlerts() }
+    }
 
     /// The one set the session UI may offer to undo. This is deliberately not
     /// derived from all history: old sets remain editable in Today, while Undo
     /// is a short-lived acknowledgement of the action that just happened.
+    ///
+    /// Moving to another exercise ends "just happened" even though nothing
+    /// about the set itself changed, so leaving one is also cleared here —
+    /// see `didChangeCurrentExercise()` (#169).
     private(set) var recentlyLoggedSet: SetRecord?
 
-    init(store: TrainingStore, session: Session, draftID: UUID) {
+    /// The lift the session will move to on its own when the running rest
+    /// ends, or nil when nothing is armed. Set by the working set that brings
+    /// today level with last time's count (`justReachedUsualSetCount`), shown
+    /// as the Next-up card for the whole rest so the move is announced rather
+    /// than sprung, and cleared by `Stay`, by any navigation, and by undoing
+    /// the set that armed it.
+    ///
+    /// This is the one exception to `Session`'s "the app never advances on
+    /// its own", and it is bounded by three things: it is opt-out in
+    /// Settings, it is visible for a full rest before it happens, and the
+    /// banner it leaves behind carries a one-tap `Back`.
+    private(set) var pendingAdvance: SessionExercise?
+
+    /// The lift just left by an automatic advance, so the banner can say
+    /// where you came from and offer the way back. Nil once dismissed.
+    private(set) var autoAdvancedFrom: SessionExercise?
+
+    /// The record the most recent set just set, if it set one — what turns
+    /// the logged-set banner gold. Judged against the lift's whole history
+    /// by `PersonalRecords.set`, so a first outing never earns one (#70).
+    /// Cleared with the banner and on leaving the exercise; the badge on the
+    /// row itself lives on in `recordSetIDs`.
+    private(set) var recentRecord: PersonalRecord?
+
+    /// Sets logged this session that set a record, for the row badges.
+    /// Recomputed from history like every record is: undoing or deleting
+    /// the set takes the badge with it.
+    private(set) var recordSetIDs: Set<UUID> = []
+
+    init(
+        store: TrainingStore,
+        session: Session,
+        draftID: UUID,
+        restAlerts: RestAlertScheduling = SystemRestAlerts()
+    ) {
         self.store = store
+        self.restAlerts = restAlerts
         self.session = session
         self.draftID = draftID
         self.liveActivity = SessionActivityController(workoutID: draftID)
@@ -113,7 +173,40 @@ final class SessionViewModel {
 
     // MARK: - Logging
 
+    /// Logs whatever the form currently holds.
+    ///
+    /// `isWarmup: false` is what the primary `Log Set` control and voice's
+    /// `.logSet` both send, and that default is where the ramp gets to lead
+    /// the exercise (#206): if the form is still showing the rung it was
+    /// seeded to (`isOnActiveWarmupRung`), this routes to `logWarmup`
+    /// instead — logging that rung and advancing, rather than crediting a
+    /// warmup as working volume. Nudging the stepper, adding a plate, or
+    /// dialling in the real working weight before tapping already moves the
+    /// form off that rung, so falling through to an ordinary working set
+    /// here needs no separate escape hatch — the app suggested the rung, it
+    /// never got to insist (the trap the issue warns against).
+    ///
+    /// `isWarmup: true` — only `Extra warmup` sends this — skips that check
+    /// entirely and always logs the values on screen as an unplanned
+    /// warmup, ramp or no ramp, exactly as it did before this change.
+    /// Whether the standing values describe a set that can honestly be
+    /// written.
+    ///
+    /// A cold-start lift without a known load opens at `Load.zero`, and a
+    /// single tap used to write "0 lb × 10" into history — where it then
+    /// feeds targets, volume and records. Bodyweight sets store the observed
+    /// total bodyweight too, so a missing weigh-in remains unknown rather than
+    /// becoming a zero-load set.
+    var canLogSet: Bool {
+        current != nil && pendingLoad > .zero
+    }
+
     func logSet(isWarmup: Bool = false) {
+        guard canLogSet else { return }
+        if !isWarmup, isOnActiveWarmupRung, let rung = nextWarmupRung {
+            logWarmup(rung)
+            return
+        }
         // The displayed recommendation becomes the workout's active
         // prescription before the first working set. Keep this guard at the
         // write boundary as well as the screen-entry path: voice and other
@@ -136,8 +229,12 @@ final class SessionViewModel {
         commit(record, startsRest: !isWarmup)
     }
 
-    /// Logs one rung of the warmup ramp exactly as shown, without disturbing
-    /// the working weight already dialled in below.
+    /// Logs one rung of the warmup ramp exactly as shown, then advances the
+    /// form onto whichever rung is next — or the working weight, once this
+    /// was the last one (#206). Ignores whatever is currently dialled in
+    /// rather than reading `pendingLoad`/`pendingReps`: a rung tapped from
+    /// the list is a commitment to the number printed on it, not to
+    /// whatever the stepper happens to hold.
     func logWarmup(_ rung: WarmupSet) {
         guard let current else { return }
         commit(
@@ -150,6 +247,12 @@ final class SessionViewModel {
             ),
             startsRest: false
         )
+        // Reuses the exact seeding logic navigation already relies on
+        // (`seedPendingFromCurrent`) instead of a second copy of "what goes
+        // in the form now" — `current.loggedSets` just grew by one warmup
+        // above, so `nextWarmupRung` below already reflects the rung just
+        // logged as done.
+        seedPendingFromCurrent()
     }
 
     private func commit(_ record: SetRecord, startsRest: Bool) {
@@ -165,35 +268,163 @@ final class SessionViewModel {
                 seedNextPlannedSet()
             }
             liveLogActionID = UUID()
+            // Logging on the lift the session moved to is the "next action"
+            // the moved-on notice waits for; it has done its job.
+            autoAdvancedFrom = nil
+            // Judged against the lift's whole history, earlier today
+            // included. Excluding today was how this read before (#213), to
+            // keep feeling out a new lift across three sets from counting as
+            // three records — but it also meant a 180 logged after today's
+            // 200 still beat last week's 170 and got a gold banner for a set
+            // that was the second best thing done in the last hour. A
+            // celebration that fires on a backoff set teaches you to ignore
+            // the ones that mean something.
+            //
+            // The original worry is still answered, and now by the one rule
+            // rather than by this call site: `PersonalRecords.set` refuses
+            // every record on a lift with nothing before today, so a first
+            // outing's ramp stays silent. Past that, a set has to beat what
+            // the lifter has already done today, which is the only reading of
+            // "record" that survives being checked against the screen above
+            // it. The banner, the finish sheet and the trend marks now all
+            // ask that same question.
+            let history = (try? store.sets(forExercise: record.exerciseID)) ?? []
+            recentRecord = Self.headline(of: PersonalRecords.set(by: record, history: history))
+            if recentRecord != nil { recordSetIDs.insert(record.id) }
+            // Arm the Next-up card on the set that matches last time. Read
+            // back off `session.current` rather than the `current` captured
+            // above, because `session.log` is what just changed the count.
+            // Every working set re-decides it: one more after the match means
+            // the lifter is still on this lift, so a move armed by the set
+            // before must not fire when this set's rest ends (#212).
+            if startsRest {
+                if RestAlertSettings.autoAdvanceEnabled,
+                   session.current?.justReachedUsualSetCount == true,
+                   let next = session.next {
+                    pendingAdvance = next
+                } else {
+                    pendingAdvance = nil
+                }
+            }
             // Log, start resting, and be ready for the next set — one tap does
             // all three (#6). Warmups don't start a rest; ramping is continuous
             // and a countdown there is just noise.
             if startsRest {
-                let timer = RestTimer(
-                    startedAt: record.performedAt,
+                // `beginRest` already publishes the activity; calling it again
+                // below would just be a second, identical push.
+                beginRest(
                     duration: current.exercise.restTarget,
-                    setID: record.id
+                    setID: record.id,
+                    at: record.performedAt
                 )
-                rest = timer
-                // The alert is what makes resting with the phone away possible
-                // (#69); the Live Activity only helps if you're looking.
-                let name = current.exercise.name
-                let next = current.prescription.isColdStart
-                    ? nil
-                    : current.prescription.displayLine(in: GymSettings.shared.unit)
-                Task { await RestNotification.schedule(for: timer, exercise: name, next: next) }
+            } else {
+                publishActivity()
             }
-            publishActivity()
         } catch {
             failure = "Couldn't save that set: \(error.localizedDescription)"
         }
     }
 
+    /// The one place every rest begins, whatever triggered it: logging a set,
+    /// the voice `.startTimer` command, or a deliberate tap when none is
+    /// running (#173's missing control). Both side effects a running rest
+    /// needs — the alert that fires with the phone away (#69), and the
+    /// lock-screen push so a glance shows the same clock the screen does
+    /// (#172) — happen here exactly once. #169 and #172 were both a third
+    /// caller forgetting what the other two remembered; routing every path
+    /// through this one method is what keeps a future caller from doing it
+    /// again.
+    ///
+    /// `setID` is nil unless this rest was started *by* a specific set —
+    /// undoing that set is the only thing allowed to take the rest away with
+    /// it (#8). Voice's `.startTimer` and a manual restart have no set to
+    /// point at; before this, voice fabricated a `UUID()` that named a
+    /// `SetRecord` which never existed. `RestTimer.setID` is optional now so a
+    /// caller with nothing to point at can say so instead of lying.
+    private func beginRest(duration: TimeInterval, setID: UUID?, at now: Date) {
+        // Assigning schedules the alert (`syncRestAlerts`), which is what
+        // makes resting with the phone away possible (#69); the Live Activity
+        // only helps if you're looking.
+        rest = RestTimer(startedAt: now, duration: duration, setID: setID)
+        publishActivity()
+    }
+
+    /// Starts a rest by hand — the missing half of #173. A rest that vanished
+    /// mid-set, was skipped, or never started could previously only be
+    /// replaced by logging a set that wasn't performed, or by speaking to the
+    /// app (voice's `.startTimer`, the only other door into a rest). That's no
+    /// good in the room this issue was reported from: chalk on the hands,
+    /// noise that defeats voice.
+    ///
+    /// Goes through `beginRest` like every other rest, so the duration comes
+    /// from `Exercise.restTarget` (#174) rather than a hardcoded number, and
+    /// this rest gets the same completion alert any other one does — silently
+    /// dropping that would be the same class of omission as #172, just for a
+    /// rest nobody logged a set to start.
+    func startRest() {
+        guard let current else { return }
+        beginRest(duration: current.exercise.restTarget, setID: nil, at: Date())
+    }
+
     /// Dismisses the rest clock without touching the logged set.
     func skipRest() {
         rest = nil
-        RestNotification.cancel()
+        // Skipping the rest that was going to move you on means "I'm ready":
+        // go now rather than leaving a card that promised a move on a rest
+        // that no longer exists.
+        if pendingAdvance != nil {
+            performPendingAdvance()
+            return
+        }
         publishActivity()
+    }
+
+    /// Stops a clock that has counted `RestTimer.maximumOverrun` past its
+    /// target. The set stays logged and the session doesn't move; only the
+    /// clock and its lock-screen face give up, because ten minutes over is a
+    /// phone on a bench rather than a rest anybody is taking. The check-in
+    /// notification scheduled alongside the rest is what asks about it.
+    func expireRestIfNeeded(now: Date = Date()) {
+        guard let rest, rest.hasExpired(at: now) else { return }
+        self.rest = nil
+        publishActivity()
+    }
+
+    /// Called by the rest banner's clock when the countdown reaches zero.
+    /// Moves on if a move was armed for the lift still on screen.
+    func restDidComplete() {
+        guard pendingAdvance != nil else { return }
+        performPendingAdvance()
+    }
+
+    /// `Stay` on the Next-up card: one more set is coming, so keep the screen
+    /// where it is. Nothing re-arms until a later set matches the count
+    /// again, which it can't — equality is exact.
+    func stayOnCurrentExercise() {
+        pendingAdvance = nil
+        publishActivity()
+    }
+
+    /// The way back from an automatic move, for as long as its banner shows.
+    func undoAutoAdvance() {
+        guard let from = autoAdvancedFrom else { return }
+        select(exerciseID: from.id)
+    }
+
+    private func performPendingAdvance() {
+        guard let next = pendingAdvance else { return }
+        let from = current
+        // The clock is deliberately left running. It measures time since the
+        // last set, not time owed to one lift, so moving on doesn't end it —
+        // it keeps counting up on the new lift, on screen and in the Dynamic
+        // Island, until the next set replaces it, Skip ends it, or
+        // `expireRestIfNeeded` gives up at ten minutes past target. A caller
+        // that means "I'm done resting" (Skip, and the Next-up card's Go)
+        // clears it before calling this.
+        select(exerciseID: next.id)
+        // `select` cleared it via `didChangeCurrentExercise`; the notice is
+        // set after, so it survives into the new exercise on purpose.
+        autoAdvancedFrom = from
     }
 
     /// Removes the specifically named, just-logged set from session and disk.
@@ -211,11 +442,14 @@ final class SessionViewModel {
             // that *this* set started is cleared, so undoing an older mistake
             // mid-rest doesn't cancel the rest you're actually taking (#8).
             if rest?.setID == record.id {
+                // A buzz for a set you took back is worse than no buzz at
+                // all; clearing the rest cancels it.
                 rest = nil
-                // A buzz for a set you took back is worse than no buzz at all.
-                RestNotification.cancel()
             }
+            // The set that armed the move is gone, so the move is too.
+            pendingAdvance = nil
             recentlyLoggedSet = nil
+            refreshRecords()
             liveLogActionID = UUID()
             seedNextPlannedSet()
             publishActivity()
@@ -229,6 +463,150 @@ final class SessionViewModel {
     func dismissRecentSetUndo(id: UUID) {
         guard recentlyLoggedSet?.id == id else { return }
         recentlyLoggedSet = nil
+        recentRecord = nil
+    }
+
+    /// Every record set today across the session, judged exactly the way the
+    /// banner judges, and then reduced to one headline per lift: a lift that
+    /// climbed through three sets reports its best rather than all three.
+    ///
+    /// The "nothing before today, nothing to celebrate" guard that used to
+    /// stand here explicitly is gone because `PersonalRecords.set` enforces
+    /// it for everyone now. That is the point of #213 — the finish sheet and
+    /// the banner cannot be made to disagree by editing only one of them.
+    private func recordsSetToday() -> [SessionRecordEntry] {
+        let today = Calendar.current.startOfDay(for: session.startedAt)
+        return session.exercises.compactMap { exercise -> SessionRecordEntry? in
+            let history = (try? store.sets(forExercise: exercise.id)) ?? []
+            guard let record = Self.headline(of: PersonalRecords.recent(in: history, since: today)) else {
+                return nil
+            }
+            return SessionRecordEntry(exercise: exercise.exercise, record: record)
+        }
+    }
+
+    /// Works out every record badge in the session again, from disk.
+    ///
+    /// Records are derived, never stored, so the honest answer to a set
+    /// changing under them is to recompute rather than to patch. Removing the
+    /// edited row's own id — all the delete path used to do — gets the first
+    /// half right and leaves the second half lying: correct today's 200 down
+    /// to 160 and the 180 logged after it, silent at the time because it lost
+    /// to the 200, is now the day's best and has earned the badge (#213).
+    ///
+    /// The banner follows the badges instead of simply being cleared, so an
+    /// edit that leaves the celebrated set a record restates it with the
+    /// corrected numbers. A banner already dismissed stays dismissed:
+    /// `recentRecord` is nil by then and nothing here brings it back.
+    private func refreshRecords() {
+        var badges: Set<UUID> = []
+        for exercise in session.exercises {
+            let history = (try? store.sets(forExercise: exercise.id)) ?? []
+            for set in exercise.workingSets
+            where !PersonalRecords.set(by: set, history: history).isEmpty {
+                badges.insert(set.id)
+            }
+        }
+        recordSetIDs = badges
+
+        if let shown = recentRecord {
+            let history = (try? store.sets(forExercise: shown.set.exerciseID)) ?? []
+            recentRecord = history
+                .first { $0.id == shown.set.id }
+                .flatMap { Self.headline(of: PersonalRecords.set(by: $0, history: history)) }
+        }
+    }
+
+    /// One record to announce when a set sets several. Heaviest is the one
+    /// people train for; an estimated max is a computed figure and comes
+    /// last, named as an estimate wherever it is shown.
+    private static func headline(of records: [PersonalRecord]) -> PersonalRecord? {
+        func rank(_ record: PersonalRecord) -> Int {
+            switch record.kind {
+            case .heaviest: return 0
+            case .reps: return 1
+            case .estimatedMax: return 2
+            }
+        }
+        return records.min { rank($0) < rank($1) }
+    }
+
+    /// The one place the session catches up after History changes durable set
+    /// rows out from under it (#199).
+    ///
+    /// `HistoryView` writes through `TrainingStore.deleteSet`/`deleteSets`
+    /// directly rather than through this view model — Today's screen and
+    /// History's are different tabs, and a session route can stay alive in
+    /// the background of the first while the second edits the same day. Disk
+    /// is authoritative, so this re-reads the draft the same way `finish()`
+    /// and `reconcileLiveActivityActions()` already do, then clears whatever
+    /// in-memory state named a row that no longer exists on either side of
+    /// that read.
+    ///
+    /// Deliberately the *only* place this happens, rather than three separate
+    /// call sites each remembering their own piece: #169, #172 and #173 were
+    /// all the same shape of bug — a caller that changed the session forgot
+    /// what `recentlyLoggedSet` or the rest clock needed to hear about it.
+    /// `didChangeCurrentExercise()` and `beginRest(...)` already exist so
+    /// navigation and resting can't make that mistake again; this is that
+    /// pattern's answer for an edit that arrives from outside the session
+    /// entirely instead of from one of its own actions.
+    ///
+    /// Progression is deliberately not rewound. A target already on screen
+    /// was a coaching decision applied against the sets that existed when the
+    /// set was logged — #194 already replays `ProgressState` from the
+    /// surviving rows inside the delete transaction, and every derived
+    /// statistic (history, volume, e1RM) reads from disk fresh every time it's
+    /// shown. Only the session's own leftover pointers into deleted rows are
+    /// this function's job.
+    func reconcilePersistedSetsAfterHistoryEdit() {
+        do {
+            session = try store.resumeSession(
+                WorkoutDraft(session: session, id: draftID)
+            )
+        } catch {
+            failure = "Couldn't refresh the workout after that correction: \(error.localizedDescription)"
+            return
+        }
+
+        let survivingIDs = Set(session.allLoggedSets.map(\.id))
+
+        if let recent = recentlyLoggedSet, !survivingIDs.contains(recent.id) {
+            recentlyLoggedSet = nil
+        }
+        // Not `formIntersection(survivingIDs)`: dropping the deleted row's
+        // badge is only half of it. Deleting today's 200 promotes the 180
+        // logged after it, which was not a record while the 200 stood, so the
+        // surviving badges have to be worked out again rather than filtered
+        // (#213).
+        refreshRecords()
+
+        // Checked independently of the banner above, not nested inside it:
+        // `dismissRecentSetUndo` clears `recentlyLoggedSet` without touching
+        // the rest that set started, so a rest can still be counting down for
+        // a set whose banner is already gone. Clearing it here goes through
+        // the same assignment `skipRest()` makes, so the alert and the
+        // lock-screen countdown never disagree about whether a rest is still
+        // running (#169, #172).
+        if let setID = rest?.setID, !survivingIDs.contains(setID) {
+            rest = nil
+        }
+
+        // Leaving the workout already took the Live Activity down on
+        // purpose (`leaveSession()`); a correction arriving from a different
+        // tab is not a reason to bring it back.
+        guard !isActivityEnded else { return }
+
+        if liveActivity.currentState() != nil {
+            // Rebuilds `recentlyLoggedSet` and `rest` from whatever the lock
+            // screen last named, cross-referenced against the session just
+            // resumed above — the same check this function just ran, but
+            // also covering an action taken from the lock screen that this
+            // process never saw in memory.
+            reconcileLiveActivityActions()
+        } else {
+            publishActivity()
+        }
     }
 
     /// Corrects an already logged row without disturbing the controls for the
@@ -245,7 +623,13 @@ final class SessionViewModel {
             if recentlyLoggedSet?.id == record.id {
                 recentlyLoggedSet = record
             }
-            refreshPlanContext()
+            _ = refreshPlanContext()
+            // A correction is a history edit like any other, so the records
+            // come back off disk rather than being left as they were. Editing
+            // the set that holds the badge is the obvious case; the one that
+            // used to be wrong is the set logged *after* it, which becomes a
+            // record the moment the row above it stops being one (#213).
+            refreshRecords()
             publishActivity()
             return true
         } catch {
@@ -355,6 +739,27 @@ final class SessionViewModel {
         setPendingReps(max(1, pendingReps + delta))
     }
 
+    /// Moves RPE one step through `RPE.sessionChips`, clamped at the ends —
+    /// the inline stepper's answer to what the old chip row offered by
+    /// tapping a specific value directly. Same set, same order, one tap
+    /// moves by one step instead of naming the destination.
+    ///
+    /// `pendingRPE` can start on 6.5, which `sessionChips` omits (voice
+    /// parsing and a stored `ProgressState` both reach the full
+    /// `RPE.allowedValues` grid). Falls back to the nearest chip at or below
+    /// the current value so a step from an off-grid start still lands
+    /// somewhere sensible rather than doing nothing.
+    func adjustRPE(by steps: Int) {
+        let chips = RPE.sessionChips
+        guard !chips.isEmpty else { return }
+        let index = chips.firstIndex(of: pendingRPE)
+            ?? chips.lastIndex(where: { $0 <= pendingRPE })
+            ?? 0
+        let newIndex = min(max(0, index + steps), chips.count - 1)
+        pendingRPE = chips[newIndex]
+        pendingRPEWasReported = true
+    }
+
     /// Selects an exact positive count for the visible exercise.
     func setPendingReps(_ reps: Int) {
         guard let exerciseID = current?.id, reps > 0 else { return }
@@ -378,20 +783,43 @@ final class SessionViewModel {
 
     func advance() {
         session.advance()
-        prepareCurrentExercise()
+        didChangeCurrentExercise()
         saveDraft()
     }
 
     func goBack() {
         session.goBack()
-        prepareCurrentExercise()
+        didChangeCurrentExercise()
         saveDraft()
     }
 
     func select(exerciseID: UUID) {
         session.select(exerciseID: exerciseID)
-        prepareCurrentExercise()
+        didChangeCurrentExercise()
         saveDraft()
+    }
+
+    /// The one place every path that changes which exercise is on screen
+    /// routes through, so the two things that must never survive that change
+    /// can't be forgotten by whichever navigation method gets added next.
+    ///
+    /// `advance()`, `goBack()` and `select(exerciseID:)` used to each re-seed
+    /// the pending values and stop there. `recentlyLoggedSet` stayed set to a
+    /// set that belonged to the exercise just left, so its banner survived
+    /// into the next exercise, and tapping it could delete a set from a lift
+    /// already finished (#169). The same three methods also never told the
+    /// lock screen anything had changed, so it kept showing the previous
+    /// exercise, target and set count (#172) — the same missed spot with a
+    /// different symptom. Routing both through the one call every navigation
+    /// method already makes is what keeps a third one from reintroducing
+    /// either bug.
+    private func didChangeCurrentExercise() {
+        recentlyLoggedSet = nil
+        recentRecord = nil
+        pendingAdvance = nil
+        autoAdvancedFrom = nil
+        prepareCurrentExercise()
+        publishActivity()
     }
 
     /// Re-centres the input on the new exercise's target, using the last set
@@ -400,6 +828,25 @@ final class SessionViewModel {
     private func seedPendingFromCurrent() {
         guard let current else { return }
         let savedPendingReps = pendingRepsByExercise[current.id]
+
+        // A ramp still in progress leads the exercise (#206): the form seeds
+        // onto whichever rung nobody has logged yet, instead of the working
+        // weight, so the first thing on the buttons at a plate-built lift is
+        // the warmup that's actually next. `nextWarmupRung` is nil — and
+        // this branch is skipped — for a lift with no ramp at all, one
+        // that's been fully logged, one whose only working set already
+        // ended it (`warmupRamp` checks `workingSets.isEmpty`), and one
+        // that's been skipped (`clearWarmupRamp`), so a lift that never had
+        // a ramp keeps behaving exactly as it did before this change.
+        if let rung = nextWarmupRung {
+            pendingLoad = rung.load
+            pendingReps = rung.reps
+            pendingRPE = current.prescription.rpe
+            pendingRPEWasReported = false
+            isWarmupRampExpanded = current.id == session.exercises.first?.id
+            return
+        }
+
         if let lastToday = current.loggedSets.last(where: { !$0.isWarmup }) {
             pendingLoad = lastToday.load
         } else {
@@ -450,6 +897,62 @@ final class SessionViewModel {
     /// than tapping. Anything uncertain never starts the clock at all.
     static let autoCommitDelay: TimeInterval = 3
 
+    /// The load a spoken adjustment is measured from, for the utterance in
+    /// progress (#266).
+    ///
+    /// The recogniser reports partial transcripts, and each prefix of one
+    /// phrase can parse to a different adjustment — "drop 20", then "drop 25".
+    /// Applying each to whatever is dialled in stacked them (-45). Instead the
+    /// first adjustment of an utterance captures the load it started from, and
+    /// every later partial replaces the earlier one against that base.
+    ///
+    /// Final results alone would not do: stopping the microphone by hand
+    /// cancels the task, and a cancelled task never delivers a final result.
+    private struct VoiceAdjustment {
+        let exerciseID: UUID
+        let base: Load
+        /// What voice last set, so an edit by hand is recognisable.
+        let applied: Load
+    }
+
+    private var voiceAdjustment: VoiceAdjustment?
+
+    /// Set once the lifter has changed the weight by hand mid-utterance, so the
+    /// rest of that utterance's partials leave their edit alone.
+    private var voiceAdjustmentOverridden = false
+
+    /// Marks the start of a new utterance: the next spoken adjustment is a new
+    /// decision, measured from whatever is dialled in at that moment.
+    func beginVoiceUtterance() {
+        voiceAdjustment = nil
+        voiceAdjustmentOverridden = false
+    }
+
+    private func applyVoiceAdjustment(_ delta: Load, to current: SessionExercise) {
+        guard !voiceAdjustmentOverridden else { return }
+
+        let base: Load
+        if let adjustment = voiceAdjustment, adjustment.exerciseID == current.id {
+            // Something other than voice moved the weight since the last
+            // partial — the lifter's tap. Theirs wins for the rest of this
+            // utterance, rather than being re-based over or stacked on.
+            guard pendingLoad == adjustment.applied else {
+                voiceAdjustmentOverridden = true
+                voiceAdjustment = nil
+                return
+            }
+            base = adjustment.base
+        } else {
+            base = pendingLoad
+        }
+
+        let exercise = current.exercise
+        let target = max(exercise.minimumLoad, Load(base.pounds + delta.pounds))
+        let landed = exercise.nearestAchievable(target)
+        pendingLoad = landed
+        voiceAdjustment = VoiceAdjustment(exerciseID: current.id, base: base, applied: landed)
+    }
+
     /// Applies a heard command.
     ///
     /// Set-shaped commands fill the form and wait. Everything else — next,
@@ -462,10 +965,17 @@ final class SessionViewModel {
         case .nextExercise:
             advance()
         case .startTimer(let seconds):
-            rest = RestTimer(startedAt: now, duration: seconds, setID: UUID())
+            // Used to build its own `RestTimer` inline — setting `rest` and
+            // calling `publishActivity()` but never `RestNotification`, which
+            // meant a rest started by voice alone never got the completion
+            // alert (the same class of omission as #172, just missed here
+            // instead). Routing through `beginRest` fixes that and closes off
+            // this becoming a third independent way to start a rest (#173).
+            beginRest(duration: seconds, setID: nil, at: now)
         case .adjustLoad(let delta):
-            pendingLoad = max(current.exercise.minimumLoad,
-                              Load(pendingLoad.pounds + delta.pounds))
+            // Partials of one utterance replace each other, and the result
+            // lands on the equipment's grid like any other proposal (#266).
+            applyVoiceAdjustment(delta, to: current)
         case .repeatLast:
             if let last = current.loggedSets.last(where: { !$0.isWarmup }) {
                 pendingLoad = last.load
@@ -535,6 +1045,25 @@ final class SessionViewModel {
             for entry in applied {
                 loadedStates[entry.exercise.id] = entry.result.state
             }
+            // The return type is spelled out because the closure returns `nil`
+            // on one path and a *failable* initialiser's result on the other,
+            // which leaves Swift unable to infer the element (#184).
+            let summary: [ProgressionSummaryEntry] = applied.compactMap { entry in
+                guard let performed = session.exercises
+                    .first(where: { $0.id == entry.exercise.id })?.loggedSets else {
+                    return nil
+                }
+                return ProgressionSummaryEntry(
+                    exercise: entry.exercise,
+                    performed: performed,
+                    result: entry.result
+                )
+            }
+            // If progression saved but clearing the draft failed, the retry is
+            // intentionally idempotent and `applied` is empty. Keep the exact
+            // first result rather than losing its explanation on that retry.
+            if !summary.isEmpty { completionSummary = summary }
+            completionRecords = recordsSetToday()
             // Clear after progression. If this save fails, retrying is safe:
             // progression is idempotent for the session day, while retaining
             // the draft keeps a failed Finish recoverable.
@@ -615,20 +1144,33 @@ final class SessionViewModel {
             }
             recentlyLoggedSet = activitySet
 
-            if let record = activitySet, let endsAt = activityState.restEndsAt {
-                rest = RestTimer(
-                    startedAt: record.performedAt,
-                    duration: max(0, endsAt.timeIntervalSince(record.performedAt)),
-                    setID: record.id
+            // `restSetID` (#200) is validated against the session just
+            // resumed above the same way `activitySet` is: a History delete
+            // writes through the store directly and never touches
+            // ActivityKit (#199), so the activity's own copy can still name
+            // a set that's already gone. Without this, `RestTimer.reconciled`
+            // would resurrect a rest for a set `reconcilePersistedSetsAfter
+            // HistoryEdit` just cleared, purely because the Live Activity
+            // hadn't caught up. A hand-started rest has no `restSetID` to
+            // check and is unaffected.
+            let restSetStillExists = activityState.restSetID == nil
+                || session.allLoggedSets.contains { $0.id == activityState.restSetID }
+            rest = restSetStillExists
+                ? RestTimer.reconciled(
+                    restEndsAt: activityState.restEndsAt,
+                    restStartedAt: activityState.restStartedAt,
+                    restSetID: activityState.restSetID,
+                    loggedSet: activitySet.map { (id: $0.id, performedAt: $0.performedAt) }
                 )
-            } else {
-                rest = nil
-                RestNotification.cancel()
-            }
+                : nil
             // A lock-screen log can advance a plan whose sets have different
             // rep targets. Resume the next persisted set before republishing,
             // or foregrounding would overwrite the activity with stale input.
             seedNextPlannedSet()
+            // The assignment above rescheduled or cancelled the alerts to
+            // match — an adopted rest gets its pair back, which is how a set
+            // logged from the lock screen keeps its alert once the app is
+            // open again (#261).
             publishActivity()
         } catch {
             failure = "Couldn't refresh lock-screen changes: \(error.localizedDescription)"
@@ -670,10 +1212,47 @@ final class SessionViewModel {
             targetRPE: pendingRPE.value,
             logActionID: liveLogActionID,
             lastLoggedSetID: recentlyLoggedSet?.id,
-            restEndsAt: rest?.endsAt
+            restEndsAt: rest?.endsAt,
+            // Always sent together (#200): `reconcileLiveActivityActions`
+            // treats a nil `restStartedAt` as proof an activity predates
+            // this fix, so a build that has it must never publish one field
+            // without the other.
+            restStartedAt: rest?.startedAt,
+            restSetID: rest?.setID
         )
+        let wasEnded = isActivityEnded
         isActivityEnded = false
         liveActivity.start(dayKind: session.kind.rawValue.capitalized, state: state)
+        // Coming back from Leave (#263). The alerts went down with the lock
+        // screen and come back with it, for the rest the model kept.
+        if wasEnded { syncRestAlerts() }
+    }
+
+    /// Makes the pending rest alerts match `rest`: the pair for it while a
+    /// rest is running and the session's lock-screen surface is up, nothing
+    /// otherwise. The one place the view model decides them (#261, #263).
+    ///
+    /// Leave takes them down and Resume puts them back, rather than leaving
+    /// them pending across Leave. They belong with the Live Activity: Leave
+    /// already ends that on purpose, and a process that dies after Leave
+    /// would otherwise buzz for a rest nothing on the phone shows any more —
+    /// a relaunch rebuilds from the draft, which never carries the rest.
+    ///
+    /// Named by the lift on screen, which is what the lock screen shows too.
+    /// Rescheduling an unchanged rest replaces the pair with an identical
+    /// one, which is harmless.
+    private func syncRestAlerts() {
+        guard !isActivityEnded, let rest, let current else {
+            restAlerts.cancel()
+            return
+        }
+        restAlerts.schedule(
+            for: rest,
+            exercise: current.exercise.name,
+            next: current.prescription.isColdStart
+                ? nil
+                : current.prescription.displayLine(in: GymSettings.shared.unit)
+        )
     }
 
     private func activityTargetLine(for exercise: SessionExercise) -> String {
@@ -697,8 +1276,9 @@ final class SessionViewModel {
         liveActivity.end()
         // Rest belongs to a session in progress. Leaving ends the session
         // route, so a pending alert would arrive for training that's already
-        // finished.
-        RestNotification.cancel()
+        // finished. `isActivityEnded` is what makes this cancel; Resume's
+        // `publishActivity()` reschedules if the rest is still running.
+        syncRestAlerts()
     }
 
     /// Corrects what the app assumes about this machine (#20, #39).
@@ -725,12 +1305,17 @@ final class SessionViewModel {
     func updateConfiguration(
         of exercise: Exercise,
         increment: LoadIncrement,
-        loading: LoadingStyle?
+        loading: LoadingStyle?,
+        restOverride: TimeInterval?
     ) {
         do {
             var corrected = exercise
             corrected.increment = increment
             corrected.loading = loading
+            // Nil means "use the compound/isolation default", which is why it
+            // is assigned rather than only set when present: switching the
+            // override off has to be able to clear it (#174).
+            corrected.restOverride = restOverride
             try store.upsert(corrected)
 
             // The session's copy only needs rebuilding if this is still the
@@ -748,8 +1333,17 @@ final class SessionViewModel {
             // Not `replaceCurrent`: that is the swap path and no-ops when the
             // replacement is the same lift, which a reconfiguration always is.
             session.reconfigureCurrent(with: rebuilt)
-            seedPendingFromCurrent()
+            // Refresh suggestions first because it also routes through the
+            // shared preparation boundary. That boundary restores an exact
+            // recorded bodyweight after pending controls are reset.
             loadSuggestionContext()
+            // Not a navigation change — this is still the exercise the banner
+            // belongs to, so `recentlyLoggedSet` is left alone rather than
+            // routed through `didChangeCurrentExercise()`. The lock screen is
+            // still told, though: it's cheap, and it keeps every mutation of
+            // what's on screen in the same habit rather than trusting each one
+            // to remember on its own (#172).
+            publishActivity()
         } catch {
             failure = "Couldn't save that setting: \(error.localizedDescription)"
         }
@@ -805,16 +1399,63 @@ final class SessionViewModel {
             // to reset. Swapping one the day has already moved past changes the
             // day, not what is in front of you.
             guard wasVisible else { return }
-            seedPendingFromCurrent()
-            // The old lift's advice has nothing to say about this one. The
-            // ramp disclosure is not reset here (#157) — `seedPendingFromCurrent`
+            // Cleared before `didChangeCurrentExercise` publishes, not after:
+            // the old lift's rest doesn't belong to the one replacing it, and
+            // the lock screen should never show a countdown ticking against an
+            // exercise that isn't running it anymore. Its alerts go with it
+            // (#263) — the assignment cancels them.
+            rest = nil
+            // A swap onto the visible slot is a different exercise arriving
+            // where the old one was — the same shape as advancing to one, so
+            // it gets the same treatment: the old lift's undo banner and
+            // lock-screen state don't belong to the new lift either (#169,
+            // #172). The ramp disclosure is not reset here (#157) —
+            // `seedPendingFromCurrent`, called from `didChangeCurrentExercise`,
             // already recomputed it for whichever exercise now occupies this
             // slot, and overriding that unconditionally to collapsed would
             // undefault an expanded ramp every time the *first* slot's lift
             // was swapped.
-            rest = nil
+            didChangeCurrentExercise()
         } catch {
             failure = "Couldn't swap that exercise: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Adding (#175)
+
+    /// Exercises not already in the day, for the add-exercise sheet's search.
+    ///
+    /// Filters out what's already in the session rather than leaving the
+    /// sheet to offer a duplicate and rely on `Session.addExercise`'s guard to
+    /// quietly no-op it — a row that can only be tapped into nothing is worse
+    /// than a row that isn't there.
+    func addableExercises(_ query: String) -> [Exercise] {
+        let existing = Set(session.exercises.map(\.id))
+        let candidates = allExercises.filter { !existing.contains($0.id) }
+        return ExerciseSearch.search(query, in: candidates)
+    }
+
+    /// Adds a lift to the running day — the rack freed up, or a lift felt bad
+    /// and wants an accessory after it.
+    ///
+    /// Rebuilt through the store exactly like a swap: the new row needs its
+    /// own target and its own history, not a blank one, and today's sets
+    /// logged against it earlier in the day (from a previous visit, or a
+    /// resumed draft) have to be picked up rather than started over.
+    ///
+    /// Not routed through `didChangeCurrentExercise()`. That call exists for
+    /// paths that change *which* exercise is on screen (#169, #172); adding
+    /// somewhere else in the list — even "next" — never moves `current`, so
+    /// there is nothing about what the lock screen shows that changed. The
+    /// draft still has to be told, so a relaunch or a background/resume finds
+    /// the addition (#132).
+    func addExercise(_ exercise: Exercise, placement: Session.ExercisePlacement) {
+        do {
+            let row = try store.sessionExercise(for: exercise, slot: nil, startedAt: session.startedAt)
+            session.addExercise(row, placement: placement)
+            saveDraft()
+        } catch {
+            failure = "Couldn't add that exercise: \(error.localizedDescription)"
         }
     }
 
@@ -913,7 +1554,23 @@ final class SessionViewModel {
 
     var canPlanCurrentExercise: Bool {
         guard let current else { return false }
-        return current.exercise.supportsPlannedProgression && current.workingSets.isEmpty
+        guard current.exercise.supportsPlannedProgression,
+              current.workingSets.isEmpty else { return false }
+        return planUnavailableReason == nil
+    }
+
+    /// Explains why the planner cannot create an honest first prescription.
+    /// Bodyweight plans store total load, so an absent weigh-in cannot be
+    /// replaced with an equipment minimum or a zero-load target.
+    var planUnavailableReason: String? {
+        guard let current,
+              current.exercise.supportsPlannedProgression,
+              current.workingSets.isEmpty,
+              current.acceptedPlan == nil,
+              current.exercise.isBodyweight,
+              current.recommendation?.sets.isEmpty != false,
+              pendingLoad <= .zero else { return nil }
+        return "Add a bodyweight reading in Health, then return to this exercise to review its set plan."
     }
 
     /// The sheet pins the exercise and starting proposal so voice navigation
@@ -1090,7 +1747,17 @@ final class SessionViewModel {
                 startedAt: session.startedAt
             )
             guard refreshPlanContext() else { return false }
-            if seedControls { seedNextPlannedSet() }
+            if seedControls {
+                // Main's warmup flow still leads the exercise after an
+                // automatic recommendation becomes active. Re-seeding from
+                // the rebuilt exercise selects the next ramp rung when one
+                // exists and otherwise selects the next planned working set.
+                seedPendingFromCurrent()
+                // A cold-start bodyweight lift has no equipment minimum to
+                // recover from, so restore the captured exact weigh-in after
+                // any re-seed (#15d3247).
+                seedBodyweightIfNeeded()
+            }
             return true
         } catch {
             failure = "Couldn't start this recommendation: \(error.localizedDescription)"
@@ -1168,24 +1835,84 @@ final class SessionViewModel {
         )
     }
 
-    /// One tap to clear the block, per #15.
+    /// The rung the form should be leading with right now — nil once the
+    /// ramp is exhausted, was skipped, or never applied to this lift (#206).
+    ///
+    /// A thin wrapper over `WarmupRamp.nextRung`, which does the actual
+    /// work: comparing `warmupRamp` (regenerated fresh, never stored) against
+    /// today's already-logged warmup loads. `SessionView` reads this to
+    /// decide what the primary `Log Set` control is about to do — see
+    /// `logSet(isWarmup:)` — and can use it to label that control, e.g. "Log
+    /// warmup, 135 lb × 4" instead of a generic "Log Set", while a rung is
+    /// active.
+    var nextWarmupRung: WarmupSet? {
+        guard let current else { return nil }
+        let loggedToday = Set(current.loggedSets.filter(\.isWarmup).map(\.load))
+        return WarmupRamp.nextRung(in: warmupRamp, loggedWarmupLoads: loggedToday)
+    }
+
+    /// True while the form is still showing the rung it was seeded to.
+    ///
+    /// The one signal `logSet(isWarmup: false)` uses to decide between
+    /// logging the active rung and logging an ordinary working set (#206).
+    /// Matches on load *and* reps rather than load alone: a lifter who has
+    /// changed the rep count while the weight still reads the rung's number
+    /// has already started deciding this set for themselves, and the app
+    /// suggests, it doesn't get the last word.
+    var isOnActiveWarmupRung: Bool {
+        guard let rung = nextWarmupRung else { return false }
+        return pendingLoad == rung.load && pendingReps == rung.reps
+    }
+
+    /// Skips the ramp entirely and jumps straight to the working weight —
+    /// the one control #206 asks for. Reuses #15's per-exercise, per-session
+    /// dismissal (`clearedRamps`) rather than adding a second, differently-
+    /// scoped flag: see "Decisions the owner should confirm" in the PR for
+    /// why that scope is the right one for a skip too.
+    ///
+    /// The dismissal alone used to be enough, because tapping it only ever
+    /// hid a *list* the stepper below was never wired to. Now that the form
+    /// leads with the ramp, hiding the list without moving the numbers would
+    /// leave the stepper reading a warmup weight under a control that just
+    /// said "skip" — so this also re-seeds, which lands on the working
+    /// weight because `clearedRamps` already makes `nextWarmupRung` nil by
+    /// the time `seedPendingFromCurrent` looks.
     func clearWarmupRamp() {
         guard let current else { return }
         clearedRamps.insert(current.id)
         isWarmupRampExpanded = false
+        seedPendingFromCurrent()
     }
 
-    /// The rep numbers offered on the row, centred on the target.
+    /// The rep numbers offered on the row: a fixed 1...20, the same for every
+    /// exercise and every set.
     ///
-    /// The window is fixed to the target rather than following the selection,
-    /// which would slide the row out from under a finger already reaching for
-    /// it. It runs well past the top of the range so a genuinely good set never
-    /// has to be rounded down to fit the UI.
-    var repChoices: [Int] {
-        guard let target = current?.prescription.reps else { return Array(1...20) }
-        let lowest = max(1, target - 5)
-        return Array(lowest...(target + 8))
-    }
+    /// #171 is a deliberate reversal of the previous design, not a constant
+    /// tweak. The row used to be a window centred on the target
+    /// (`target-5...target+8`), and the reasoning for that was sound on its
+    /// own: it kept the likely answer under the thumb and ran past the target
+    /// so a good set was never rounded down. But the same window is what made
+    /// it unreadable. A 13-rep target produced 8...21 — no 1, and a ceiling
+    /// that corresponds to nothing a lifter would name — and a Row programmed
+    /// `RepRange(8, 12)` showed a *lowest* chip of 6, which reads as "go
+    /// lower," not as a neutral count. Widening the window doesn't fix this:
+    /// the same number still moves between exercises, and the lowest chip
+    /// still isn't 1 for most targets.
+    ///
+    /// A fixed row costs one thing: an exercise whose usual count sits above
+    /// 20 (myo-reps, drop sets) never sees its number on the row. That case
+    /// already had to reach for the #131 `Other` control before this change —
+    /// it's the intended escape hatch, not a bug to route around — and it's a
+    /// smaller cost than a strength lift missing 1, which is not an edge case
+    /// but a top single or a failed set's rep count, and was reachable only
+    /// through that same control before this fix.
+    ///
+    /// In exchange, the row is now genuinely fixed: the same numbers sit in
+    /// the same places every set, so a thumb that's learned where "8" lives
+    /// doesn't have to look, and nothing about the target or the current
+    /// selection ever moves it — which was already the reason it was pinned
+    /// to the target rather than the selection, just not carried far enough.
+    var repChoices: [Int] { Array(1...20) }
 
     /// The fixed quick row has no selected chip when the actual count is an
     /// exception. The secondary control uses this to show that exact value.
@@ -1194,4 +1921,11 @@ final class SessionViewModel {
     }
 
     func dismissFailure() { failure = nil }
+}
+
+/// A record with the lift it was set on, for the finish sheet.
+struct SessionRecordEntry: Hashable, Identifiable {
+    var id: UUID { record.set.id }
+    let exercise: Exercise
+    let record: PersonalRecord
 }

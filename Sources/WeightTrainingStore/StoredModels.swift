@@ -90,8 +90,33 @@ public final class StoredExercise {
     /// weighed once should not go back to "unknown" on the next launch.
     public var loadingData: Data = Data()
 
-    public init(_ exercise: Exercise) {
+    /// The person's own rest target for this lift, in seconds (#174). Nil
+    /// means no override — every row written before this landed reads that
+    /// way automatically, since SwiftData hands back `nil` for a column it
+    /// has never seen, and `Exercise.restTarget` treats a nil override as
+    /// "keep using the heuristic", exactly what those rows have always meant.
+    public var restOverrideSeconds: Double?
+
+    /// When the lifter last wrote this row, used to pick a survivor when two
+    /// copies meet in `deduplicate()` (#268). See `EditStamp`: nil on a row
+    /// written before stamps existed, `EditStamp.stock` on a catalogue lift
+    /// seeded and never touched since. A derived rewrite — the gym re-racking
+    /// a lift — is not a write by the lifter and leaves it alone.
+    public var updatedAt: Date?
+
+    /// This copy's own identity, shared by every device that holds it.
+    ///
+    /// `id` says which lift a row is; two devices can each hold a row with the
+    /// same `id` and they are different records. When two copies are otherwise
+    /// indistinguishable this is what lets every device agree on the same one
+    /// to keep — a choice made by fetch order would have each device delete
+    /// the other's, and both deletions sync (#268). Nil on older rows.
+    public var copyID: UUID?
+
+    public init(_ exercise: Exercise, updatedAt: Date? = nil) {
         self.id = exercise.id
+        self.updatedAt = updatedAt
+        self.copyID = UUID()
         self.name = exercise.name
         self.equipmentRaw = exercise.equipment.rawValue
         self.incrementPounds = exercise.increment.pounds
@@ -100,6 +125,7 @@ public final class StoredExercise {
         self.musclesData = encoded(exercise.muscles)
         self.progressionRuleData = encoded(exercise.progressionRule)
         self.loadingData = exercise.loading.map(encoded) ?? Data()
+        self.restOverrideSeconds = exercise.restOverride
     }
 
     /// Overwrites this row in place, preserving identity so relationships and
@@ -113,6 +139,7 @@ public final class StoredExercise {
         musclesData = encoded(exercise.muscles)
         progressionRuleData = encoded(exercise.progressionRule)
         loadingData = exercise.loading.map(encoded) ?? Data()
+        restOverrideSeconds = exercise.restOverride
     }
 
     public func toDomain() throws -> Exercise {
@@ -133,7 +160,8 @@ public final class StoredExercise {
                 // equipment default via Exercise's initialiser.
                 loading: loadingData.isEmpty
                     ? nil
-                    : try decoded(LoadingStyle.self, from: loadingData)
+                    : try decoded(LoadingStyle.self, from: loadingData),
+                restOverride: restOverrideSeconds
             )
         } catch {
             throw StoreError.corruptRecord(entity: "Exercise", id: id, underlying: error)
@@ -158,8 +186,18 @@ public final class StoredSetLog {
     public var acceptedPlanID: UUID?
     public var effortWasReported: Bool?
 
-    public init(_ record: SetRecord) {
+    /// When this set was last corrected (#61), for `deduplicate()` (#268).
+    /// Nil on a set as logged: a set is only rewritten by a correction, so a
+    /// stamped copy is the corrected one.
+    public var updatedAt: Date?
+
+    /// This copy's own identity — see `StoredExercise.copyID`.
+    public var copyID: UUID?
+
+    public init(_ record: SetRecord, updatedAt: Date? = nil) {
         self.id = record.id
+        self.updatedAt = updatedAt
+        self.copyID = UUID()
         self.exerciseID = record.exerciseID
         self.pounds = record.load.pounds
         self.reps = record.reps
@@ -267,8 +305,17 @@ public final class StoredDayTemplate {
     /// to local-only, silently.
     public var slotsData: Data = Data()
 
-    public init(_ template: DayTemplate) {
+    /// When this template was last written, for `deduplicate()` (#268) — the
+    /// same meaning as `StoredExercise.updatedAt`, `EditStamp.stock` included.
+    public var updatedAt: Date?
+
+    /// This copy's own identity — see `StoredExercise.copyID`.
+    public var copyID: UUID?
+
+    public init(_ template: DayTemplate, updatedAt: Date? = nil) {
         self.id = template.id
+        self.updatedAt = updatedAt
+        self.copyID = UUID()
         self.kindRaw = template.kind.rawValue
         self.slotsData = encoded(template.slots)
     }
@@ -330,10 +377,11 @@ public final class StoredBodyweight {
 /// A single row, kept at a fixed id rather than "whichever one exists", so two
 /// devices that both write one before ever syncing produce the same identity
 /// and collapse into one in `deduplicate()` instead of leaving the app with two
-/// gyms and no way to choose. Unlike every other entity here, the duplicates
-/// genuinely conflict — each device has a different opinion about the rack (or
-/// now, the split) — so the merge needs `updatedAt` to break the tie, one row
-/// at a time: whichever device wrote last wins the whole row, split included.
+/// gyms and no way to choose. The duplicates genuinely conflict — each device
+/// has a different opinion about the rack (or now, the split) — so the merge
+/// needs `updatedAt` to break the tie, one row at a time: whichever device
+/// wrote last wins the whole row, split included. Exercises, sets and
+/// templates follow the same idea since #268, with seeding made to lose.
 @Model
 public final class StoredGymConfig {
     /// The one row. There is exactly one gym until a gym picker exists (#73),

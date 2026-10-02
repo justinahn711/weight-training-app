@@ -49,6 +49,28 @@ public struct E1RMTrend: Hashable, Sendable, Identifiable {
     public var latest: TrendPoint? { points.last }
     public var best: TrendPoint? { points.max { $0.e1RM < $1.e1RM } }
 
+    /// Sessions whose estimated max beat every session before it — the
+    /// points worth marking on the line. Estimated, like the line itself, and
+    /// labelled so.
+    ///
+    /// The same rule `PersonalRecords.set` applies, read at this chart's own
+    /// granularity: a point is one session's ceiling, so "beats everything
+    /// before it" means beating every earlier session's ceiling, which is the
+    /// same test a set faces against every set preceding it. The first
+    /// session is therefore never a mark, exactly as a lift's first day sets
+    /// no records (#213). A session that raises its own ceiling twice draws
+    /// one mark and celebrates twice in-session; that is a difference of
+    /// resolution, not of definition — the line has one point per session.
+    public var recordPoints: [TrendPoint] {
+        var best: Load?
+        var records: [TrendPoint] = []
+        for point in points {
+            if let best, point.e1RM > best { records.append(point) }
+            if best == nil || point.e1RM > best! { best = point.e1RM }
+        }
+        return records
+    }
+
     /// Change from the first session to the most recent, in pounds.
     public var change: Load? {
         guard let first = points.first, let last = points.last, points.count >= 2 else {

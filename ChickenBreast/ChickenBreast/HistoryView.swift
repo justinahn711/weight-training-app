@@ -19,6 +19,25 @@ import WeightTrainingStore
 struct HistoryView: View {
     let store: TrainingStore
 
+    /// Told whenever a delete *or a correction* lands on disk, so a session
+    /// still open in the Train tab can catch up (#199, #218). History writes
+    /// through the store directly rather than through the session — Today
+    /// and History are different tabs, and this is the seam between them.
+    /// Defaulted to a no-op so every existing call site (including tests and
+    /// previews that predate #199) keeps compiling without naming a session
+    /// that usually isn't there.
+    ///
+    /// The name is a holdover from #199, which only had deletes to worry
+    /// about — `reconcilePersistedSetsAfterHistoryEdit()`, what this is wired
+    /// to in `ContentView`, was already named for the general case. #218
+    /// found the wiring here had never caught up: correcting a set's weight,
+    /// reps or RPE only reloaded History's own list, so a set inside a still
+    /// -open session read stale until something unrelated happened to resume
+    /// it. Left named `onSetsDeleted` rather than renamed, because the
+    /// argument label is shared with `ContentView.swift`, which this file
+    /// does not own.
+    let onSetsDeleted: () -> Void
+
     /// Reloaded here rather than handed down, because correcting a set (#61)
     /// changes what this screen shows and the change has to be visible without
     /// leaving it.
@@ -27,8 +46,9 @@ struct HistoryView: View {
     @State private var selected: TrainingDay?
     @State private var weeklyTarget = 3
 
-    init(days: [TrainingDay], store: TrainingStore) {
+    init(days: [TrainingDay], store: TrainingStore, onSetsDeleted: @escaping () -> Void = {}) {
         self.store = store
+        self.onSetsDeleted = onSetsDeleted
         _days = State(initialValue: days)
     }
 
@@ -87,7 +107,7 @@ struct HistoryView: View {
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $selected) { day in
-            DayDetailView(day: day, store: store, onChange: reload)
+            DayDetailView(day: day, store: store, onChange: reload, onSetsDeleted: onSetsDeleted)
         }
     }
 
@@ -119,12 +139,20 @@ struct HistoryView: View {
 private struct WeeklyStreakCard: View {
     let consistency: WeeklyConsistency
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack(spacing: 12) {
+        // Side by side while the words fit beside a 32pt glyph; stacked once
+        // they don't. At accessibility sizes the headline wrapped across the
+        // icon and sat on top of it.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
             Image(systemName: "calendar.badge.checkmark")
                 .font(.title2)
-                .foregroundStyle(.tint)
-                .frame(width: 32)
+                .foregroundStyle(.secondary)
+                .frame(width: 32, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -133,7 +161,7 @@ private struct WeeklyStreakCard: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12))
@@ -302,11 +330,26 @@ private struct DayCell: View {
         VStack(spacing: 2) {
             Text("\(Calendar.current.component(.day, from: date))")
                 .font(.footnote.weight(day == nil ? .regular : .semibold))
-                .foregroundStyle(day == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+                // The cell is a fixed 44pt square in a seven-column grid, so
+                // at accessibility sizes the digits have to shrink rather
+                // than overflow it.
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                // Dark on the fill, not white: white measured 2.97:1 on the
+                // teal, and these are 13pt digits.
+                .foregroundStyle(day == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.onCategory))
             if let day {
+                // Deliberately fixed rather than Dynamic Type-aware (a
+                // platform audit's lowest-priority finding): this sits
+                // inside a fixed 44pt grid cell shared by a whole week's row,
+                // and letting it grow risks clipping or breaking that row's
+                // height at a larger reading size. It is decorative besides
+                // — the cell's own accessibility label already states the
+                // day kind in full, so nothing is lost if this letter stays
+                // small.
                 Text(initial(for: day))
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(Theme.onCategory.opacity(0.8))
             }
         }
         .frame(maxWidth: .infinity)
@@ -331,9 +374,14 @@ private struct DayCell: View {
 
     private func tint(for day: TrainingDay) -> Color {
         switch day.kind {
-        case .push:  return .blue
-        case .pull:  return .green
-        case .legs:  return .orange
+        // Theme's own three category colours, so a day kind means the same
+        // kind of thing as a Progress ring does (#categorical, not status):
+        // the old trio borrowed `.green` from "done" and `.orange` from the
+        // action colour, so a Tuesday read as a finished set and a Friday as
+        // something to tap.
+        case .push:  return Theme.categories[0]
+        case .pull:  return Theme.categories[1]
+        case .legs:  return Theme.categories[2]
         case nil:    return .gray
         // `DayKind` stopped being a closed push/pull/legs enum in #136 so a
         // split could name upper/lower, full body, and custom days, and a
@@ -348,9 +396,11 @@ private struct DayCell: View {
 private struct Legend: View {
     var body: some View {
         HStack(spacing: 14) {
-            item(.blue, "Push")
-            item(.green, "Pull")
-            item(.orange, "Legs")
+            // The same three the squares use; a legend drifting from the
+            // thing it explains is worse than no legend.
+            item(Theme.categories[0], "Push")
+            item(Theme.categories[1], "Pull")
+            item(Theme.categories[2], "Legs")
             Spacer()
         }
         .font(.caption2)
@@ -370,9 +420,21 @@ struct DayDetailView: View {
     let day: TrainingDay
     let store: TrainingStore
     let onChange: () -> Void
+    /// See `HistoryView.onSetsDeleted` (#199) — passed straight through so
+    /// both delete paths this screen owns, the single-set one and the
+    /// selection one, reach the same session-reconcile call.
+    var onSetsDeleted: () -> Void = {}
 
     @State private var editing: EditTarget?
     @State private var failure: String?
+
+    /// Correcting a bad import or an accidental day one set at a time is the
+    /// only path #61 left; selection mode is the fast one (#168). Off by
+    /// default so the ordinary tap-to-correct flow it's layered over — which
+    /// the acceptance criteria require to keep working — is never in its way.
+    @State private var isSelecting = false
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var confirmingBatchDelete = false
 
     /// A set, plus the lift it belongs to — the editor needs the increment to
     /// step the weight by, and the lift isn't on the record.
@@ -384,17 +446,22 @@ struct DayDetailView: View {
         var id: UUID { record.id }
     }
 
+    /// Every set on the day, in the order the list shows them — what "Select
+    /// all" selects and what a full selection is measured against.
+    private var allSetIDs: [UUID] {
+        day.exercises.flatMap { $0.sets.map(\.id) }
+    }
+
+    private var allSelected: Bool {
+        !allSetIDs.isEmpty && selectedIDs.count == allSetIDs.count
+    }
+
     var body: some View {
         List {
             ForEach(day.exercises) { performed in
                 Section {
                     ForEach(performed.sets, id: \.id) { set in
-                        Button {
-                            editing = EditTarget(record: set, exercise: performed.exercise)
-                        } label: {
-                            SetRow(set: set)
-                        }
-                        .buttonStyle(.plain)
+                        row(for: set, exercise: performed.exercise)
                     }
                 } header: {
                     HStack {
@@ -412,15 +479,50 @@ struct DayDetailView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbarContent }
+        // A bottom bar rather than another toolbar item: the destructive
+        // action for a selection needs its own visual weight, and a lifter
+        // scrolled deep into a long day shouldn't have to scroll back up to
+        // find it.
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                deleteBar
+            }
+        }
         .sheet(item: $editing) { target in
             EditSetView(
                 set: target.record,
                 exercise: target.exercise,
                 onSave: { corrected in
-                    apply { try store.updateSet(corrected) }
+                    // Routed like the delete below rather than through
+                    // `apply` (#218): a correction changes a row a running
+                    // session may hold too, and `onSetsDeleted()` is the only
+                    // seam that tells it to catch up (#199). `apply` only
+                    // called `onChange()`, which reloads History's own list
+                    // and nothing else.
+                    do {
+                        try store.updateSet(corrected)
+                        onChange()
+                        onSetsDeleted()
+                    } catch {
+                        failure = error.localizedDescription
+                    }
                 },
                 onDelete: {
-                    apply { try store.deleteSet(id: target.record.id) }
+                    // Not routed through `apply`: that helper only calls
+                    // `onChange()`, and a failed delete must not tell the
+                    // session anything changed. Single-set delete goes
+                    // through the same reconcile call as the batch path below
+                    // (#199) — a set removed one at a time can strand a
+                    // running session's undo banner or rest exactly as easily
+                    // as a selection can.
+                    do {
+                        try store.deleteSet(id: target.record.id)
+                        onChange()
+                        onSetsDeleted()
+                    } catch {
+                        failure = error.localizedDescription
+                    }
                 }
             )
         }
@@ -431,15 +533,158 @@ struct DayDetailView: View {
         } message: {
             Text(failure ?? "")
         }
+        .confirmationDialog(
+            "Delete \(selectedIDs.count) \(selectedIDs.count == 1 ? "set" : "sets") from \(dayLabel)?",
+            isPresented: $confirmingBatchDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete \(selectedIDs.count) \(selectedIDs.count == 1 ? "set" : "sets")",
+                   role: .destructive) {
+                deleteSelected()
+            }
+        } message: {
+            Text("They stop counting towards volume, e1RM and your next target. This can't be undone.")
+        }
     }
 
-    private func apply(_ work: () throws -> Void) {
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if isSelecting {
+            ToolbarItem(placement: .cancellationAction) {
+                // Cancel exits without changing data — selection is cleared,
+                // nothing store-side was ever touched to undo.
+                Button("Cancel") {
+                    isSelecting = false
+                    selectedIDs = []
+                }
+                .accessibilityIdentifier("dayDetail.cancelSelection")
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(allSelected ? "Deselect All" : "Select All") {
+                    selectedIDs = allSelected ? [] : Set(allSetIDs)
+                }
+                .accessibilityIdentifier("dayDetail.selectAll")
+            }
+        } else {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Select") {
+                    isSelecting = true
+                }
+                .accessibilityIdentifier("dayDetail.select")
+            }
+        }
+    }
+
+    /// One row, in whichever of the two modes is live. Selecting swaps the
+    /// tap target from "open the corrector" to "toggle this set" rather than
+    /// running both — a tap has to mean one thing.
+    @ViewBuilder
+    private func row(for set: SetRecord, exercise: Exercise) -> some View {
+        if isSelecting {
+            let selected = selectedIDs.contains(set.id)
+            Button {
+                toggle(set.id)
+            } label: {
+                HStack(spacing: 12) {
+                    checkbox(selected: selected)
+                    SetRow(set: set)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityLabel(for: set))
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityHint(selected ? "Double tap to deselect" : "Double tap to select")
+        } else {
+            Button {
+                editing = EditTarget(record: set, exercise: exercise)
+            } label: {
+                // The whole row, not just its text (#258): a `.plain` button
+                // hit-tests only what it draws, and the gap the Spacer leaves
+                // between the load and the RPE is most of the row at large
+                // sizes. Same fix as `checkbox(selected:)` below.
+                SetRow(set: set)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// A checkbox glyph alone isn't a hit target — `.frame` without
+    /// `.contentShape` leaves the tappable area at the glyph's own rendered
+    /// size, which is exactly the mistake that shipped four 18pt buttons
+    /// in #114. `.contentShape` is what actually makes the 44pt square real.
+    private func checkbox(selected: Bool) -> some View {
+        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+            .font(.title2)
+            .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+    }
+
+    private func toggle(_ id: UUID) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    private func accessibilityLabel(for set: SetRecord) -> String {
+        var text = "\(set.load.formatted(in: GymSettings.shared.unit)) times \(set.reps)"
+        if set.isWarmup { text += ", warmup" }
+        // `historyRPEText` already reads "RPE 8" (#218) — a literal "RPE "
+        // in front of it read "RPE RPE 8" to VoiceOver.
+        if let rpe = set.rpe { text += ", \(historyRPEText(rpe))" }
+        return text
+    }
+
+    private var deleteBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            Button(role: .destructive) {
+                confirmingBatchDelete = true
+            } label: {
+                Text(deleteLabel)
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .contentShape(Rectangle())
+            .disabled(selectedIDs.isEmpty)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .background(.bar)
+        .accessibilityIdentifier("dayDetail.deleteSelected")
+    }
+
+    private var deleteLabel: String {
+        selectedIDs.isEmpty
+            ? "Delete sets"
+            : "Delete \(selectedIDs.count) \(selectedIDs.count == 1 ? "set" : "sets")"
+    }
+
+    /// Deletes the selection as one store call (#168) and leaves selection
+    /// mode only once that succeeds — a failure keeps the picks intact so
+    /// there's something to retry rather than a screen that silently forgot
+    /// what was chosen.
+    private func deleteSelected() {
+        let ids = selectedIDs
         do {
-            try work()
+            try store.deleteSets(ids: ids)
             onChange()
+            // See `onDelete` above (#199) — same reconcile call, same rule
+            // that it only fires once the delete has actually landed.
+            onSetsDeleted()
+            selectedIDs = []
+            isSelecting = false
         } catch {
             failure = error.localizedDescription
         }
+    }
+
+    private var dayLabel: String {
+        day.date.formatted(.dateTime.weekday(.abbreviated).month().day())
     }
 
     private var title: String {
@@ -449,6 +694,67 @@ struct DayDetailView: View {
     }
 }
 
+
+/// The text a set's RPE reads as, wherever History shows one.
+///
+/// A free function rather than inlined into each `Text(...)`, so a
+/// regression can be caught by `swift test` without booting a simulator.
+/// `RPE.description` (#4, #5) already spells out "RPE 8" — `SetRow` below
+/// used to wrap it in a second literal "RPE ", which read "RPE RPE 8" on
+/// every row and in VoiceOver's description of it (#218). Not `private`,
+/// so `ChickenBreastTests` can reach it via `@testable import`.
+func historyRPEText(_ rpe: RPE) -> String {
+    rpe.description
+}
+
+/// What typing `text` into History's exact-weight field means for `exercise`,
+/// given what the field last agreed with `pounds` about (`committed`).
+///
+/// Pulled out of `EditSetView` so the interaction between it and
+/// `TypedWeight.resolve` (#99) — which already owns parsing and buildability
+/// — can be checked by `swift test` without instantiating SwiftUI (#218).
+/// `EditSetView` itself only holds state and renders; this is where "does the
+/// typed value snap to what the equipment can build" actually gets decided.
+enum HistoryWeightEdit: Equatable {
+    /// Nothing to act on: either untouched, or a prior edit already folded
+    /// back into `pounds` (see `EditSetView.commit`).
+    case unedited
+    /// Parses and is buildable outright — safe for `pounds` to adopt.
+    case exact(Load)
+    /// Parses, but this exercise's equipment cannot be set to it. The
+    /// nearest weight it *can* build is offered, never substituted (#218).
+    case unbuildable(requested: Load, achievable: Load)
+    /// Not a number at all, or ambiguous in the way `TypedWeight.parse` (#99)
+    /// deliberately refuses to guess at.
+    case unparseable
+}
+
+func resolveHistoryWeightEdit(
+    text: String, committed: String, unit: MassUnit, exercise: Exercise
+) -> HistoryWeightEdit {
+    guard text != committed else { return .unedited }
+    guard let resolution = TypedWeight.resolve(text, in: unit, for: exercise) else {
+        return .unparseable
+    }
+    switch resolution {
+    case .exact(let load):
+        return .exact(load)
+    case .nearest(let requested, let achievable):
+        return .unbuildable(requested: requested, achievable: achievable)
+    }
+}
+
+/// Whether Save should be live given the exact-weight field's current state.
+/// Save stays explicit either way (#218) — this only gates the button, and
+/// only for the weight field: an unresolved typed number must block Save
+/// rather than be silently dropped in favour of whatever `pounds` still
+/// holds.
+func canSaveHistoryWeightEdit(_ edit: HistoryWeightEdit) -> Bool {
+    switch edit {
+    case .unedited, .exact: return true
+    case .unbuildable, .unparseable: return false
+    }
+}
 
 /// Corrects one logged set (#61).
 ///
@@ -470,6 +776,14 @@ private struct EditSetView: View {
     @State private var isWarmup: Bool
     @State private var confirmingDelete = false
 
+    /// The exact-entry field's text, and the text `pounds` was last known to
+    /// agree with. Comparing the two is how "hasn't resolved to anything yet"
+    /// is told apart from "already matches what's stored" without a third
+    /// piece of state to keep in sync (#218: 45 lb -> 135 lb was 18 taps at a
+    /// 5 lb step, and the stepper alone is what made it that slow).
+    @State private var weightText: String
+    @State private var committedText: String
+
     init(set: SetRecord, exercise: Exercise,
          onSave: @escaping (SetRecord) -> Void, onDelete: @escaping () -> Void) {
         self.set = set
@@ -480,7 +794,23 @@ private struct EditSetView: View {
         _reps = State(initialValue: set.reps)
         _rpe = State(initialValue: set.rpe)
         _isWarmup = State(initialValue: set.isWarmup)
+        let text = Self.text(for: set.load.pounds)
+        _weightText = State(initialValue: text)
+        _committedText = State(initialValue: text)
     }
+
+    /// What the typed field currently means — delegated to
+    /// `resolveHistoryWeightEdit` (top of this file) so the actual decision
+    /// is covered by `swift test` rather than only by this view rendering
+    /// correctly (#218).
+    private var weightEdit: HistoryWeightEdit {
+        resolveHistoryWeightEdit(
+            text: weightText, committed: committedText,
+            unit: GymSettings.shared.unit, exercise: exercise
+        )
+    }
+
+    private var canSave: Bool { canSaveHistoryWeightEdit(weightEdit) }
 
     var body: some View {
         NavigationStack {
@@ -489,18 +819,57 @@ private struct EditSetView: View {
                     // Stepped by the lift's own increment, so a correction
                     // can't produce a weight the equipment can't be set to
                     // (#20, #39).
-                    Stepper(value: $pounds, in: 0...2000, step: exercise.increment.pounds) {
-                        // Stepped in pounds because that is what is stored, but
-                        // read in the unit the lifter uses (#67) — the step
-                        // itself is the equipment's own, so the numbers land
-                        // where the equipment does.
-                        LabeledContent("Weight", value: format(pounds))
+                    // Stacked at accessibility sizes so "Weight" and "Reps"
+                    // aren't broken mid-word beside the −/+ control (#250).
+                    StackedStepperRow(title: "Weight", value: format(pounds)) {
+                        Stepper(value: poundsBinding, in: 0...2000, step: exercise.increment.pounds) {
+                            // Stepped in pounds because that is what is stored, but
+                            // read in the unit the lifter uses (#67) — the step
+                            // itself is the equipment's own, so the numbers land
+                            // where the equipment does.
+                            LabeledContent("Weight", value: format(pounds))
+                        }
                     }
-                    Stepper(value: $reps, in: 1...50) {
-                        LabeledContent("Reps", value: "\(reps)")
+                    // Direct entry beside the stepper rather than behind
+                    // another sheet (#218) — a big correction is common
+                    // enough (a wrong unit typed at the rack, a set logged
+                    // against the wrong day's weight) that hiding the fast
+                    // path a tap away from where it's needed would only help
+                    // someone who already knew it existed.
+                    HStack {
+                        TextField("Exact weight", text: $weightText)
+                            .keyboardType(.decimalPad)
+                            .font(.body.monospacedDigit())
+                        Text(GymSettings.shared.unit.symbol)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Exact weight")
+                    if case .unparseable = weightEdit {
+                        Text("Enter a number, like 135 or 135.5.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    StackedStepperRow(title: "Reps", value: "\(reps)") {
+                        Stepper(value: $reps, in: 1...50) {
+                            LabeledContent("Reps", value: "\(reps)")
+                        }
                     }
                 } header: {
                     Text(exercise.name)
+                }
+
+                if case .unbuildable(let requested, let achievable) = weightEdit {
+                    Section {
+                        Text("\(requested.formatted(in: GymSettings.shared.unit)) cannot be set on this equipment.")
+                        Button("Use \(achievable.formatted(in: GymSettings.shared.unit))") {
+                            commit(achievable)
+                        }
+                        .font(.body.weight(.semibold))
+                    } header: {
+                        Text("Not available")
+                    } footer: {
+                        Text("The nearest achievable weight is offered, never substituted silently.")
+                    }
                 }
 
                 Section {
@@ -541,6 +910,7 @@ private struct EditSetView: View {
                         onSave(corrected)
                         dismiss()
                     }
+                    .disabled(!canSave)
                 }
             }
             .confirmationDialog("Delete this set?", isPresented: $confirmingDelete,
@@ -552,11 +922,56 @@ private struct EditSetView: View {
             } message: {
                 Text("It stops counting towards volume, e1RM and your next target.")
             }
+            // Every keystroke is checked, not just a final commit — the same
+            // reason `TypedWeight` itself treats an empty field as "not yet"
+            // rather than an error while a paste or a clear is mid-flight.
+            // The moment typing resolves to a real, buildable weight it's
+            // folded into `pounds` immediately, so the stepper below and the
+            // eventual Save both act on it without a separate confirm step.
+            .onChange(of: weightText) { _, newValue in
+                guard case .exact(let load) = resolveHistoryWeightEdit(
+                    text: newValue, committed: committedText,
+                    unit: GymSettings.shared.unit, exercise: exercise
+                ) else { return }
+                pounds = load.pounds
+                committedText = newValue
+            }
         }
+    }
+
+    /// The stepper's own binding, routed through here so a tap on it also
+    /// keeps the typed field's text in sync (#218) — without this, stepping
+    /// down after typing a big correction would leave the text field showing
+    /// a number `pounds` had already moved past.
+    private var poundsBinding: Binding<Double> {
+        Binding(
+            get: { pounds },
+            set: { commit(Load($0)) }
+        )
+    }
+
+    /// Accepts a resolved weight from any source — the stepper, a typed exact
+    /// value, or the nearest-achievable offer — and makes it the one thing
+    /// every control agrees on.
+    private func commit(_ load: Load) {
+        pounds = load.pounds
+        let text = Self.text(for: load.pounds)
+        weightText = text
+        committedText = text
     }
 
     private func format(_ pounds: Double) -> String {
         GymSettings.shared.unit.format(pounds: pounds)
+    }
+
+    /// The exact-entry field's text for a given weight: native precision, no
+    /// unit symbol (the symbol sits beside the field instead), matching how
+    /// `WeightEntrySheet` in `SessionView.swift` reads its own initial text —
+    /// that sheet is the pattern this reuses rather than a second parser
+    /// (#218).
+    private static func text(for pounds: Double) -> String {
+        let unit = GymSettings.shared.unit
+        return unit.format(unit.value(fromPounds: pounds), withSymbol: false)
     }
 }
 
@@ -575,7 +990,13 @@ private struct SetRow: View {
             }
             Spacer()
             if let rpe = set.rpe {
-                Text("RPE \(rpe)")
+                // `historyRPEText` (top of this file) already reads "RPE 8"
+                // (`RPE.description`, added in #4/#5, before this row
+                // existed) — wrapping it in another literal "RPE " here read
+                // "RPE RPE 8" (#218). `SessionView.swift`'s equivalent row
+                // already gets this right with the same `Text(rpe.description)`,
+                // which is the pattern this matches.
+                Text(historyRPEText(rpe))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

@@ -64,6 +64,145 @@ final class RestTimerTests: XCTestCase {
         XCTAssertTrue(rest.isComplete(at: start))
         XCTAssertEqual(rest.progress(at: start), 1)
     }
+
+    // MARK: - Optional setID (#173)
+
+    /// A rest started by hand — no set logged, nothing to undo it against —
+    /// has no `SetRecord` to point at. Before #173 the voice path papered
+    /// over this by fabricating a `UUID()` that named a set which never
+    /// existed; `setID` is optional now so a caller with nothing to point at
+    /// can say so plainly, and every reading still works exactly the same as
+    /// a set-anchored rest, since none of the clock math ever looked at it.
+    func testUnanchoredRestBehavesIdenticallyToAnAnchoredOne() {
+        let anchored = RestTimer(startedAt: start, duration: 180, setID: UUID())
+        let unanchored = RestTimer(startedAt: start, duration: 180, setID: nil)
+        XCTAssertNil(unanchored.setID)
+        for offset in [TimeInterval(0), 60, 179.9, 180, 300] {
+            let at = start.addingTimeInterval(offset)
+            XCTAssertEqual(anchored.remaining(at: at), unanchored.remaining(at: at))
+            XCTAssertEqual(anchored.isComplete(at: at), unanchored.isComplete(at: at))
+            XCTAssertEqual(anchored.displayTime(at: at), unanchored.displayTime(at: at))
+            XCTAssertEqual(anchored.progress(at: at), unanchored.progress(at: at))
+        }
+    }
+
+    /// Two rests with the same start and duration but different `setID`s —
+    /// including one that's `nil` — are different values. This is what lets
+    /// a view keyed on the whole timer (rather than on `setID` alone) tell two
+    /// separately started rests apart even when neither has a set to name.
+    func testSetIDParticipatesInEquality() {
+        let withSet = RestTimer(startedAt: start, duration: 180, setID: UUID())
+        let withoutSet = RestTimer(startedAt: start, duration: 180, setID: nil)
+        let alsoWithoutSet = RestTimer(startedAt: start, duration: 180, setID: nil)
+        XCTAssertNotEqual(withSet, withoutSet)
+        XCTAssertEqual(withoutSet, alsoWithoutSet)
+    }
+
+    // MARK: - reconciled(restEndsAt:restStartedAt:restSetID:loggedSet:) (#200)
+
+    /// No rest running at all: nothing to rebuild, whatever `loggedSet` says.
+    func testReconciledIsNilWhenNoRestIsRunning() {
+        XCTAssertNil(RestTimer.reconciled(
+            restEndsAt: nil,
+            restStartedAt: nil,
+            restSetID: nil,
+            loggedSet: (id: UUID(), performedAt: start)
+        ))
+    }
+
+    /// The case #200 exists for: a hand-started or voice-started rest has its
+    /// own identity now, and must rebuild from it rather than needing a set
+    /// to point at.
+    func testReconciledRebuildsAHandStartedRestWithNoLoggedSet() throws {
+        let endsAt = start.addingTimeInterval(180)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: start,
+            restSetID: nil,
+            loggedSet: nil
+        ))
+        XCTAssertEqual(rest.startedAt, start)
+        XCTAssertEqual(rest.duration, 180)
+        XCTAssertNil(rest.setID)
+    }
+
+    /// A rest that did come from logging a set carries its own `restSetID`,
+    /// which must survive the round trip even though a `lastLoggedSetID`
+    /// (here standing in as `loggedSet`) also names the same set — the two
+    /// are different fields and this checks the timer's own field wins.
+    func testReconciledUsesItsOwnSetIDWhenPresent() throws {
+        let setID = UUID()
+        let endsAt = start.addingTimeInterval(90)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: start,
+            restSetID: setID,
+            loggedSet: (id: setID, performedAt: start)
+        ))
+        XCTAssertEqual(rest.setID, setID)
+    }
+
+    /// The conflation #200 forbids: once `restStartedAt` is present, the
+    /// activity is from a build that always sends both new fields together,
+    /// so a `nil` `restSetID` is a hand-started rest's real answer, not a gap
+    /// to paper over with whatever `lastLoggedSetID` happens to name. An
+    /// older, unrelated logged set living in `loggedSet` must not leak in as
+    /// this rest's owner.
+    func testReconciledDoesNotBorrowLoggedSetWhenRestStartedAtIsPresentButRestSetIDIsNil() throws {
+        let unrelatedSetID = UUID()
+        let endsAt = start.addingTimeInterval(120)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: start,
+            restSetID: nil,
+            loggedSet: (id: unrelatedSetID, performedAt: start.addingTimeInterval(-600))
+        ))
+        XCTAssertNil(rest.setID, "a hand-started rest must not adopt an unrelated logged set's id")
+        XCTAssertEqual(rest.startedAt, start, "must use its own start time, not the unrelated set's")
+    }
+
+    /// The upgrade-compatibility case: an activity written before #200 has
+    /// neither new field, so `restStartedAt` is nil and the only source left
+    /// is the logged set — exactly how every rest before #200 was anchored.
+    func testReconciledFallsBackToLoggedSetForAPreExistingFieldActivity() throws {
+        let setID = UUID()
+        let performedAt = start
+        let endsAt = start.addingTimeInterval(180)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: nil,
+            restSetID: nil,
+            loggedSet: (id: setID, performedAt: performedAt)
+        ))
+        XCTAssertEqual(rest.startedAt, performedAt)
+        XCTAssertEqual(rest.duration, 180)
+        XCTAssertEqual(rest.setID, setID)
+    }
+
+    /// The pre-#200 activity case where there's also no logged set to fall
+    /// back to (nothing this build can rebuild from) — must not fabricate a
+    /// start time, matching how this exact shape already behaved before #200.
+    func testReconciledIsNilWhenNoFallbackSetExistsEither() {
+        XCTAssertNil(RestTimer.reconciled(
+            restEndsAt: start.addingTimeInterval(180),
+            restStartedAt: nil,
+            restSetID: nil,
+            loggedSet: nil
+        ))
+    }
+
+    /// Duration is clamped the same way the rest of `RestTimer` never lets
+    /// bad wall-clock arithmetic go negative.
+    func testReconciledClampsDurationAtZero() throws {
+        let endsAt = start.addingTimeInterval(-30)
+        let rest = try XCTUnwrap(RestTimer.reconciled(
+            restEndsAt: endsAt,
+            restStartedAt: start,
+            restSetID: nil,
+            loggedSet: nil
+        ))
+        XCTAssertEqual(rest.duration, 0)
+    }
 }
 
 final class RestTargetTests: XCTestCase {
@@ -101,6 +240,32 @@ final class RestTargetTests: XCTestCase {
         XCTAssertEqual(rdl.restTarget, 180)
     }
 
+    /// The whole point of #174: a gym report that the two-value heuristic
+    /// has no escape hatch, so an override has to actually win.
+    func testOverrideWinsOverTheHeuristic() {
+        var press = exercise(
+            muscles: [.primary(.chest), .secondary(.frontDelts), .secondary(.triceps)],
+            equipment: .dumbbell
+        )
+        XCTAssertEqual(press.restTarget, 180, "unset, this is still the compound default")
+        press.restOverride = 240
+        XCTAssertEqual(press.restTarget, 240)
+    }
+
+    /// #174 was explicit that the defaults must not move — this is the
+    /// "done when" from the issue, checked directly against `nil`.
+    func testNoOverrideIsExactlyTheOldDefault() {
+        let press = exercise(
+            muscles: [.primary(.chest), .secondary(.frontDelts), .secondary(.triceps)],
+            equipment: .dumbbell
+        )
+        let raise = exercise(muscles: [.primary(.sideDelts)], equipment: .dumbbell)
+        XCTAssertNil(press.restOverride)
+        XCTAssertNil(raise.restOverride)
+        XCTAssertEqual(press.restTarget, 180)
+        XCTAssertEqual(raise.restTarget, 90)
+    }
+
     /// Sanity-check the heuristic against the real library rather than only
     /// against invented fixtures.
     func testLibraryRestTargetsLandSensibly() {
@@ -115,5 +280,101 @@ final class RestTargetTests: XCTestCase {
         XCTAssertEqual(byName["Leg Extension"]?.restTarget, 90)
         XCTAssertEqual(byName["Tricep Pressdown"]?.restTarget, 90)
         XCTAssertEqual(byName["Hammer Curls"]?.restTarget, 90)
+    }
+}
+
+/// The clock gives up ten minutes past the target: past that it is a phone on
+/// a bench, not a rest (the app pairs this with a "still working out?" check-in).
+final class RestExpiryTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_760_000_000)
+
+    private func timer(duration: TimeInterval = 180) -> RestTimer {
+        RestTimer(startedAt: start, duration: duration, setID: nil)
+    }
+
+    func testExpiresTenMinutesAfterTheTargetNotAfterTheStart() {
+        let rest = timer()
+        XCTAssertEqual(rest.expiresAt, rest.endsAt.addingTimeInterval(600))
+        XCTAssertEqual(RestTimer.maximumOverrun, 600)
+    }
+
+    func testNotExpiredWhileCountingDownOrShortlyOver() {
+        let rest = timer()
+        XCTAssertFalse(rest.hasExpired(at: start))
+        XCTAssertFalse(rest.hasExpired(at: rest.endsAt))
+        XCTAssertFalse(rest.hasExpired(at: rest.endsAt.addingTimeInterval(599)))
+    }
+
+    func testExpiredOnceTheOverrunReachesTheCap() {
+        let rest = timer()
+        XCTAssertTrue(rest.hasExpired(at: rest.endsAt.addingTimeInterval(600)))
+        XCTAssertTrue(rest.hasExpired(at: rest.endsAt.addingTimeInterval(3600)))
+    }
+
+    func testOverrunKeepsCountingUpToTheCap() {
+        let rest = timer()
+        XCTAssertEqual(rest.overrun(at: rest.endsAt.addingTimeInterval(90)), 90)
+        XCTAssertEqual(rest.displayTime(at: rest.endsAt.addingTimeInterval(90)), "+1:30")
+    }
+
+    func testAShortRestExpiresRelativeToItsOwnTarget() {
+        let short = timer(duration: 30)
+        XCTAssertFalse(short.hasExpired(at: start.addingTimeInterval(600)))
+        XCTAssertTrue(short.hasExpired(at: start.addingTimeInterval(630)))
+    }
+}
+
+/// The lock screen and Dynamic Island draw the rest from `restEndsAt` alone,
+/// with no app running to call `expireRestIfNeeded` (#265). They have to give
+/// up at the same cap the app does, not count on for an hour.
+final class LockScreenRestFaceTests: XCTestCase {
+    private let endsAt = Date(timeIntervalSince1970: 1_760_000_180)
+
+    private func face(at offset: TimeInterval) -> RestTimer.LockScreenFace {
+        RestTimer.lockScreenFace(restEndsAt: endsAt, now: endsAt.addingTimeInterval(offset))
+    }
+
+    func testNoRestShowsNoClock() {
+        XCTAssertEqual(
+            RestTimer.lockScreenFace(restEndsAt: nil, now: endsAt),
+            .noRest
+        )
+    }
+
+    func testCountsDownBeforeTheTarget() {
+        XCTAssertEqual(face(at: -60), .countingDown(to: endsAt))
+    }
+
+    /// The count-up's range ends at the app's cap, not an hour out, so the
+    /// system's own ticking stops where the app's clock does.
+    func testOverrunRangeEndsAtTheAppsCap() {
+        let expected = RestTimer.LockScreenFace.overrun(
+            endsAt...endsAt.addingTimeInterval(RestTimer.maximumOverrun)
+        )
+        XCTAssertEqual(face(at: 0), expected)
+        XCTAssertEqual(face(at: 90), expected)
+        XCTAssertEqual(face(at: RestTimer.maximumOverrun - 1), expected)
+    }
+
+    /// A render past the cap draws what `expireRestIfNeeded` would have
+    /// published: no rest at all.
+    func testAtAndPastTheCapShowsNoRest() {
+        XCTAssertEqual(face(at: RestTimer.maximumOverrun), .noRest)
+        XCTAssertEqual(face(at: 3600), .noRest)
+    }
+
+    /// The render time decides, not the activity's staleness flag, which can
+    /// lag the clock: a countdown range whose start is past its end would trap.
+    func testJustPastTheTargetCountsUp() {
+        XCTAssertEqual(
+            face(at: 5),
+            .overrun(endsAt...endsAt.addingTimeInterval(RestTimer.maximumOverrun))
+        )
+    }
+
+    func testCaptionsNameTheClockBeingRead() {
+        XCTAssertEqual(RestTimer.LockScreenFace.noRest.caption, "ready")
+        XCTAssertEqual(RestTimer.LockScreenFace.countingDown(to: endsAt).caption, "resting")
+        XCTAssertEqual(RestTimer.LockScreenFace.overrun(endsAt...endsAt).caption, "over")
     }
 }

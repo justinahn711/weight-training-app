@@ -138,10 +138,22 @@ public struct VolumeReport: Hashable, Sendable {
     public let from: Date
     public let to: Date
 
-    public init(muscles: [MuscleVolume], from: Date, to: Date) {
+    /// Literal count of hard sets logged in `from...to` — every set counted
+    /// once, independent of which or how many muscles it trained.
+    ///
+    /// `MuscleVolume.sets` is muscle-credit volume: a compound lift adds a
+    /// full set to its primary mover and a half set to each secondary one, so
+    /// summing it double-counts a single logged set on purpose (that's what
+    /// makes the starved/on-target guard work). This field is the other
+    /// number — the one a lifter would get by counting on their fingers — so
+    /// a headline built from it never needs the word "credited" (#214).
+    public let hardSetCount: Int
+
+    public init(muscles: [MuscleVolume], from: Date, to: Date, hardSetCount: Int = 0) {
         self.muscles = muscles
         self.from = from
         self.to = to
+        self.hardSetCount = hardSetCount
     }
 
     public var starved: [MuscleVolume] { muscles.filter { $0.standing == .starved } }
@@ -177,7 +189,10 @@ public struct VolumeReport: Hashable, Sendable {
         var exerciseIDs: [Muscle: Set<UUID>] = [:]
         var exposureIDs: [Muscle: Set<String>] = [:]
 
+        var hardSetCount = 0
         for set in history where !set.isWarmup && set.performedAt >= from && set.performedAt <= now {
+            // Count literal hard sets even when the exercise has been removed.
+            if set.isHardSet { hardSetCount += 1 }
             guard let exercise = byID[set.exerciseID] else { continue }
             for involvement in exercise.muscles {
                 let muscle = involvement.muscle
@@ -230,6 +245,6 @@ public struct VolumeReport: Hashable, Sendable {
             )
         }
 
-        return VolumeReport(muscles: muscles, from: from, to: now)
+        return VolumeReport(muscles: muscles, from: from, to: now, hardSetCount: hardSetCount)
     }
 }

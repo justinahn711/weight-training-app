@@ -13,14 +13,14 @@ final class PlateMathTests: XCTestCase {
     func testOnePlatePerSide() throws {
         let breakdown = try XCTUnwrap(PlateMath.breakdown(for: Load(135)))
         XCTAssertEqual(breakdown.perSide, [PlateCount(plate: 45, count: 1)])
-        XCTAssertEqual(breakdown.displayLine, "45")
+        XCTAssertEqual(breakdown.displayLine, "45 per side")
         XCTAssertEqual(breakdown.total, Load(135))
     }
 
     func testGreedyBreakdownUsesTheFewestPlates() throws {
         let breakdown = try XCTUnwrap(PlateMath.breakdown(for: Load(225)))
         XCTAssertEqual(breakdown.perSide, [PlateCount(plate: 45, count: 2)])
-        XCTAssertEqual(breakdown.displayLine, "45 · 45")
+        XCTAssertEqual(breakdown.displayLine, "45 · 45 per side")
     }
 
     func testMixedPlates() throws {
@@ -30,7 +30,7 @@ final class PlateMathTests: XCTestCase {
             PlateCount(plate: 45, count: 1),
             PlateCount(plate: 25, count: 1),
         ])
-        XCTAssertEqual(breakdown.displayLine, "45 · 25")
+        XCTAssertEqual(breakdown.displayLine, "45 · 25 per side")
     }
 
     /// The 2.5s are what make 5 lb barbell jumps possible at all.
@@ -40,8 +40,46 @@ final class PlateMathTests: XCTestCase {
             PlateCount(plate: 45, count: 1),
             PlateCount(plate: 2.5, count: 1),
         ])
-        XCTAssertEqual(breakdown.displayLine, "45 · 2.5")
+        XCTAssertEqual(breakdown.displayLine, "45 · 2.5 per side")
         XCTAssertEqual(breakdown.total, Load(140))
+    }
+
+    // MARK: - Per-side labeling (#176)
+
+    /// The bug report: "should we label that the plates are 2x". A bare
+    /// "45 · 45" reads as the total on a barbell, and following it that way
+    /// is a 90 lb error on a 225 lb squat — the per-sleeve list has to say
+    /// it's per-sleeve.
+    func testTwoSleeveApparatusLabelsPlatesPerSide() throws {
+        let breakdown = try XCTUnwrap(
+            LoadingStyle.olympicBarbell.breakdown(for: Load(225))
+        )
+        XCTAssertEqual(breakdown.sleeves, 2)
+        XCTAssertEqual(breakdown.displayLine, "45 · 45 per side")
+    }
+
+    /// The other half of the same rule: a one-sleeve apparatus (a T-bar, some
+    /// machines) has no second side, so "per side" would be false rather than
+    /// merely unclear. `sleeves == 1` is what tells `displayLine` to withhold it.
+    func testOneSleeveApparatusOmitsPerSideLabel() throws {
+        let style = LoadingStyle(baseWeight: Load(35), sleeves: 1)
+        let breakdown = try XCTUnwrap(style.breakdown(for: Load(125)))
+        XCTAssertEqual(breakdown.sleeves, 1)
+        XCTAssertEqual(breakdown.displayLine, "45 · 45")
+    }
+
+    /// The bar-only line already distinguishes sleeve count via its own
+    /// wording ("Empty" vs. "Bar only") — with no plates listed, "per side"
+    /// would add words without adding information, so it must not appear on
+    /// either apparatus.
+    func testBarOnlyLineNeverAddsPerSideRegardlessOfSleeveCount() throws {
+        let twoSleeve = try XCTUnwrap(LoadingStyle.olympicBarbell.breakdown(for: Load(45)))
+        XCTAssertEqual(twoSleeve.displayLine, "Bar only")
+
+        let oneSleeve = try XCTUnwrap(
+            LoadingStyle(baseWeight: Load(35), sleeves: 1).breakdown(for: Load(35))
+        )
+        XCTAssertEqual(oneSleeve.displayLine, "Empty")
     }
 
     func testTotalAlwaysMatchesTheRequestedLoad() throws {

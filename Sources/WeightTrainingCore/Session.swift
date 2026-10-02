@@ -41,6 +41,24 @@ public struct SessionExercise: Identifiable, Hashable, Sendable {
     public var workingSets: [SetRecord] { loggedSets.filter { !$0.isWarmup } }
 
     public var hasBeenStarted: Bool { !loggedSets.isEmpty }
+
+    /// How many working sets this lift got last time, if it has a last time.
+    ///
+    /// There is no planned set count (see `Session`), so this is the only
+    /// honest reference for "probably done with this lift": what was
+    /// actually done the previous session. Nil on a first outing — unknown
+    /// means silent, so the screen offers nothing rather than guessing.
+    public var usualSetCount: Int? {
+        guard let count = lastPerformance?.sets.count, count > 0 else { return nil }
+        return count
+    }
+
+    /// True on the set that brings today level with last time — exactly level,
+    /// not past it. Going beyond is the lifter's call and re-arms nothing.
+    public var justReachedUsualSetCount: Bool {
+        guard let usualSetCount else { return false }
+        return workingSets.count == usualSetCount
+    }
 }
 
 /// A training day in progress.
@@ -73,6 +91,12 @@ public struct Session: Hashable, Sendable {
     public var isEmpty: Bool { exercises.isEmpty }
 
     public var isOnLastExercise: Bool { currentIndex >= exercises.count - 1 }
+
+    /// The exercise after the current one, or nil on the last.
+    public var next: SessionExercise? {
+        let index = currentIndex + 1
+        return exercises.indices.contains(index) ? exercises[index] : nil
+    }
 
     /// Every set logged today, across all exercises, in performed order.
     public var allLoggedSets: [SetRecord] {
@@ -135,6 +159,64 @@ public struct Session: Hashable, Sendable {
     /// its exact order, choices, or slot associations.
     public func starting(at date: Date = Date()) -> Session {
         Session(kind: kind, exercises: exercises, startedAt: date)
+    }
+
+    // MARK: - Mid-session addition (#175)
+
+    /// Where a mid-session addition lands. The roster's "add" from #137 only
+    /// ever appends, because nothing is running yet to be "next" relative to;
+    /// once a session is under way there are two things "add an exercise"
+    /// plainly means — do it now, or do it after what's in front of me — so
+    /// this is a choice rather than a single fixed slot.
+    public enum ExercisePlacement: Hashable, Sendable {
+        /// Right after the exercise on screen — for "the rack is free, I'll
+        /// do one more" right now, without shuffling past whatever else is
+        /// left in the day.
+        case next
+        /// After everything already in the day.
+        case end
+    }
+
+    /// Adds an exercise to a session already in progress.
+    ///
+    /// `appendPlannedExercise` is the pre-session counterpart and refuses once
+    /// any set exists, because at that point editing the roster stops being a
+    /// planning action. This is the other side of that line: it exists
+    /// *because* sets are already logged, and it never touches `currentIndex`,
+    /// because inserting a row elsewhere in the list must not change which
+    /// exercise the screen is showing — that would silently do what
+    /// `select(exerciseID:)` is for.
+    ///
+    /// `slot` is forced to nil no matter what the caller passes in. A slot is
+    /// a job the day's template assigned; a lift added because a rack freed up
+    /// mid-session was never one of those jobs, so it can't carry one — the
+    /// same reasoning `appendPlannedExercise` already applies before the
+    /// session starts. Enforced here rather than left to callers to remember,
+    /// since a slot is what lets a swap treat a lift as filling a job in the
+    /// day's shape; an added extra has no job to be substituted out of.
+    ///
+    /// Today only: this changes `exercises`, which `WorkoutDraft` mirrors, but
+    /// never touches a `DayTemplate`. Nothing about the recurring plan
+    /// changes, so tomorrow's version of this day is exactly what it was
+    /// before this exercise was added. #137 left the same question open for
+    /// removal; this answers it the same way — "not today" rather than "not
+    /// ever" is the default either direction, and applying it to the plan is a
+    /// separate, explicit action this method doesn't take.
+    public mutating func addExercise(_ exercise: SessionExercise, placement: ExercisePlacement) {
+        guard !exercises.contains(where: { $0.id == exercise.id }) else { return }
+        let unslotted = SessionExercise(
+            exercise: exercise.exercise,
+            slot: nil,
+            prescription: exercise.prescription,
+            lastPerformance: exercise.lastPerformance,
+            loggedSets: exercise.loggedSets
+        )
+        switch placement {
+        case .next:
+            exercises.insert(unslotted, at: min(currentIndex + 1, exercises.count))
+        case .end:
+            exercises.append(unslotted)
+        }
     }
 
     // MARK: - Logging

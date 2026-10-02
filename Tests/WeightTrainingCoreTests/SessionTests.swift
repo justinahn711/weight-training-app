@@ -381,6 +381,77 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(started.currentIndex, 0)
     }
 
+    // MARK: - Mid-session addition (#175)
+
+    func testAddExerciseNextInsertsRightAfterCurrent() {
+        var day = session(["A", "B", "C"])
+        day.advance()
+        XCTAssertEqual(day.current?.exercise.name, "B")
+
+        let added = SessionExercise(
+            exercise: exercise("D"),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+        day.addExercise(added, placement: .next)
+
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["A", "B", "D", "C"])
+        XCTAssertEqual(day.current?.exercise.name, "B",
+                       "adding elsewhere in the list must not move what's on screen")
+    }
+
+    func testAddExerciseEndAppendsAfterEverything() {
+        var day = session(["A", "B", "C"])
+        day.select(exerciseID: day.exercises[0].id)
+
+        let added = SessionExercise(
+            exercise: exercise("D"),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+        day.addExercise(added, placement: .end)
+
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["A", "B", "C", "D"])
+        XCTAssertEqual(day.current?.exercise.name, "A")
+    }
+
+    /// This is the whole point of the method: it has to work once training has
+    /// actually started, unlike its pre-session counterpart.
+    func testAddExerciseWorksAfterSetsAreLogged() {
+        var day = session(["A", "B"])
+        day.log(SetRecord(exerciseID: day.exercises[0].id, load: Load(70), reps: 10, performedAt: Date()))
+
+        let added = SessionExercise(
+            exercise: exercise("C"),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+        day.addExercise(added, placement: .end)
+
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["A", "B", "C"])
+        XCTAssertEqual(day.exercises[0].loggedSets.count, 1, "the logged set is untouched")
+    }
+
+    func testAddExerciseNeverAssignsASlot() {
+        var day = session(["A"])
+        let added = SessionExercise(
+            exercise: exercise("B"),
+            slot: Slot(name: "Accessory", candidateExerciseIDs: [exercise("B").id]),
+            prescription: Prescription(load: Load(40), reps: 8, rpe: .eight)
+        )
+        day.addExercise(added, placement: .end)
+        XCTAssertNil(day.exercises.last?.slot,
+                     "a lift added mid-session was never one of the day's planned jobs")
+    }
+
+    func testAddingAnExerciseAlreadyInTheDayIsANoOp() {
+        var day = session(["A", "B"])
+        let existing = day.exercises[0].exercise
+        let duplicate = SessionExercise(
+            exercise: existing,
+            prescription: Prescription(exercise: existing, state: nil)
+        )
+        day.addExercise(duplicate, placement: .end)
+        XCTAssertEqual(day.exercises.map { $0.exercise.name }, ["A", "B"])
+    }
+
     // MARK: - Reconfiguring the lift on screen (#98)
 
     private func machine() -> Exercise {
@@ -514,4 +585,80 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(day.current?.loggedSets.count, 1)
     }
 
+}
+
+/// The "probably done with this lift" reference behind the Next-up card.
+/// There is no planned set count, so last time is the only honest one.
+final class UsualSetCountTests: XCTestCase {
+    private let noon = Date(timeIntervalSince1970: 1_760_000_000)
+
+    private func lift() -> Exercise {
+        Exercise(
+            name: "Bench",
+            muscles: [.primary(.chest)],
+            equipment: .barbell,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+    }
+
+    private func set(_ exercise: Exercise, warmup: Bool = false, offset: TimeInterval = 0) -> SetRecord {
+        SetRecord(exerciseID: exercise.id, load: Load(100), reps: 8,
+                  isWarmup: warmup, performedAt: noon.addingTimeInterval(offset))
+    }
+
+    private func sessionExercise(_ exercise: Exercise, lastSets: Int?, today: [SetRecord] = []) -> SessionExercise {
+        let last = lastSets.map { count in
+            LastPerformance(performedAt: noon, sets: (0..<count).map { set(exercise, offset: Double($0)) })
+        }
+        return SessionExercise(
+            exercise: exercise,
+            prescription: Prescription(exercise: exercise, state: nil),
+            lastPerformance: last,
+            loggedSets: today
+        )
+    }
+
+    func testFirstOutingHasNoUsualCount() {
+        let lift = lift()
+        XCTAssertNil(sessionExercise(lift, lastSets: nil).usualSetCount)
+        XCTAssertFalse(sessionExercise(lift, lastSets: nil).justReachedUsualSetCount)
+    }
+
+    func testEmptyLastPerformanceCountsAsUnknown() {
+        XCTAssertNil(sessionExercise(lift(), lastSets: 0).usualSetCount)
+    }
+
+    func testUsualCountIsLastTimesWorkingSets() {
+        XCTAssertEqual(sessionExercise(lift(), lastSets: 3).usualSetCount, 3)
+    }
+
+    func testReachedOnlyWhenExactlyLevelWithLastTime() {
+        let lift = lift()
+        let two = sessionExercise(lift, lastSets: 3, today: [set(lift), set(lift, offset: 60)])
+        XCTAssertFalse(two.justReachedUsualSetCount, "one short is not there yet")
+
+        let three = sessionExercise(lift, lastSets: 3,
+                                    today: [set(lift), set(lift, offset: 60), set(lift, offset: 120)])
+        XCTAssertTrue(three.justReachedUsualSetCount)
+
+        let four = sessionExercise(lift, lastSets: 3, today: (0..<4).map { set(lift, offset: Double($0) * 60) })
+        XCTAssertFalse(four.justReachedUsualSetCount, "going beyond re-arms nothing")
+    }
+
+    func testWarmupsDoNotCountTowardsReaching() {
+        let lift = lift()
+        let warmed = sessionExercise(lift, lastSets: 1, today: [set(lift, warmup: true)])
+        XCTAssertFalse(warmed.justReachedUsualSetCount)
+    }
+
+    func testNextIsTheFollowingExerciseAndNilOnTheLast() {
+        var day = Session(kind: .push, exercises: ["A", "B"].map {
+            let e = Exercise(name: $0, muscles: [.primary(.chest)], equipment: .dumbbell,
+                             progressionRule: .doubleProgression(range: RepRange(8, 12)))
+            return SessionExercise(exercise: e, prescription: Prescription(exercise: e, state: nil))
+        })
+        XCTAssertEqual(day.next?.exercise.name, "B")
+        day.advance()
+        XCTAssertNil(day.next)
+    }
 }

@@ -171,7 +171,8 @@ public struct GymConfig: Hashable, Codable, Sendable {
             baseWeight: barWeight,
             sleeves: sleeves,
             availablePlates: availablePlates,
-            unit: unit
+            unit: unit,
+            followsGymBar: true
         )
     }
 
@@ -192,18 +193,54 @@ public struct GymConfig: Hashable, Codable, Sendable {
     /// The plates and the unit describe the room and are the gym's to change;
     /// what a chest-supported T-bar's lever weighs is a fact about that machine
     /// that somebody went and measured (#20), and no unit change makes it
-    /// untrue. Only a base that is still just the old world's bar — inherited,
-    /// never measured — gets swapped for this gym's.
-    public func applied(to style: LoadingStyle) -> LoadingStyle {
+    /// untrue. Only a base that is just the gym's bar gets swapped for this
+    /// gym's.
+    ///
+    /// Which one a base is, is read from `style.followsGymBar` (#270). #242
+    /// tried to recognise it from the number instead — the standard bar, or
+    /// the bar of the gym being replaced — which works on the device where the
+    /// change is made and nowhere else: a second device learns the gym through
+    /// sync with no `previous`, so a stepper's 45 → 40 → 35 stranded its lifts
+    /// on 40, and a 35 lb-bar gym switched to kilograms left a 35 lb "bar" in
+    /// a kilogram rack. With the answer recorded on the lift, every device
+    /// re-racks the same way whatever order the changes arrive in.
+    ///
+    /// An unmarked base (written before #270) is inferred once and the answer
+    /// recorded on the returned style, so it never has to be guessed again:
+    /// the gym's current bar, `previous`'s bar, or either unit's standard bar
+    /// means following; anything else means measured, because overwriting a
+    /// weighed lever is the mistake that can't be seen afterwards. Two cases
+    /// come out wrong and can't be told apart from the number alone:
+    ///
+    /// - A lever weighed at exactly one of those bars is taken as following.
+    ///   The lift list already labels such a base "(default)".
+    /// - A lift an older build already stranded — on 40 in a gym now at 35,
+    ///   or on a 35 lb bar in a kilogram gym — is taken as measured and kept.
+    ///   Typing the gym's bar on its sheet hands it back to the gym.
+    ///
+    /// - Parameter previous: the gym this one replaces, when the caller knows
+    ///   it. Only consulted to infer a mark for an unmarked base.
+    public func applied(to style: LoadingStyle, replacing previous: GymConfig? = nil) -> LoadingStyle {
         guard style.usesGymRack else { return style }
 
         var updated = style
-        if let base = style.baseWeight, base == style.unit.standardBar {
-            updated.baseWeight = barWeight
+        if let base = style.baseWeight {
+            let follows = style.followsGymBar ?? isBar(base, replacing: previous)
+            if follows { updated.baseWeight = barWeight }
+            updated.followsGymBar = follows
         }
         updated.availablePlates = availablePlates
         updated.unit = unit
         return updated
+    }
+
+    /// Whether an unmarked base reads as a bar rather than a measurement —
+    /// the inference `applied(to:replacing:)` records for rows written before
+    /// #270, and the Store's answer when a lifter types a new empty weight.
+    public func isBar(_ base: Load, replacing previous: GymConfig? = nil) -> Bool {
+        base == barWeight
+            || base == previous?.barWeight
+            || MassUnit.allCases.contains { base == $0.standardBar }
     }
 
     /// Re-marks an increment that is still the equipment's default, and leaves

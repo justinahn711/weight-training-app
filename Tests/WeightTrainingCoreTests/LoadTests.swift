@@ -20,7 +20,7 @@ final class LoadTests: XCTestCase {
         let press = ExerciseLibrary.all.first { $0.name == "Incline DB Press" }!
 
         // 225 on a bar is 45 + two 45s a side, not 225 in each hand.
-        XCTAssertEqual(bench.plateBreakdown(for: Load(225))?.displayLine, "45 · 45")
+        XCTAssertEqual(bench.plateBreakdown(for: Load(225))?.displayLine, "45 · 45 per side")
 
         // 70 on dumbbells means the 70s; the next one up is 75, not 80.
         XCTAssertEqual(press.increment.pounds, 5)

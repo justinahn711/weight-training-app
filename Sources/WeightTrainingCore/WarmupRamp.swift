@@ -98,6 +98,27 @@ public enum WarmupRamp {
         return rungs.sorted { $0.load < $1.load }
     }
 
+    /// The rung nobody has logged yet, in ramp order — nil once every rung
+    /// has a matching entry in `loggedWarmupLoads`, or when `ramp` is empty.
+    ///
+    /// This is deliberately how "where am I in the ramp" is answered instead
+    /// of a stored index (#206). `generate` is regenerated fresh on every
+    /// read rather than saved, so there is no persisted position for an
+    /// index to describe, and nowhere for it to survive a relaunch, a swap
+    /// away from the lift and back, or a session resumed from disk. Deriving
+    /// the answer from what is already durable — today's logged warmup sets
+    /// — needs nothing extra to restore, the same way `RestTimer.reconciled`
+    /// rebuilds a running rest from a timestamp instead of a live clock.
+    ///
+    /// Matched by load, which is already this type's identity (`WarmupSet.
+    /// id`): a warmup logged at a rung's exact weight counts as that rung
+    /// done whether it arrived by tapping the rung or by logging an
+    /// unplanned extra warmup at the same number, and a load elsewhere in
+    /// `loggedWarmupLoads` that doesn't match any rung is simply ignored.
+    public static func nextRung(in ramp: [WarmupSet], loggedWarmupLoads: Set<Load>) -> WarmupSet? {
+        ramp.first { !loggedWarmupLoads.contains($0.load) }
+    }
+
     /// Rounds a rung down to something the equipment can build.
     ///
     /// Down, so a warmup is never accidentally heavier than intended — the one

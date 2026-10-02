@@ -203,6 +203,71 @@ final class CycleEngineTests: XCTestCase {
         XCTAssertEqual(repeated.summary(now: day0), "Next: Push — last push was yesterday")
     }
 
+    /// A custom day is said the way it was typed (#136).
+    ///
+    /// `.capitalized` is a lossy read of a chosen name: it title-cases every
+    /// word, so "arms and abs" comes back "Arms And Abs" and "HIIT day" comes
+    /// back "Hiit Day". The dashboard's Resume button shows the template's
+    /// own `name`, so this sentence directly above it called the same day
+    /// something else. The name the split carries wins over the derived one.
+    func testSummarySaysACustomDayTheWayItWasTyped() {
+        // Built through the split editor's own constructor rather than a
+        // hand-made template, so this stays true if custom days ever get a
+        // different identity: the kind's raw value *is* the typed name today,
+        // which is exactly why the derived reading went wrong.
+        let typed = "arms and abs"
+        let custom = [DayTemplateLibrary.customDay(name: typed, exercises: [])]
+        XCTAssertNotEqual(custom[0].name, custom[0].kind.rawValue.capitalized,
+                          "the case this test exists for")
+        let position = CycleEngine.position(history: [], templates: custom)
+        XCTAssertEqual(position.summary(now: day0), "Next: arms and abs — first time")
+
+        // And in both halves of the sentence once it has been trained before —
+        // lowercasing or title-casing either mention would be the app
+        // rewriting the lifter's own word.
+        let repeated = CyclePosition(
+            next: DayKind(rawValue: typed)!,
+            lastPerformed: [DayKind(rawValue: typed)!: day0.addingTimeInterval(-3 * 86_400)],
+            dayNames: [DayKind(rawValue: typed)!: typed]
+        )
+        XCTAssertEqual(repeated.summary(now: day0),
+                       "Next: arms and abs — last arms and abs was 3 days ago")
+    }
+
+    /// A day renamed without changing its kind is named too.
+    func testSummaryUsesTheNameTheLifterChose() {
+        let renamed = [
+            DayTemplate(kind: .push, name: "Upper A", slots: DayTemplateLibrary.push.slots),
+            DayTemplate(kind: .pull, name: "Upper B", slots: DayTemplateLibrary.pull.slots),
+            DayTemplate(kind: .legs, name: "Lower", slots: DayTemplateLibrary.legs.slots),
+        ]
+        let position = CycleEngine.position(
+            history: session(.legs, daysAgo: 2), templates: renamed
+        )
+        XCTAssertEqual(position.next, .push)
+        XCTAssertEqual(position.summary(now: day0), "Next: Upper A — first time")
+
+        // A full rotation, so the day that comes next has been done before and
+        // the sentence has to name it twice.
+        let repeated = CycleEngine.position(
+            history: session(.push, daysAgo: 4) + session(.pull, daysAgo: 3)
+                + session(.legs, daysAgo: 2) + session(.push, daysAgo: 1),
+            templates: renamed
+        )
+        XCTAssertEqual(repeated.summary(now: day0),
+                       "Next: Upper B — last Upper B was 3 days ago")
+    }
+
+    /// Nobody who never opened the split editor sees any change.
+    func testSummaryKeepsItsWordingForBuiltInNames() {
+        let position = CycleEngine.position(
+            history: session(.push, daysAgo: 1) + session(.legs, daysAgo: 0)
+        )
+        XCTAssertTrue(position.dayNames.isEmpty,
+                      "a name nobody chose is not worth carrying")
+        XCTAssertEqual(position.summary(now: day0), "Next: Push — last push was yesterday")
+    }
+
     /// No weekday may appear anywhere the app speaks.
     func testNoWeekdayEverAppears() {
         let weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday",

@@ -37,6 +37,7 @@ struct SettingsView: View {
     @AppStorage(RestAlertSettings.notificationKey) private var notification = true
     @AppStorage(RestAlertSettings.timingKey) private var timing = RestAlertSettings.timingDefault
     @AppStorage(RestAlertSettings.digestKey) private var digestReminder = false
+    @AppStorage(RestAlertSettings.autoAdvanceKey) private var autoAdvance = true
 
     /// Whether iOS will actually deliver what the toggle above asks for. A
     /// toggle that's on while notifications are denied at the system level is
@@ -66,6 +67,7 @@ struct SettingsView: View {
                 trainingSplitSection
                 gymSection
                 plateSection
+                liftLibrarySection
             }
 
             Section {
@@ -99,6 +101,15 @@ struct SettingsView: View {
                 Text(notification
                      ? "A banner when the target passes, so a phone in a pocket still tells you. The buzz happens either way."
                      : "The phone will buzz when rest is over and say nothing else.")
+            }
+
+            Section {
+                Toggle("Move on when rest ends", isOn: $autoAdvance)
+                    .accessibilityIdentifier("settings.autoAdvance")
+            } header: {
+                Text("Next lift")
+            } footer: {
+                Text("Once you've matched last time's set count, the rest after that set ends on the next lift. The Next up card has a Stay button for the day you want one more.")
             }
 
             Section {
@@ -218,14 +229,14 @@ struct SettingsView: View {
             }
             .frame(minHeight: 44)
 
-            Stepper(value: weeklyTargetBinding, in: 1...7) {
-                LabeledContent(
-                    "Weekly goal",
-                    value: "\(gym.weeklySessionTarget) \(gym.weeklySessionTarget == 1 ? "day" : "days")"
-                )
+            // Stacked at accessibility sizes so "Weekly goal" isn't broken
+            // mid-word beside the −/+ control (#250).
+            StackedStepperRow(title: "Weekly goal", value: weeklyTargetText) {
+                Stepper(value: weeklyTargetBinding, in: 1...7) {
+                    LabeledContent("Weekly goal", value: weeklyTargetText)
+                }
+                .accessibilityIdentifier("settings.weeklySessionTarget")
             }
-            .accessibilityIdentifier("settings.weeklySessionTarget")
-
             NavigationLink {
                 MuscleVolumeBudgetEditor(
                     budgets: gym.volumeBudgets,
@@ -298,6 +309,10 @@ struct SettingsView: View {
         commit(updated)
     }
 
+    private var weeklyTargetText: String {
+        "\(gym.weeklySessionTarget) \(gym.weeklySessionTarget == 1 ? "day" : "days")"
+    }
+
     private var weeklyTargetBinding: Binding<Int> {
         Binding(
             get: { gym.weeklySessionTarget },
@@ -320,17 +335,19 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
 
-            Stepper(
-                value: barBinding,
-                in: gym.unit == .pounds ? 15...75 : 5...35,
-                step: gym.unit == .pounds ? 5 : 2.5
-            ) {
-                HStack {
-                    Text("Bar")
-                    Spacer(minLength: 12)
-                    Text(gym.unit.format(pounds: gym.barWeight.pounds))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
+            StackedStepperRow(title: "Bar", value: gym.unit.format(pounds: gym.barWeight.pounds)) {
+                Stepper(
+                    value: barBinding,
+                    in: gym.unit == .pounds ? 15...75 : 5...35,
+                    step: gym.unit == .pounds ? 5 : 2.5
+                ) {
+                    HStack {
+                        Text("Bar")
+                        Spacer(minLength: 12)
+                        Text(gym.unit.format(pounds: gym.barWeight.pounds))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         } header: {
@@ -351,6 +368,34 @@ struct SettingsView: View {
             Text("Plates on the rack")
         } footer: {
             Text(plateFooter)
+        }
+    }
+
+    // MARK: - Lift library (#178)
+
+    /// The other door into `ExerciseConfigView` (#178).
+    ///
+    /// The session screen's config line is the door for correcting a lift
+    /// while standing at it. This is the door for the question that isn't
+    /// "fix this machine" but "what can I even change" — asked away from any
+    /// specific lift, which is exactly the shape of all three reports that
+    /// led here: the warmup ramp, the rack, and this issue's own increment.
+    /// Placed after `plateSection` rather than before the gym sections,
+    /// since `plateFooter` already names lifts with a rack of their own —
+    /// this is where someone reading that footer goes to find out which.
+    private var liftLibrarySection: some View {
+        Section {
+            NavigationLink {
+                if let store {
+                    LiftConfigurationListView(store: store)
+                }
+            } label: {
+                Text("Lift library")
+            }
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("settings.liftLibrary")
+        } footer: {
+            Text("Every lift's increment, apparatus, and rest time — including the ones nobody's ever touched.")
         }
     }
 
@@ -1038,6 +1083,11 @@ struct TrainingSplitEditorView: View {
             Button(action: save) {
                 Text(isOnboarding ? "Get started" : "Save")
                     .font(.title3.bold())
+                    // The default white on the accent fill measured 2.53:1;
+                    // the system contrast audit named this button (#260).
+                    // Muted while disabled, where the fill is grey and
+                    // near-black would be the unreadable pairing instead.
+                    .foregroundStyle(canSave ? AnyShapeStyle(Theme.onAccent) : AnyShapeStyle(.secondary))
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
             }
@@ -1195,7 +1245,7 @@ private struct CustomDayEditorSheet: View {
                 } footer: {
                     if !trimmedName.isEmpty && existingNames.contains(trimmedName) {
                         Text("Another day is already named \(trimmedName).")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Theme.attention)
                     }
                 }
 

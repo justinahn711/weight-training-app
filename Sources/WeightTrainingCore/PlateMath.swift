@@ -40,14 +40,27 @@ public struct PlateBreakdown: Hashable, Sendable {
 
     public var isBarOnly: Bool { perSide.isEmpty }
 
-    /// `45 · 25 · 10` — plates per sleeve, heaviest first, read while loading.
+    /// `45 · 25 · 10 per side` — plates per sleeve, heaviest first, read
+    /// while loading.
     ///
     /// Repeats are listed rather than multiplied because that's the order they
     /// go on the sleeve, and counting three 45s written out is faster than
     /// parsing "45×3" with a bar in your hands.
+    ///
+    /// "per side" is appended for a two-(or-more)-sleeve apparatus and
+    /// withheld for a one-sleeve one (#176). A gym report — "should we label
+    /// that the plates are 2x" — is what this exists to fix: on a barbell,
+    /// reading the per-sleeve list as the total is a 90 lb error on a 225 lb
+    /// squat. The reverse mistake matters just as much, so a T-bar or any
+    /// other one-sleeve machine must not say "per side" — there's no second
+    /// side, and saying so would be false rather than merely ambiguous.
+    /// `sleeves` already carries the fact, so the label is derived rather
+    /// than guessed at each call site. Two words, appended once, rather than
+    /// a longer rewrite — #122 was filed because this exact line had grown
+    /// too long once already.
     public var displayLine: String {
         guard !isBarOnly else { return sleeves == 1 ? "Empty" : "Bar only" }
-        return perSide
+        let plates = perSide
             .flatMap { entry in Array(repeating: entry.plate, count: entry.count) }
             // Native plate sizes, so the rack's own unit renders them: this
             // had its own inlined one-decimal rule and turned the 1.25 kg pair
@@ -55,6 +68,7 @@ public struct PlateBreakdown: Hashable, Sendable {
             // bar in your hands.
             .map { unit.format($0, withSymbol: false) }
             .joined(separator: " · ")
+        return sleeves == 1 ? plates : "\(plates) per side"
     }
 }
 
@@ -185,6 +199,44 @@ extension Exercise {
         // and the rack having 65s is likelier than the set being imaginary.
         guard let loading, loading.isMeasured else { return floored }
         return max(minimumLoad, increment.snapToNearest(floored))
+    }
+
+    /// The load one step above `load`, for a lift that has earned it.
+    ///
+    /// One increment up, echoed as gently as `achievableTarget` echoes a
+    /// lifted weight — an odd dumbbell goes up from where it was, not onto the
+    /// increment's grid. A measured plate-built lift then answers from its
+    /// plates, as `nearestAchievable` does, because the increment is a scalar
+    /// and the rack is a set: without 2.5 lb plates, 135 + 5 is a load nobody
+    /// can make, and the screen would snap it straight back to 135 (#241).
+    /// When the nearest buildable load is not above where the lift already
+    /// is, the step is the next load the plates *can* build.
+    ///
+    /// Never lower than `load`: a rack that can build nothing heavier holds.
+    public func raisedTarget(above load: Load) -> Load {
+        let stepped = achievableTarget(echoing: Load(load.pounds + increment.pounds))
+        guard let loading, loading.isMeasured else { return stepped }
+
+        let built = loading.nearestBuildable(stepped)
+        if built > load { return built }
+        return loading.nextBuildable(after: load) ?? load
+    }
+
+    /// The load one step below `load` — `raisedTarget(above:)` in reverse.
+    ///
+    /// For a lift that should come down a notch: one increment down, echoed as
+    /// gently, then answered from the plates on a measured apparatus. Without
+    /// 2.5 lb plates, 145 − 5 is 140, which nothing on that rack builds (#240).
+    ///
+    /// Never higher than `load`, and never under the empty apparatus: a lift
+    /// already at its floor holds.
+    public func loweredTarget(below load: Load) -> Load {
+        let stepped = achievableTarget(echoing: Load(load.pounds - increment.pounds))
+        guard let loading, loading.isMeasured else { return stepped }
+
+        let built = loading.nearestBuildable(stepped)
+        if built < load { return built }
+        return loading.previousBuildable(before: load) ?? load
     }
 
     /// The lightest load this exercise can be set to and still be a set.

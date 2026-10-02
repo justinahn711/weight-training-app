@@ -113,21 +113,59 @@ public final class TrainingStore {
     // MARK: - Exercises
 
     /// Inserts the exercise, or overwrites the existing row with the same id.
+    ///
+    /// Stamped as the lifter's write, which is what lets it win over a stock
+    /// copy of the same lift that another device seeded (#268).
     public func upsert(_ exercise: Exercise) throws {
-        if let existing = try storedExercise(id: exercise.id) {
-            existing.update(from: exercise)
-        } else {
-            context.insert(StoredExercise(exercise))
-        }
-        try commit()
+        try upsert([exercise])
     }
 
     public func upsert(_ exercises: [Exercise]) throws {
+        let gym = (try? gymConfig()) ?? .standard
+        let marked = try exercises.map { try markingBase(of: $0, in: gym) }
+        try upsert(marked, stampedAt: EditStamp.at(Date()))
+    }
+
+    /// Settles whether a lifter-written empty weight is the gym's bar or a
+    /// measurement (#270).
+    ///
+    /// The lift sheet builds a fresh `LoadingStyle` on every Save with no
+    /// opinion on `followsGymBar`, and a caller editing a lift it read back
+    /// carries the old mark along with a new number — so the mark a write
+    /// arrives with is not evidence of anything. The store decides from what
+    /// changed instead:
+    ///
+    /// - An untouched base keeps the mark it had. A Save that only changed
+    ///   the rest timer must not detach the bar from the gym.
+    /// - A newly typed base is a measurement, unless it is exactly the gym's
+    ///   own bar. That exception is how a lift goes back to following,
+    ///   including one an older build stranded on a bar the gym no longer has.
+    /// - A lift with a rack of its own isn't re-racked at all, so its new base
+    ///   is left unmarked; should it rejoin the gym, `applied` infers one then.
+    private func markingBase(of exercise: Exercise, in gym: GymConfig) throws -> Exercise {
+        guard var loading = exercise.loading, let base = loading.baseWeight else { return exercise }
+        guard let stored = (try storedExercise(id: exercise.id)).flatMap({ try? $0.toDomain() })?.loading
+        else { return exercise }
+
+        if stored.baseWeight == base {
+            loading.followsGymBar = loading.followsGymBar ?? stored.followsGymBar
+        } else {
+            loading.followsGymBar = loading.usesGymRack ? base == gym.barWeight : nil
+        }
+        var marked = exercise
+        marked.loading = loading
+        return marked
+    }
+
+    /// - Parameter stamp: what `deduplicate()` will read about who wrote these
+    ///   rows — see `EditStamp`.
+    func upsert(_ exercises: [Exercise], stampedAt stamp: Date) throws {
         for exercise in exercises {
             if let existing = try storedExercise(id: exercise.id) {
                 existing.update(from: exercise)
+                existing.updatedAt = stamp
             } else {
-                context.insert(StoredExercise(exercise))
+                context.insert(StoredExercise(exercise, updatedAt: stamp))
             }
         }
         try commit()
@@ -192,22 +230,22 @@ public final class TrainingStore {
         let descriptor = FetchDescriptor<StoredExercise>(
             sortBy: [SortDescriptor(\.name)]
         )
-        var seen: Set<UUID> = []
-        return try context.fetch(descriptor)
-            .filter { seen.insert($0.id).inserted }
-            .map { try $0.toDomain() }
+        return try survivors(
+            try context.fetch(descriptor), key: \.id, winner: DuplicateSurvivor.exercise
+        ).map { try $0.toDomain() }
     }
 
     public func exercise(id: UUID) throws -> Exercise? {
         try storedExercise(id: id)?.toDomain()
     }
 
-    private func storedExercise(id: UUID) throws -> StoredExercise? {
-        var descriptor = FetchDescriptor<StoredExercise>(
+    /// The copy `deduplicate()` would keep, so an edit lands on the row that
+    /// survives rather than on one about to be deleted (#268).
+    func storedExercise(id: UUID) throws -> StoredExercise? {
+        let descriptor = FetchDescriptor<StoredExercise>(
             predicate: #Predicate { $0.id == id }
         )
-        descriptor.fetchLimit = 1
-        return try context.fetch(descriptor).first
+        return DuplicateSurvivor.exercise(try context.fetch(descriptor))
     }
 
     // MARK: - Sets
@@ -261,6 +299,8 @@ public final class TrainingStore {
         descriptor.fetchLimit = 1
         guard let stored = try context.fetch(descriptor).first else { return false }
         stored.update(from: correctedSet(record, replacing: stored))
+        // Corrections outrank the original copy after sync.
+        stored.updatedAt = EditStamp.at(Date())
         try commit()
         return true
     }
@@ -287,6 +327,8 @@ public final class TrainingStore {
         let corrected = correctedSet(record, replacing: stored)
         guard preview.correctSet(corrected) else { return false }
         stored.update(from: corrected)
+        // Corrections outrank the original copy after sync.
+        stored.updatedAt = EditStamp.at(Date())
         try commit()
         session = preview
         return true
@@ -327,6 +369,170 @@ public final class TrainingStore {
         return true
     }
 
+    /// Removes many sets — a bad import, a duplicate workout, a whole
+    /// accidental day — as one persistence operation (#168).
+    ///
+    /// Deleting one row at a time from `DayDetailView`'s selection would mean N
+    /// separate saves, and a crash or a killed app partway through leaves a day
+    /// with some sets gone and others not — a day the lifter opened precisely
+    /// to make legible, now less legible than before. Every stage here (the
+    /// deletes, and the progress-state correction below) is staged on the
+    /// context and lands in the single `commit()` at the end, so either the
+    /// whole selection disappears or none of it does.
+    ///
+    /// Ids that don't match anything on disk are skipped rather than failing
+    /// the batch — the same idempotence `logIfAbsent` gives the write side, and
+    /// what's needed for this to be safe to retry if a caller can't tell
+    /// whether an earlier attempt actually reached the server before a sync
+    /// merge deduplicated the row out from under it.
+    ///
+    /// - Returns: the ids actually found and removed.
+    @discardableResult
+    public func deleteSets(ids: Set<UUID>) throws -> Set<UUID> {
+        guard !ids.isEmpty else { return [] }
+
+        let historyBeforeDelete = try allSets()
+        let matched = historyBeforeDelete.filter { ids.contains($0.id) }
+        guard !matched.isEmpty else { return [] }
+
+        let removedIDs = Set(matched.map(\.id))
+        let affectedExerciseIDs = Set(matched.map(\.exerciseID))
+
+        for id in removedIDs {
+            var descriptor = FetchDescriptor<StoredSetLog>(
+                predicate: #Predicate { $0.id == id }
+            )
+            descriptor.fetchLimit = 1
+            if let stored = try context.fetch(descriptor).first {
+                context.delete(stored)
+            }
+        }
+
+        // What progression sees changes with the history it reads from — a
+        // load jump or a stall count earned by sets that no longer exist
+        // can't just be left standing. But only state the replay itself would
+        // have produced is the replay's to rewrite (#269); see
+        // `stageProgressStateCorrection`. Computed from the in-memory history
+        // rather than a fresh fetch: the deletes above are only staged, not
+        // yet saved, so re-fetching here isn't guaranteed to reflect them.
+        let exercisesByID = Dictionary(uniqueKeysWithValues: try exercises().map { ($0.id, $0) })
+        for exerciseID in affectedExerciseIDs {
+            guard let exercise = exercisesByID[exerciseID] else {
+                // The lift itself is gone too (`deleteExercise`); its progress
+                // row is already meaningless and reaches no screen.
+                continue
+            }
+            try stageProgressStateCorrection(
+                exercise: exercise, historyBeforeDelete: historyBeforeDelete, removedIDs: removedIDs
+            )
+        }
+
+        try commit()
+        return removedIDs
+    }
+
+    /// Undoes the progression step a batch delete took the ground out from
+    /// under — and nothing else. Stages the change without saving; the caller
+    /// commits once for the whole batch (#168).
+    ///
+    /// `ProgressState` is a cumulative snapshot advanced once per session by
+    /// `applyProgression`, never a live read of history the way the digest and
+    /// e1RM trends are. Deleting the session that earned a load jump or ran up
+    /// a stall would otherwise leave that jump standing on nothing (#168).
+    ///
+    /// The first version replayed the lift's whole remaining history from a
+    /// cold start and overwrote whatever was stored (#269). That is only
+    /// honest if the stored state *is* such a replay, and it often isn't: a
+    /// deload tapped in the digest, a session finished under an older rule or
+    /// increment, a same-day re-entry the live path's guard skipped. Deleting
+    /// one warmup from an old day put a 165 lb deload back to 180. So the
+    /// state is rewritten only when all of these hold, and left exactly as it
+    /// was otherwise:
+    ///
+    /// 1. **A working set was deleted.** Warmups never drive progression.
+    /// 2. **It belongs to the lift's latest session.** That session produced
+    ///    the stored target; older ones are already superseded by it.
+    /// 3. **The stored state is what replaying the pre-delete history
+    ///    produces** (ignoring `lastPerformedAt`, which the live path stamps
+    ///    with the session start). A match means nothing but that history
+    ///    authored the state, so replaying without the deleted sets removes
+    ///    exactly their contribution. A mismatch means something the replay
+    ///    can't reconstruct — a deload above all — is in there, and the
+    ///    lifter's decision outranks the recompute. Suggest, never change.
+    ///
+    /// The one exception is a delete that leaves no working sets at all: the
+    /// lift is back to never performed, and a target with no history under it
+    /// is the thing #168 set out to prevent, so the row is removed.
+    private func stageProgressStateCorrection(
+        exercise: Exercise, historyBeforeDelete: [SetRecord], removedIDs: Set<UUID>
+    ) throws {
+        let ownHistory = historyBeforeDelete.filter { $0.exerciseID == exercise.id }
+
+        // 1. Warmups only: nothing progression ever read has changed.
+        guard ownHistory.contains(where: { removedIDs.contains($0.id) && !$0.isWarmup }) else { return }
+
+        let sessionsBefore = ownHistory.groupedIntoSessions()
+        let sessionsAfter = ownHistory.filter { !removedIDs.contains($0.id) }.groupedIntoSessions()
+
+        guard !sessionsAfter.isEmpty else {
+            // No working sets left at all: back to the cold start the session
+            // screen shows for a lift that's never been performed.
+            if let existing = try storedState(for: exercise.id) {
+                context.delete(existing)
+            }
+            return
+        }
+
+        // 2. Only the latest session's step is undoable; earlier days are
+        //    already superseded by it.
+        guard let latest = sessionsBefore.last,
+              latest.contains(where: { removedIDs.contains($0.id) }) else { return }
+
+        // 3. Only state the replay itself would have produced is the replay's
+        //    to rewrite.
+        guard let existing = try storedState(for: exercise.id) else { return }
+        let stored = existing.toDomain()
+        guard Self.sameProgression(stored, Self.replay(sessionsBefore, exercise: exercise)) else { return }
+
+        var corrected = Self.replay(sessionsAfter, exercise: exercise)
+        // A partial delete from the latest day leaves that day the latest, so
+        // keep the stamp the live path wrote for it (the session start). A
+        // whole day removed leaves only set times to go on; the day is what
+        // `applyProgression`'s same-day guard reads, and that is right.
+        if let storedDate = stored.lastPerformedAt,
+           let replayedDate = corrected.lastPerformedAt,
+           Calendar.current.isDate(storedDate, inSameDayAs: replayedDate) {
+            corrected.lastPerformedAt = storedDate
+        }
+        existing.update(from: corrected)
+    }
+
+    /// The state a lift's working sessions produce from a cold start, each
+    /// advanced once, in order — the same rule `ProgressionEngine` applies
+    /// going forward.
+    private static func replay(_ sessions: [[SetRecord]], exercise: Exercise) -> ProgressState {
+        var state = ProgressState(exerciseID: exercise.id)
+        for session in sessions {
+            // `groupedIntoSessions` already drops warmups, so every set here
+            // is working.
+            let performedAt = session.map(\.performedAt).max() ?? state.lastPerformedAt ?? Date()
+            state = ProgressionEngine.advance(
+                exercise: exercise, state: state, performed: session, now: performedAt
+            ).state
+        }
+        return state
+    }
+
+    /// Equal in everything progression decides. `lastPerformedAt` is left
+    /// out: the live path stamps the session start, a replay can only see set
+    /// times, and neither changes a target.
+    private static func sameProgression(_ lhs: ProgressState, _ rhs: ProgressState) -> Bool {
+        var lhs = lhs, rhs = rhs
+        lhs.lastPerformedAt = nil
+        rhs.lastPerformedAt = nil
+        return lhs == rhs
+    }
+
     /// Every set for one exercise, oldest first.
     public func sets(forExercise exerciseID: UUID) throws -> [SetRecord] {
         let descriptor = FetchDescriptor<StoredSetLog>(
@@ -358,8 +564,12 @@ public final class TrainingStore {
     /// A duplicated set is not a cosmetic problem: it inflates volume, e1RM,
     /// and every progression decision that reads the session.
     private func unique(_ rows: [StoredSetLog]) -> [SetRecord] {
-        var seen: Set<UUID> = []
-        return rows.filter { seen.insert($0.id).inserted }.map { $0.toDomain() }
+        let grouped = Dictionary(grouping: rows, by: \.id)
+        var seen = Set<UUID>()
+        return rows.compactMap { row in
+            guard seen.insert(row.id).inserted else { return nil }
+            return DuplicateSurvivor.resolvedSet(grouped[row.id]!)?.record
+        }
     }
 
     // MARK: - Bodyweight
@@ -427,14 +637,19 @@ public final class TrainingStore {
     // MARK: - Day templates
 
     public func upsert(_ template: DayTemplate) throws {
-        var descriptor = FetchDescriptor<StoredDayTemplate>(
+        try upsert(template, stampedAt: EditStamp.at(Date()))
+    }
+
+    /// - Parameter stamp: see `EditStamp`; seeding passes `EditStamp.stock`.
+    func upsert(_ template: DayTemplate, stampedAt stamp: Date) throws {
+        let descriptor = FetchDescriptor<StoredDayTemplate>(
             predicate: #Predicate { $0.id == template.id }
         )
-        descriptor.fetchLimit = 1
-        if let existing = try context.fetch(descriptor).first {
+        if let existing = DuplicateSurvivor.template(try context.fetch(descriptor)) {
             existing.update(from: template)
+            existing.updatedAt = stamp
         } else {
-            context.insert(StoredDayTemplate(template))
+            context.insert(StoredDayTemplate(template, updatedAt: stamp))
         }
         try commit()
     }
@@ -449,10 +664,10 @@ public final class TrainingStore {
     /// a second copy of every row. The next launch merges them, but the whole
     /// first launch runs on doubled templates.
     public func dayTemplates() throws -> [DayTemplate] {
-        var seen: Set<UUID> = []
-        return try context.fetch(FetchDescriptor<StoredDayTemplate>())
-            .filter { seen.insert($0.id).inserted }
-            .map { try $0.toDomain() }
+        try survivors(
+            try context.fetch(FetchDescriptor<StoredDayTemplate>()),
+            key: \.id, winner: DuplicateSurvivor.template
+        ).map { try $0.toDomain() }
     }
 
     public func dayTemplate(kind: DayKind) throws -> DayTemplate? {
