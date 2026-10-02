@@ -887,6 +887,28 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.usesOtherRepCount)
     }
 
+    // MARK: - Swap search never offers a lift already in the day (#302)
+
+    func test_searchResults_leaveOutLiftsAlreadyInTheDay() throws {
+        let store = try TrainingStore.inMemory()
+        let bench = benchPress()
+        let raise = lateralRaise()
+        let spare = lateralRaise().renamed("Cable Lateral Raise")
+        try store.upsert([bench, raise, spare])
+        let vm = SessionViewModel(
+            store: store,
+            session: Session(kind: .push, exercises: [sessionExercise(bench), sessionExercise(raise)]),
+            draftID: UUID()
+        )
+        vm.loadSuggestionContext()
+        let benchRow = try XCTUnwrap(vm.session.exercises.first)
+
+        let names = vm.searchResults("Lateral", for: benchRow).map(\.name)
+
+        XCTAssertTrue(names.contains("Cable Lateral Raise"), "sanity: the search finds lifts")
+        XCTAssertFalse(names.contains("Lateral Raise"), "already in the day, so not a swap target")
+    }
+
     // MARK: - progressLabel
 
     func test_progressLabel_firstOfOne() throws {

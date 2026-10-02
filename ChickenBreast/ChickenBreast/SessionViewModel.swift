@@ -1037,14 +1037,22 @@ final class SessionViewModel {
     func swapCandidates(for replaced: SessionExercise) -> [Exercise] {
         let ids = replaced.slot?.candidateExerciseIDs ?? []
         let candidates = ids.compactMap { id in allExercises.first { $0.id == id } }
-            .filter { $0.id != replaced.exercise.id }
+            .filter { isSwapTarget($0, for: replaced) }
         return ExerciseSearch.rankedByStaleness(candidates, lastPerformed: lastPerformed)
     }
 
     /// Fuzzy search across the whole library, for everything else.
     func searchResults(_ query: String, for replaced: SessionExercise) -> [Exercise] {
         ExerciseSearch.search(query, in: allExercises)
-            .filter { $0.id != replaced.exercise.id }
+            .filter { isSwapTarget($0, for: replaced) }
+    }
+
+    /// Neither the lift being replaced nor one already elsewhere in the day:
+    /// `Session.replace` refuses a lift that's already in the day, so offering
+    /// one would be a row that taps into nothing (#302).
+    private func isSwapTarget(_ exercise: Exercise, for replaced: SessionExercise) -> Bool {
+        exercise.id != replaced.exercise.id
+            && !session.exercises.contains { $0.id == exercise.id }
     }
 
     // MARK: - Live Activity (#23)
