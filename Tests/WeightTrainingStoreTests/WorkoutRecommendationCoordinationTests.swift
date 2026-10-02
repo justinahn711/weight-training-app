@@ -72,6 +72,69 @@ final class WorkoutRecommendationCoordinationTests: XCTestCase {
         )
     }
 
+    /// The recommendation a workout shows is computed as of its start; the
+    /// one `persistExercisePlan` checks it against is computed as of the
+    /// moment it activates. When the only change between them is sets
+    /// logged in this same workout, they must agree, or activation throws
+    /// `.recommendationChanged` and the lift can't be logged (#316 review).
+    /// Before the fix, this workout's logged sets fell out of the trailing
+    /// history as of the start yet were still subtracted from its planned
+    /// remaining work, so the start-time view undercounted the muscle.
+    func testAWorkoutsOwnLoggedSetsDoNotChangeASiblingsRecommendationOverTime() throws {
+        let store = try TrainingStore.inMemory()
+        // A fine increment, so the first lift earns a heavier load rather
+        // than the week's one extra set, which would otherwise mask this.
+        let first = Exercise(
+            name: "Plate press", muscles: [.primary(.chest)], equipment: .machineStack,
+            increment: LoadIncrement(pounds: 5),
+            progressionRule: .doubleProgression(range: RepRange(10, 10))
+        )
+        let sibling = Exercise(
+            name: "Fixed-stack fly", muscles: [.primary(.chest)], equipment: .machineStack,
+            increment: LoadIncrement(pounds: 100),
+            progressionRule: .doubleProgression(range: RepRange(10, 10))
+        )
+        try store.upsert(first)
+        try store.upsert(sibling)
+        // Chest needs 6 hard sets a week; history below supplies 4.
+        var config = try store.gymConfig()
+        config.volumeBudgets = config.volumeBudgets.map {
+            $0.muscle == .chest ? MuscleSetBudget(muscle: .chest, minimum: 6, maximum: 12) : $0
+        }
+        _ = try store.saveGymConfig(config, at: monday.addingTimeInterval(-5 * 86_400))
+        let target = PlannedWorkingSet(load: 100, reps: 10, rpe: .eight)
+        for exercise in [first, sibling] {
+            for offset in [-3.0, -1.0] {
+                let startedAt = monday.addingTimeInterval(offset * 86_400)
+                let workout = UUID()
+                _ = try store.acceptExercisePlan(ExercisePlan(exercise: exercise, sets: [target]),
+                                                 workoutID: workout, startedAt: startedAt, now: startedAt)
+                _ = try store.logWorkoutSet(
+                    SetRecord(exerciseID: exercise.id, load: target.load, reps: target.reps, rpe: .seven,
+                              performedAt: startedAt.addingTimeInterval(60)),
+                    workoutID: workout, startedAt: startedAt, effortReported: true)
+                try store.finishExerciseSessions(workoutID: workout, at: startedAt.addingTimeInterval(120))
+            }
+        }
+
+        // Today: the first lift's three-set plan, fully logged.
+        let workout = UUID()
+        _ = try store.acceptExercisePlan(ExercisePlan(exercise: first, sets: [target, target, target]),
+                                         workoutID: workout, startedAt: monday, now: monday)
+        for minute in [2.0, 4.0, 6.0] {
+            _ = try store.logWorkoutSet(
+                SetRecord(exerciseID: first.id, load: target.load, reps: target.reps, rpe: .seven,
+                          performedAt: monday.addingTimeInterval(minute * 60)),
+                workoutID: workout, startedAt: monday, effortReported: true)
+        }
+
+        let asOfStart = try store.workoutRecommendations(for: [sibling], workoutID: workout, now: monday)
+        let asOfNow = try store.workoutRecommendations(
+            for: [sibling], workoutID: workout, now: monday.addingTimeInterval(10 * 60))
+        XCTAssertEqual(asOfStart[sibling.id]?.action, asOfNow[sibling.id]?.action)
+        XCTAssertEqual(asOfStart[sibling.id]?.sets, asOfNow[sibling.id]?.sets)
+    }
+
     private func eligibleFixture() throws -> (TrainingStore, Exercise) {
         let store = try TrainingStore.inMemory()
         let exercise = exercise()

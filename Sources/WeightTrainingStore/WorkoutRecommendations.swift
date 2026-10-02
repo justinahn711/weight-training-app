@@ -81,8 +81,14 @@ extension TrainingStore {
         var planned = sessions.compactMap { session -> PlannedExerciseWork? in
             guard session.completedAt == nil, session.startedAt >= from,
                   session.startedAt <= upcomingThrough, let plan = session.plan else { return nil }
+            // Only sets done by `now` count as done, matching the trailing
+            // history below. Counting later sets here while the history
+            // omits them made a start-time view undercount the muscle, so
+            // the recommendation a workout shows (as of its start) and the
+            // one activation checks it against (as of now) disagreed, and
+            // the lift couldn't be logged (#316 review).
             let completed = snapshot.records(exerciseID: session.exerciseID, workoutID: session.workoutID)
-                .filter { !$0.isWarmup }.count
+                .filter { !$0.isWarmup && $0.performedAt <= now }.count
             return PlannedExerciseWork(exerciseID: session.exerciseID,
                                        remainingSets: max(0, plan.sets.count - completed))
         }
@@ -93,7 +99,8 @@ extension TrainingStore {
             for id in draft.exerciseIDs {
                 if sessions.contains(where: { $0.workoutID == draft.id && $0.exerciseID == id && $0.plan != nil }) { continue }
                 if let plan = sessionsByExercise[id]?.last(where: { $0.plan != nil })?.plan {
-                    let done = snapshot.records(exerciseID: id, workoutID: draft.id).filter { !$0.isWarmup }.count
+                    let done = snapshot.records(exerciseID: id, workoutID: draft.id)
+                        .filter { !$0.isWarmup && $0.performedAt <= now }.count
                     planned.append(.init(exerciseID: id, remainingSets: max(0, plan.sets.count - done)))
                 } else { workloadIsKnown = false }
             }
