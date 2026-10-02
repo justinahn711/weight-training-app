@@ -775,6 +775,9 @@ final class SessionViewModel {
         recentRecord = nil
         pendingAdvance = nil
         autoAdvancedFrom = nil
+        // A heard set was snapped for the lift it was spoken on; committing
+        // it here would log those numbers against this one (#301).
+        clearHeard()
         seedPendingFromCurrent()
         publishActivity()
     }
