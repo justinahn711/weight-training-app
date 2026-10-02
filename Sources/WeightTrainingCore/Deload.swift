@@ -49,13 +49,18 @@ public struct DeloadSuggestion: Hashable, Sendable {
     }
 
     /// Stated as a reason, because a chip that can't explain itself is just a
-    /// number to argue with (#12).
-    public var summary: String {
+    /// number to argue with (#12). Pound-only; see `summary(in:)`.
+    public var summary: String { summary(in: .pounds) }
+
+    /// The reason in the lifter's unit (#306). It sits beside a chip that
+    /// says "Deload to 90 kg", so it can't say "back off to 198.4 lb".
+    public func summary(in unit: MassUnit) -> String {
+        let target = to.formatted(in: unit)
         switch trigger {
         case .repeatedMisses(let sessions):
-            return "Missed \(sessions) sessions running — back off to \(to) and rebuild"
+            return "Missed \(sessions) sessions running — back off to \(target) and rebuild"
         case .rpeCreep(let start, let end, let sessions):
-            return "Same weight, \(start) → \(end) over \(sessions) sessions — back off to \(to)"
+            return "Same weight, \(start) → \(end) over \(sessions) sessions — back off to \(target)"
         }
     }
 }

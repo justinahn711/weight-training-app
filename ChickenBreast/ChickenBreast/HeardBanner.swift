@@ -78,7 +78,7 @@ struct HeardBanner: View {
                 .accessibilityHint("Discards the values shown without logging a set")
                 .accessibilityIdentifier("session.voice.cancel")
 
-            ForEach(heard.rejections, id: \.self) { rejection in
+            ForEach(heard.rejections(in: GymSettings.shared.unit), id: \.self) { rejection in
                 Label(rejection, systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(Theme.attention)
@@ -162,7 +162,7 @@ struct HeardBanner: View {
         var sentence = spokenAccessibilityLabel
         if heard.wasSnapped { sentence += ". Adjusted to a weight you can load" }
         if !heard.isConfident { sentence += ". Not sure — check it" }
-        for rejection in heard.rejections { sentence += ". \(rejection)" }
+        for rejection in heard.rejections(in: GymSettings.shared.unit) { sentence += ". \(rejection)" }
         return sentence
     }
 
