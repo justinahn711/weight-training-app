@@ -105,10 +105,33 @@ public final class TrainingStore {
         try saveChanges()
     }
 
+    /// Saves, or discards everything staged when the save throws (#304).
+    ///
+    /// SwiftData does not roll back a failed save on its own. Every write
+    /// stages its change and saves straight away, so whatever is pending here
+    /// belongs to the write that just failed — and left pending, the next
+    /// unrelated save commits it: a retried `log` lands twice, a delete the
+    /// lifter was told failed happens anyway.
     func saveChanges() throws {
         guard context.hasChanges else { return }
-        try context.save()
+        do {
+            if let saveFault {
+                self.saveFault = nil
+                throw saveFault
+            }
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
     }
+
+    /// Test-only: the next save throws this instead of reaching SwiftData,
+    /// then clears itself (#304). Internal, so only `@testable` tests can set
+    /// it. A real failing save — a full disk, a store CloudKit refuses — can't
+    /// be produced on demand in a unit test, and the bug is in what happens
+    /// *after* the throw, which this reproduces exactly.
+    var saveFault: Error?
 
     // MARK: - Exercises
 
@@ -337,16 +360,14 @@ public final class TrainingStore {
     /// Removes a set. Backs the one-gesture undo in #8, where a mislogged set
     /// has to disappear completely rather than being marked void — a voided row
     /// would still have to be filtered out of every statistic downstream.
+    ///
+    /// Goes through `deleteSets` so a set deleted on its own corrects progress
+    /// exactly as one deleted through select mode does (#303).
+    ///
+    /// - Returns: false when no set has that id.
     @discardableResult
     public func deleteSet(id: UUID) throws -> Bool {
-        var descriptor = FetchDescriptor<StoredSetLog>(
-            predicate: #Predicate { $0.id == id }
-        )
-        descriptor.fetchLimit = 1
-        guard let stored = try context.fetch(descriptor).first else { return false }
-        context.delete(stored)
-        try commit()
-        return true
+        try !deleteSets(ids: [id]).isEmpty
     }
 
     /// Removes many sets — a bad import, a duplicate workout, a whole
@@ -430,8 +451,10 @@ public final class TrainingStore {
     /// was otherwise:
     ///
     /// 1. **A working set was deleted.** Warmups never drive progression.
-    /// 2. **It belongs to the lift's latest session.** That session produced
-    ///    the stored target; older ones are already superseded by it.
+    /// 2. **It belongs to the lift's latest session, and that session has
+    ///    been finished** — the stored state is stamped with its day. That
+    ///    session produced the stored target; older ones are already
+    ///    superseded by it, and an unfinished one hasn't moved it yet.
     /// 3. **The stored state is what replaying the pre-delete history
     ///    produces** (ignoring `lastPerformedAt`, which the live path stamps
     ///    with the session start). A match means nothing but that history
@@ -472,6 +495,16 @@ public final class TrainingStore {
         //    to rewrite.
         guard let existing = try storedState(for: exercise.id) else { return }
         let stored = existing.toDomain()
+
+        // 2b. ...and only once that session has been finished. Progress moves
+        //     at Finish, stamped with the session's day; until then the state
+        //     describes the session before, and a set taken back mid-session
+        //     (undo, the Live Activity's undo) has no step to undo. Rewriting
+        //     it would stamp today and make Finish's same-day guard skip the
+        //     real advance (#303).
+        guard let storedDate = stored.lastPerformedAt,
+              let latestDate = latest.first?.performedAt,
+              Calendar.current.isDate(storedDate, inSameDayAs: latestDate) else { return }
         guard Self.sameProgression(stored, Self.replay(sessionsBefore, exercise: exercise)) else { return }
 
         var corrected = Self.replay(sessionsAfter, exercise: exercise)
@@ -479,8 +512,7 @@ public final class TrainingStore {
         // keep the stamp the live path wrote for it (the session start). A
         // whole day removed leaves only set times to go on; the day is what
         // `applyProgression`'s same-day guard reads, and that is right.
-        if let storedDate = stored.lastPerformedAt,
-           let replayedDate = corrected.lastPerformedAt,
+        if let replayedDate = corrected.lastPerformedAt,
            Calendar.current.isDate(storedDate, inSameDayAs: replayedDate) {
             corrected.lastPerformedAt = storedDate
         }
