@@ -49,13 +49,18 @@ public struct DeloadSuggestion: Hashable, Sendable {
     }
 
     /// Stated as a reason, because a chip that can't explain itself is just a
-    /// number to argue with (#12).
-    public var summary: String {
+    /// number to argue with (#12). Pound-only; see `summary(in:)`.
+    public var summary: String { summary(in: .pounds) }
+
+    /// The reason in the lifter's unit (#306). It sits beside a chip that
+    /// says "Deload to 90 kg", so it can't say "back off to 198.4 lb".
+    public func summary(in unit: MassUnit) -> String {
+        let target = to.formatted(in: unit)
         switch trigger {
         case .repeatedMisses(let sessions):
-            return "Missed \(sessions) sessions running — back off to \(to) and rebuild"
+            return "Missed \(sessions) sessions running — back off to \(target) and rebuild"
         case .rpeCreep(let start, let end, let sessions):
-            return "Same weight, \(start) → \(end) over \(sessions) sessions — back off to \(to)"
+            return "Same weight, \(start) → \(end) over \(sessions) sessions — back off to \(target)"
         }
     }
 }
@@ -159,9 +164,26 @@ public enum DeloadDetector {
         // One increment, not zero. On a 10 lb dumbbell step, backing 10 lb off
         // by 10% snaps to nothing at all — and "back off to 0 lb and rebuild"
         // is not a deload, it's a bug with a friendly sentence around it.
+        let target = Load(load.pounds * (1 - deloadFraction))
+
+        // A measured plate-built lift answers from its plates, as every
+        // proposal must: the increment grid says 130 on a 45/25/10 rack, and
+        // 42.5 a side is not a load anyone can make (#305). Still down.
+        if let loading = exercise.loading, loading.isMeasured {
+            var built = loading.heaviestBuildable(atMost: target)
+            if built >= load {
+                built = loading.previousBuildable(before: load) ?? load
+            }
+            // The empty apparatus is the floor — or, on one that weighs
+            // nothing, its lightest plated load, for the reason below.
+            let floor = loading.minimumLoad > .zero
+                ? loading.minimumLoad
+                : (loading.nextBuildable(after: .zero) ?? load)
+            return max(floor, min(built, load))
+        }
+
         let floor = exercise.lightestUsableLoad
         let increment = exercise.increment
-        let target = Load(load.pounds * (1 - deloadFraction))
         var result = increment.snap(target)
         if result >= load {
             result = Load(load.pounds - increment.pounds)

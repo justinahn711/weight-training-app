@@ -585,6 +585,26 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(day.current?.loggedSets.count, 1)
     }
 
+    /// A row's id is its exercise's id, so a swap onto a lift already
+    /// elsewhere in the day made two rows with one id. Logging finds the
+    /// first, so sets taken on the second landed on the other row (#302).
+    func testSwappingInALiftAlreadyInTheDayChangesNothing() {
+        var day = session(["A", "B", "C"])
+        let elsewhere = day.exercises[2]
+
+        day.replace(exerciseWithID: day.exercises[0].id, with: SessionExercise(
+            exercise: elsewhere.exercise,
+            prescription: elsewhere.prescription
+        ))
+        day.replaceCurrent(with: SessionExercise(
+            exercise: elsewhere.exercise,
+            prescription: elsewhere.prescription
+        ))
+
+        XCTAssertEqual(day.exercises.map(\.exercise.name), ["A", "B", "C"],
+                       "a lift can't be in the day twice")
+    }
+
 }
 
 /// The "probably done with this lift" reference behind the Next-up card.
