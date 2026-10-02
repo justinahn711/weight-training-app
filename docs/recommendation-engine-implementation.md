@@ -1,6 +1,6 @@
 # Recommendation engine implementation
 
-This work begins the [recommendation engine plan](recommendation-engine-plan.md) in an isolated worktree on `feat/recommendation-engine`, based on the locally available `origin/main` commit `43f4714`.
+This work begins the [recommendation engine plan](recommendation-engine-plan.md) in an isolated worktree on `feat/recommendation-engine`, based on the locally available `origin/main` commit `43f4714`. The current shipped milestone is commit `879f52e`.
 
 ## Current status: automatic workout prescriptions
 
@@ -17,7 +17,8 @@ recovery exit when blocks are disabled, stale RPE provenance/coverage after edit
 Live Activity targets that did not advance per set, and proposal traces recomputed
 instead of captured from the displayed recommendation. These defects are fixed
 and covered by regressions. The automatic, low-friction workout flow is now
-implemented. Physical-phone validation and real outcome collection remain.
+implemented. Unassisted bodyweight progression is included. Physical hands-on
+flow validation and real outcome collection remain.
 
 The sections below describe existing components and their intended behavior. The revised
 [phase completion criteria](recommendation-engine-plan.md#delivery-and-evaluation)
@@ -39,10 +40,10 @@ The policy supports straight sets with external loads and unassisted bodyweight
 sets. Bodyweight progression preserves the recorded total load, adds reps after
 the same repeated-easy evidence used by loaded movements, and can add one
 budgeted set at the rep ceiling; it never invents a bodyweight change or load
-reduction. Assisted movements, unmeasured plate-built equipment, bodyweight
-variations, and mixed top/back-off prescriptions require explicit domain models
-before support. An unavailable reduction returns a hold with an explanation
-rather than forcing a large equipment step.
+reduction. Assisted movements, unmeasured plate-built equipment, other
+bodyweight variations, and mixed top/back-off prescriptions require explicit
+domain models before support and remain deferred. An unavailable reduction
+returns a hold with an explanation rather than forcing a large equipment step.
 
 Historical duplicates are collapsed by exposure ID only when identical. Conflicting duplicates or reused working-set IDs prevent progression. Actual records remain the source of truth: rebuilding exposures after a correction or deletion recomputes the recommendation.
 
@@ -171,7 +172,7 @@ persisting the winning prescription consumes that allocation period.
 Recovery remains an explicit exception to automatic activation. A recovery card
 offers Use, Adjust, and Dismiss; dismissal persists the prior normal prescription.
 The Log action and Live Activity stay unavailable until that decision is stored.
-The remaining work is physical-phone validation and outcome collection before
+The remaining work is physical hands-on flow validation and outcome collection before
 tuning thresholds. Users never need to visit Recommendation results to receive targets.
 
 ## Calling convention
@@ -213,21 +214,18 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
 
 Physical-device hands-on validation remains required for the integrated workout flow.
 
-Validation after the history-indexing and outcome-integrity milestone on 2026-09-28:
+Validation after commit `879f52e`:
 
 | Check | Result |
 |---|---|
-| Swift domain/store suite, including automatic activation, workout-wide allocation, review regressions, conservative legacy baselines, personalized bands, explicit recovery decisions, deload entry/exit, automatic/reviewed outcome cohorts, hold-reason derivation, history equivalence, correction/relaunch integrity, and sync constraints (798 tests) | PASS |
-| Repository scenario script, including overlapping muscle budgets and 12-week block replay (15 scenarios) | PASS |
+| Swift domain/store suite (811 tests) | PASS |
+| Repository scenario script (16 scenarios) | PASS |
 | Foundation-only core check | PASS |
-| Two-year synthetic history equivalence (312 workouts, 1,872 exercise sessions, 7,386 sets) | PASS — identical decisions; shared exposure read about 6× faster in the measured local run |
 | App and widget build for iOS Simulator | PASS |
-| UI-test target compilation, including stable target/results accessibility identifiers | PASS |
-| Focused iPhone UI through the early-completion milestone | PASS |
 | Signed iPhone build | PASS |
-| Install of the workout-wide allocation and recovery-choice milestone over existing phone data | PASS |
-| Read-only replay against the phone's 101-set history | PASS — T-Bar Row now receives an 80 lb × 12, 12 baseline; Incline DB Press holds for missing RPE |
-| Physical-device hands-on volume and recommendation review | PENDING |
+| Commit installed and launched on iPhone | PASS |
+| SwiftData store UUID and counts (19 exercises, 11 sessions, 118 sets) | PASS — unchanged |
+| Physical-device hands-on flow and recommendation outcome collection | PENDING |
 
 Build products used a separate temporary derived-data directory. A remote fetch
 encountered the pre-existing malformed ref `refs/remotes/origin/fix/session-presentation 2`;

@@ -126,6 +126,38 @@ final class AutomaticPrescriptionTests: XCTestCase {
         }
     }
 
+    func testUnsupportedPlateBuiltExerciseStillSurfacesPainStopInSession() throws {
+        let store = try TrainingStore.inMemory()
+        let exercise = Exercise(
+            name: "Unmeasured plate press", muscles: [.primary(.chest)],
+            equipment: .plateLoaded,
+            progressionRule: .doubleProgression(range: RepRange(8, 12))
+        )
+        try store.upsert(exercise)
+        let painfulWorkout = UUID()
+        try store.finishExerciseSessions(
+            workoutID: painfulWorkout,
+            at: now,
+            earlyCompletion: .stoppedForPain,
+            focusedExerciseID: exercise.id,
+            workoutStartedAt: now.addingTimeInterval(-600)
+        )
+
+        let recommendation = try store.recommendation(
+            for: exercise, now: now.addingTimeInterval(60)
+        )
+        XCTAssertFalse(exercise.supportsPlannedProgression)
+        XCTAssertEqual(recommendation.action, .stop)
+        XCTAssertEqual(recommendation.reason, .pain)
+
+        let sessionExercise = try store.sessionExercise(
+            for: exercise, slot: nil, startedAt: now.addingTimeInterval(60)
+        )
+        XCTAssertEqual(sessionExercise.recommendation?.action, .stop)
+        XCTAssertEqual(sessionExercise.recommendation?.reason, .pain)
+        XCTAssertNil(sessionExercise.acceptedPlan)
+    }
+
     func testBodyweightRepOnlyRecommendationActivatesPersistsAndReachesFeedback() throws {
         let store = try TrainingStore.inMemory()
         let exercise = Exercise(

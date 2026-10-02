@@ -116,9 +116,13 @@ extension TrainingStore {
         let todayIDs = Set(today.map(\.id))
         let earlier = history.filter { !todayIDs.contains($0.id) }
         let accepted = try workoutID.flatMap { try exerciseSession(workoutID: $0, exerciseID: exercise.id)?.plan }
-        let advice = exercise.supportsPlannedProgression
-            ? try recommendations?[exercise.id]
-                ?? recommendation(for: exercise, excluding: workoutID, now: startedAt)
+        let evaluatedAdvice = try recommendations?[exercise.id]
+            ?? recommendation(for: exercise, excluding: workoutID, now: startedAt)
+        // Equipment without a safe progression model must still surface a
+        // stop decision. Filtering every recommendation here allowed a recent
+        // pain report to fall through to the legacy suggestion path.
+        let advice = exercise.supportsPlannedProgression || evaluatedAdvice.action == .stop
+            ? evaluatedAdvice
             : nil
         let prescription: Prescription
         if let target = accepted?.sets.first {

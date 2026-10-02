@@ -1,9 +1,15 @@
 # Progressive overload recommendation engine
 
-Status: revised after the implementation review and product clarification on
-2026-09-27. Phases 1–4 are implemented on `feat/recommendation-engine`; phase 5
-instrumentation is implemented and real-workout outcome collection remains.
-Threshold tuning follows phone validation and observed outcomes.
+Status: updated after commit `879f52e`. Phases 1–4 are implemented on
+`feat/recommendation-engine`; phase 5 instrumentation is implemented and
+unassisted bodyweight progression is shipped. The 811 Swift tests, 16 eval
+scenarios, Core purity check, simulator build, and signed device build pass.
+The commit was installed and launched on an iPhone; the SwiftData store UUID
+and counts (19 exercises, 11 sessions, 118 sets) remained unchanged. Physical
+hands-on flow and real outcome collection remain. Assisted movements,
+unmeasured plate-built equipment, other bodyweight variations, and mixed
+top/back-off prescriptions remain deferred. Threshold tuning follows hands-on
+validation and observed outcomes.
 
 Provisional audience: healthy adult recreational lifters seeking muscle growth with steady strength gains. Offer a goal and equipment choice during first use, reusing any existing setup. Experience, frequency, and exercise priorities are optional refinements; reuse the chosen routine and observed schedule without treating an inferred preference as user-confirmed. Strength and general fitness can use different exercise prescriptions without replacing the decision pipeline.
 
@@ -245,7 +251,8 @@ undo, corrections, restore, sync, and relaunch preserve the prescription record.
 
 ### Phase 2 — Recommendations inside the normal workout
 
-**Core progression and the default touch/voice per-set workflow implemented; phone validation remains.**
+**Core progression, unassisted bodyweight progression, and the default
+touch/voice per-set workflow implemented; physical hands-on validation remains.**
 Keep repeated-easy, achievable-load, and one-variable-at-a-time rules. Populate
 targets and their reason directly in the exercise view. Review set plan becomes
 an optional detailed editor. Use the same per-set targets for touch, voice,
@@ -287,7 +294,9 @@ not earn progression; resumption establishes fresh evidence.
 
 ### Phase 5 — Outcome evaluation, phone validation, and optimization
 
-**Instrumentation, evidence integrity, automatic-origin tracking, and request-scoped history indexing implemented; real outcomes remain.**
+**Instrumentation, evidence integrity, automatic-origin tracking, and
+request-scoped history indexing implemented; physical hands-on validation and
+real outcomes remain.**
 Recommendation results is primarily for development/evaluation, not a required
 user workflow. Preserve the exact displayed proposal instead of recomputing it
 at acceptance. Track displayed prescriptions, automatic activation, explicit

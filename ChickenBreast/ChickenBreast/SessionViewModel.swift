@@ -898,7 +898,6 @@ final class SessionViewModel {
     /// Fills the caches the chips read from.
     func loadSuggestionContext() {
         latestBodyweight = try? store.bodyweight(on: Date())
-        seedBodyweightIfNeeded()
         for exercise in session.exercises {
             historyCache[exercise.id] = (try? store.sets(forExercise: exercise.id)) ?? []
             if let state = try? store.progressState(forExercise: exercise.id) {
@@ -930,7 +929,19 @@ final class SessionViewModel {
         let count = max(1, min(8, current.lastPerformance?.sets.count ?? 3))
         let range = current.exercise.recommendationPolicy.repRange
         let reps = max(range.bottom, min(range.top, pendingReps))
-        let load = current.exercise.nearestAchievable(max(pendingLoad, current.exercise.lightestUsableLoad))
+        let load: Load
+        if current.exercise.isBodyweight {
+            // Total bodyweight is observed, not an equipment increment. With
+            // no weigh-in or prior target, do not invent a 2.5 lb plan.
+            guard pendingLoad.pounds.isFinite,
+                  pendingLoad.pounds > 0,
+                  pendingLoad.pounds <= 100_000 else { return nil }
+            load = pendingLoad
+        } else {
+            load = current.exercise.nearestAchievable(
+                max(pendingLoad, current.exercise.lightestUsableLoad)
+            )
+        }
         return ExercisePlan(exercise: current.exercise,
             sets: Array(repeating: PlannedWorkingSet(load: load, reps: reps, rpe: current.prescription.rpe), count: count),
             restSeconds: Int(current.exercise.restTarget))
@@ -1042,6 +1053,10 @@ final class SessionViewModel {
         } else {
             seedPendingFromCurrent()
         }
+        // `seedPendingFromCurrent` resets a cold-start bodyweight exercise to
+        // its zero minimum. Apply the session's captured weigh-in afterward so
+        // first-use pull-ups and dips cannot log a zero-load working set.
+        seedBodyweightIfNeeded()
         _ = activateCurrentRecommendationIfNeeded(seedControls: true)
     }
 
