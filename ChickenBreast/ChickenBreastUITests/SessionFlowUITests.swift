@@ -391,12 +391,20 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         let plates = app.descendants(matching: .any)["session.plates.toggle"]
         if !plates.waitForExistence(timeout: 2) {
             let choose = app.buttons["session.exercise.choose"]
-            XCTAssertTrue(choose.waitForExistence(timeout: 5) && choose.isHittable)
-            choose.tap()
-            let flatBench = app.staticTexts["Flat Bench"].firstMatch
+            XCTAssertTrue(choose.waitForExistence(timeout: 5))
+            tapWhenSettled(choose)
+            // The chooser has to be up before its rows can be looked for —
+            // #311's run gave up on a row 5s after a tap that may not have
+            // presented anything yet (#314).
+            XCTAssertTrue(app.navigationBars["Workout exercises"].waitForExistence(timeout: 10),
+                          "tapping the exercise chooser should open it")
+            // Each row is a Button labelled with the lift's name. Queried as
+            // that button, not as the Text inside it: XCUI exposes a labelled
+            // button's child text only some of the time (#314).
+            let flatBench = app.buttons["Flat Bench"].firstMatch
             XCTAssertTrue(flatBench.waitForExistence(timeout: 5),
                           "Push day should contain a plate-built lift (Flat Bench)")
-            flatBench.tap()
+            tapWhenSettled(flatBench)
         }
         XCTAssertTrue(plates.waitForExistence(timeout: 5), "Flat Bench should offer Adjust plates")
         let liftName = app.buttons["session.exercise.swap"]
@@ -426,7 +434,9 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         // can sit scrolled past the weight readout; bring it back first.
         if !plates.isHittable { logSet.swipeDown() }
         XCTAssertTrue(plates.isHittable, "Adjust plates should be tappable [\(sizeName)]")
-        plates.tap()
+        // Settled first: right after a logged set, the rest bar and the
+        // "Set logged" banner are still springing in above it (#314).
+        tapWhenSettled(plates)
         let plateRow = app.otherElements["session.plates.row"]
         XCTAssertTrue(plateRow.waitForExistence(timeout: 5), "tapping Adjust plates should open the plate row")
         // Load a plate, so the row is measured in its taller state — loaded

@@ -135,6 +135,30 @@ class ChickenBreastUITestCase: XCTestCase {
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
+    /// Taps `element` once it is hittable and has stopped moving (#314).
+    ///
+    /// A tap is delivered at the coordinates XCUI resolved a moment earlier.
+    /// On a slow CI runner, the element can still be sliding when that
+    /// happens — under a banner springing in after a logged set, or a sheet
+    /// still presenting — and the tap lands where it used to be: #299's run
+    /// tapped Adjust plates and the row never opened. Waiting for two equal
+    /// frame reads a quarter-second apart is a condition, not a fixed sleep:
+    /// a settled screen passes on the first pair.
+    func tapWhenSettled(_ element: XCUIElement, timeout: TimeInterval = 10,
+                        file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(wait(for: element, toMatch: "hittable == true", timeout: timeout),
+                      "\(element) should become tappable", file: file, line: line)
+        let deadline = Date().addingTimeInterval(timeout)
+        var previous = element.frame
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.25)
+            let current = element.frame
+            if current == previous && element.isHittable { break }
+            previous = current
+        }
+        element.tap()
+    }
+
     /// Log Set, enabled. A cold-start lift opens with no weight, and Log Set
     /// refuses a zero load rather than writing "0 lb" into history, so this
     /// adds one increment when the button hasn't become enabled on its own.
