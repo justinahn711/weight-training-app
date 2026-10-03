@@ -102,7 +102,15 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         startSessionIfPreviewed(app)
         XCTAssertTrue(app.staticTexts["LAST TIME"].waitForExistence(timeout: 20),
                       "a lift with yesterday's set should open on the full Target / Last time card")
-        let issues = try audit(app)
+        // Everything but contrast, as the after-a-set audit below and the
+        // lift library do: the plan card pushes "Today / No sets yet" under
+        // the action bar, where the contrast audit reports it once as
+        // content under chrome (#276) and once with no element at all, which
+        // nothing can hold (#316's CI). Contrast on these controls is
+        // audited by the session audits above.
+        var contrastless = XCUIAccessibilityAuditType.all
+        contrastless.remove(.contrast)
+        let issues = try audit(app, only: contrastless)
         if !issues.isEmpty { print("Session screen (history) a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
