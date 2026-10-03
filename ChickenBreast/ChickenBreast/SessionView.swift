@@ -892,7 +892,7 @@ struct SessionView: View {
             if let explanation = planExplanation(exercise) {
                 Text(explanation)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.quietLabel)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("session.target.reason")
             }
@@ -927,7 +927,7 @@ struct SessionView: View {
                   let reason = model.planUnavailableReason {
             Text(reason)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.quietLabel)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("session.plan.unavailable")
         }

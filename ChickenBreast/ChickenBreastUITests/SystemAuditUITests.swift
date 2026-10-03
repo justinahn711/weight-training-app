@@ -122,7 +122,17 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         let stay = app.buttons["session.nextUp.stay"]
         XCTAssertTrue(stay.waitForExistence(timeout: 10),
                       "matching yesterday's one set should offer the next lift")
-        var issues = try audit(app)
+        // Everything but contrast, here only. With a set plan the card is
+        // tall enough that the rest of the session sits under the Next up
+        // card, the Set logged banner and the action bar, and the contrast
+        // audit samples it through their glass: it reported "No sets yet"
+        // (held as content under chrome, #276) and then the same issue with
+        // no element at all, which nothing can hold. The lift library's audit
+        // splits the same way for the same reason. These controls' contrast
+        // is audited by the three session audits above.
+        var contrastless = XCUIAccessibilityAuditType.all
+        contrastless.remove(.contrast)
+        var issues = try audit(app, only: contrastless)
         stay.tap()
         // Two honest shapes after a set: the collapsed "Target … · Last …"
         // line, or, when the lift's set plan activated automatically (#316),
@@ -132,7 +142,7 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         XCTAssertTrue(wait(for: collapsed, toMatch: "exists == true", timeout: 10)
                       || planLine.exists,
                       "after a working set the card should show the collapsed line or the plan's next set")
-        issues += try audit(app)
+        issues += try audit(app, only: contrastless)
         if !issues.isEmpty { print("Session screen (history, after a set) a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
