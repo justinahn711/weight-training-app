@@ -124,9 +124,14 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
                       "matching yesterday's one set should offer the next lift")
         var issues = try audit(app)
         stay.tap()
+        // Two honest shapes after a set: the collapsed "Target … · Last …"
+        // line, or, when the lift's set plan activated automatically (#316),
+        // the full plan card with its next-set target. Audited either way.
         let collapsed = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Target ' AND label CONTAINS 'Last '")).firstMatch
-        XCTAssertTrue(collapsed.waitForExistence(timeout: 10),
-                      "after a working set the card should collapse to one Target · Last line")
+        let planLine = app.staticTexts["session.target.line"]
+        XCTAssertTrue(wait(for: collapsed, toMatch: "exists == true", timeout: 10)
+                      || planLine.exists,
+                      "after a working set the card should show the collapsed line or the plan's next set")
         issues += try audit(app)
         if !issues.isEmpty { print("Session screen (history, after a set) a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
