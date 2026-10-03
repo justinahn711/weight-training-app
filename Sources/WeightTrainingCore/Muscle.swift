@@ -36,6 +36,36 @@ public enum Muscle: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// A user-adjustable weekly range for one muscle. The defaults remain useful
+/// before the lifter has enough history to personalize them, while storing the
+/// selected values makes the budget an explicit preference rather than an
+/// inferred physiological claim.
+public struct MuscleSetBudget: Hashable, Codable, Sendable, Identifiable {
+    public var id: Muscle { muscle }
+    public let muscle: Muscle
+    public var minimum: Int
+    public var maximum: Int
+
+    public init(muscle: Muscle, minimum: Int, maximum: Int) {
+        let lower = min(max(minimum, 0), 40)
+        let upper = min(max(maximum, lower), 40)
+        self.muscle = muscle
+        self.minimum = lower
+        self.maximum = upper
+    }
+
+    public init(muscle: Muscle, target: ClosedRange<Int>) {
+        self.init(muscle: muscle, minimum: target.lowerBound, maximum: target.upperBound)
+    }
+
+    public var target: ClosedRange<Int> { minimum...maximum }
+    public var isDefault: Bool { target == muscle.weeklySetTarget }
+
+    public static var defaults: [MuscleSetBudget] {
+        Muscle.allCases.map { MuscleSetBudget(muscle: $0, target: $0.weeklySetTarget) }
+    }
+}
+
 /// How directly an exercise loads a muscle.
 ///
 /// Only primary movers count as full hard sets in the volume guard; secondary

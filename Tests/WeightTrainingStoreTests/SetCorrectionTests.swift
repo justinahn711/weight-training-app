@@ -80,6 +80,44 @@ final class SetCorrectionTests: XCTestCase {
         XCTAssertFalse(stored.isWarmup)
     }
 
+    func testCorrectingRPERecordsAndWithdrawsExplicitEffortProvenance() throws {
+        let original = SetRecord(
+            exerciseID: bench.id, load: Load(185), reps: 5,
+            performedAt: Date(), effortWasReported: false
+        )
+        try store.log(original)
+
+        var added = original
+        added.rpe = .eight
+        XCTAssertTrue(try store.updateSet(added))
+        let reported = try XCTUnwrap(try store.allSets().first { $0.id == original.id })
+        XCTAssertEqual(reported.rpe, .eight)
+        XCTAssertEqual(reported.effortWasReported, true)
+
+        var removed = reported
+        removed.rpe = nil
+        XCTAssertTrue(try store.updateSet(removed))
+        let withdrawn = try XCTUnwrap(try store.allSets().first { $0.id == original.id })
+        XCTAssertNil(withdrawn.rpe)
+        XCTAssertEqual(withdrawn.effortWasReported, false)
+    }
+
+    func testNonRPECorrectionPreservesUnknownLegacyProvenance() throws {
+        let original = SetRecord(
+            exerciseID: bench.id, load: Load(185), reps: 5, rpe: .eight,
+            performedAt: Date(), effortWasReported: nil
+        )
+        try store.log(original)
+
+        var corrected = original
+        corrected.reps = 6
+        XCTAssertTrue(try store.updateSet(corrected))
+
+        let stored = try XCTUnwrap(try store.allSets().first { $0.id == original.id })
+        XCTAssertEqual(stored.rpe, .eight)
+        XCTAssertNil(stored.effortWasReported)
+    }
+
     /// Identity and timing survive a correction: fixing a set must not move it
     /// to another day.
     func testCorrectionKeepsIdentityAndDay() throws {

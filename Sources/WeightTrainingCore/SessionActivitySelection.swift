@@ -23,4 +23,15 @@ public enum SessionActivitySelection {
         candidates.first { $0.workoutID == workoutID }?.id
             ?? candidates.first { $0.workoutID == nil && $0.dayKind == dayKind }?.id
     }
+
+    /// One shared boundary for the foreground controls and Live Activity. The
+    /// count is working sets only, so warmups cannot skip a prescription row.
+    public static func nextPlannedSet(
+        in plan: ExercisePlan?, completedWorkingSets: Int
+    ) -> PlannedWorkingSet? {
+        guard let plan,
+              completedWorkingSets >= 0,
+              plan.sets.indices.contains(completedWorkingSets) else { return nil }
+        return plan.sets[completedWorkingSets]
+    }
 }

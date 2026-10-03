@@ -102,7 +102,15 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         startSessionIfPreviewed(app)
         XCTAssertTrue(app.staticTexts["LAST TIME"].waitForExistence(timeout: 20),
                       "a lift with yesterday's set should open on the full Target / Last time card")
-        let issues = try audit(app)
+        // Everything but contrast, as the after-a-set audit below and the
+        // lift library do: the plan card pushes "Today / No sets yet" under
+        // the action bar, where the contrast audit reports it once as
+        // content under chrome (#276) and once with no element at all, which
+        // nothing can hold (#316's CI). Contrast on these controls is
+        // audited by the session audits above.
+        var contrastless = XCUIAccessibilityAuditType.all
+        contrastless.remove(.contrast)
+        let issues = try audit(app, only: contrastless)
         if !issues.isEmpty { print("Session screen (history) a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
@@ -122,12 +130,27 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         let stay = app.buttons["session.nextUp.stay"]
         XCTAssertTrue(stay.waitForExistence(timeout: 10),
                       "matching yesterday's one set should offer the next lift")
-        var issues = try audit(app)
+        // Everything but contrast, here only. With a set plan the card is
+        // tall enough that the rest of the session sits under the Next up
+        // card, the Set logged banner and the action bar, and the contrast
+        // audit samples it through their glass: it reported "No sets yet"
+        // (held as content under chrome, #276) and then the same issue with
+        // no element at all, which nothing can hold. The lift library's audit
+        // splits the same way for the same reason. These controls' contrast
+        // is audited by the three session audits above.
+        var contrastless = XCUIAccessibilityAuditType.all
+        contrastless.remove(.contrast)
+        var issues = try audit(app, only: contrastless)
         stay.tap()
+        // Two honest shapes after a set: the collapsed "Target … · Last …"
+        // line, or, when the lift's set plan activated automatically (#316),
+        // the full plan card with its next-set target. Audited either way.
         let collapsed = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Target ' AND label CONTAINS 'Last '")).firstMatch
-        XCTAssertTrue(collapsed.waitForExistence(timeout: 10),
-                      "after a working set the card should collapse to one Target · Last line")
-        issues += try audit(app)
+        let planLine = app.staticTexts["session.target.line"]
+        XCTAssertTrue(wait(for: collapsed, toMatch: "exists == true", timeout: 10)
+                      || planLine.exists,
+                      "after a working set the card should show the collapsed line or the plan's next set")
+        issues += try audit(app, only: contrastless)
         if !issues.isEmpty { print("Session screen (history, after a set) a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 

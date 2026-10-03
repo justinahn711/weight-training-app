@@ -182,6 +182,9 @@ public final class StoredSetLog {
     public var rpeValue: Double?
     public var isWarmup: Bool = false
     public var performedAt: Date = Date()
+    public var workoutID: UUID?
+    public var acceptedPlanID: UUID?
+    public var effortWasReported: Bool?
 
     /// When this set was last corrected (#61), for `deduplicate()` (#268).
     /// Nil on a set as logged: a set is only rewritten by a correction, so a
@@ -201,6 +204,9 @@ public final class StoredSetLog {
         self.rpeValue = record.rpe?.value
         self.isWarmup = record.isWarmup
         self.performedAt = record.performedAt
+        self.workoutID = record.workoutID
+        self.acceptedPlanID = record.acceptedPlanID
+        self.effortWasReported = record.effortWasReported
     }
 
     /// Corrects a logged set in place (#61).
@@ -215,6 +221,7 @@ public final class StoredSetLog {
         reps = record.reps
         rpeValue = record.rpe?.value
         isWarmup = record.isWarmup
+        effortWasReported = record.effortWasReported
     }
 
     public func toDomain() -> SetRecord {
@@ -225,7 +232,10 @@ public final class StoredSetLog {
             reps: reps,
             rpe: rpe(fromStored: rpeValue),
             isWarmup: isWarmup,
-            performedAt: performedAt
+            performedAt: performedAt,
+            workoutID: workoutID,
+            acceptedPlanID: acceptedPlanID,
+            effortWasReported: effortWasReported
         )
     }
 }
@@ -390,6 +400,10 @@ public final class StoredGymConfig {
     /// Distinct training days needed for one consistent week (#65).
     /// A default keeps the CloudKit schema compatible with existing rows.
     public var weeklySessionTarget: Int = 3
+    /// JSON `[MuscleSetBudget]`. Empty rows predate personalized volume bands.
+    public var volumeBudgetsData: Data = Data()
+    /// JSON `TrainingBlockConfig?`. Empty means the optional feature is off.
+    public var trainingBlockData: Data = Data()
 
     /// When this was last written, used to settle a sync conflict.
     public var updatedAt: Date = Date()
@@ -401,6 +415,8 @@ public final class StoredGymConfig {
         self.barPounds = config.barWeight.pounds
         self.trainingSplitData = encoded(config.trainingSplit)
         self.weeklySessionTarget = config.weeklySessionTarget
+        self.volumeBudgetsData = encoded(config.volumeBudgets)
+        self.trainingBlockData = encoded(config.trainingBlock)
         self.updatedAt = updatedAt
     }
 
@@ -410,6 +426,8 @@ public final class StoredGymConfig {
         barPounds = config.barWeight.pounds
         trainingSplitData = encoded(config.trainingSplit)
         weeklySessionTarget = config.weeklySessionTarget
+        volumeBudgetsData = encoded(config.volumeBudgets)
+        trainingBlockData = encoded(config.trainingBlock)
         updatedAt = date
     }
 
@@ -428,7 +446,13 @@ public final class StoredGymConfig {
                 trainingSplit: trainingSplitData.isEmpty
                     ? nil
                     : try decoded(TrainingSplit?.self, from: trainingSplitData),
-                weeklySessionTarget: weeklySessionTarget
+                weeklySessionTarget: weeklySessionTarget,
+                volumeBudgets: volumeBudgetsData.isEmpty
+                    ? nil
+                    : try decoded([MuscleSetBudget].self, from: volumeBudgetsData),
+                trainingBlock: trainingBlockData.isEmpty
+                    ? nil
+                    : try decoded(TrainingBlockConfig?.self, from: trainingBlockData)
             )
         } catch {
             throw StoreError.corruptRecord(entity: "GymConfig", id: id, underlying: error)
@@ -503,5 +527,50 @@ public enum TrainingSchema {
         StoredBodyweight.self,
         StoredGymConfig.self,
         StoredWorkoutDraft.self,
+        StoredExerciseSession.self,
     ]
+}
+
+@Model
+public final class StoredExerciseSession {
+    public var workoutID: UUID = UUID()
+    public var exerciseID: UUID = UUID()
+    public var startedAt: Date = Date()
+    public var planData: Data = Data()
+    public var recommendationTraceData: Data = Data()
+    public var completionRaw: String = ExerciseExposure.Completion.unknown.rawValue
+    public var completedAt: Date?
+    public var updatedAt: Date = Date()
+    public var key: String { "\(workoutID.uuidString)/\(exerciseID.uuidString)" }
+
+    public init(_ value: RecordedExerciseSession) {
+        workoutID = value.workoutID
+        exerciseID = value.exerciseID
+        startedAt = value.startedAt
+        update(from: value)
+    }
+
+    public func update(from value: RecordedExerciseSession) {
+        planData = value.plan.map(encoded) ?? Data()
+        recommendationTraceData = value.recommendationTrace.map(encoded) ?? Data()
+        completionRaw = value.completion.rawValue
+        completedAt = value.completedAt
+        updatedAt = value.updatedAt
+    }
+
+    public func toDomain() throws -> RecordedExerciseSession {
+        do {
+            return RecordedExerciseSession(
+                workoutID: workoutID, exerciseID: exerciseID, startedAt: startedAt,
+                plan: planData.isEmpty ? nil : try decoded(ExercisePlan.self, from: planData),
+                recommendationTrace: recommendationTraceData.isEmpty
+                    ? nil
+                    : try decoded(RecommendationTrace.self, from: recommendationTraceData),
+                completion: ExerciseExposure.Completion(rawValue: completionRaw) ?? .unknown,
+                completedAt: completedAt, updatedAt: updatedAt
+            )
+        } catch {
+            throw StoreError.corruptRecord(entity: "ExerciseSession", id: workoutID, underlying: error)
+        }
+    }
 }

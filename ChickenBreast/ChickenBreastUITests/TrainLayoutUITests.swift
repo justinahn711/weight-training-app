@@ -162,7 +162,8 @@ final class TrainLayoutUITests: ChickenBreastUITestCase {
         XCTAssertTrue(finish.waitForExistence(timeout: 20))
         if !finish.isHittable { app.swipeUp() }
         finish.tap()
-        let confirm = app.buttons["finish.confirmation.finish"]
+        // An early finish asks why (#316); "Another reason" finishes without a cause.
+        let confirm = app.buttons["finish.reason.unknown"]
         if confirm.waitForExistence(timeout: 5) { confirm.tap() }
         let done = app.buttons["completion.done"]
         if done.waitForExistence(timeout: 25) {

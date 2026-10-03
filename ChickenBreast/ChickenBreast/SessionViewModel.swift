@@ -36,6 +36,12 @@ final class SessionViewModel {
     private(set) var session: Session
     private(set) var failure: String?
 
+    /// Recovery changes the whole intent of a workout, so it stays a proposal
+    /// until the lifter explicitly uses or adjusts it. Ordinary progression
+    /// recommendations still activate automatically.
+    private var dismissedRecoveryExercises: Set<UUID> = []
+    private var recoveryFallbackPlans: [UUID: ExercisePlan] = [:]
+
     /// The exact decisions saved by the successful Finish. Kept separately
     /// from the live session so navigation can end without throwing away the
     /// explanation the progression engine just produced (#184).
@@ -62,6 +68,14 @@ final class SessionViewModel {
     /// Pre-selected on the target so the common case — hit the target, log it —
     /// stays a single tap on the done button (#5).
     var pendingRPE: RPE
+    private(set) var pendingRPEWasReported = false
+
+    func selectRPE(_ rpe: RPE) {
+        pendingRPE = rpe
+        pendingRPEWasReported = true
+    }
+
+    func clearRPE() { pendingRPEWasReported = false }
 
     /// The rest currently running, or nil between exercises. Wall-clock based,
     /// so it needs nothing running to stay correct across a backgrounding (#6).
@@ -134,6 +148,24 @@ final class SessionViewModel {
 
     var current: SessionExercise? { session.current }
 
+    var recoveryProposal: ExerciseRecommendation? {
+        guard let current,
+              current.acceptedPlan == nil,
+              current.workingSets.isEmpty,
+              current.recommendation?.action == .deload,
+              !dismissedRecoveryExercises.contains(current.id)
+        else { return nil }
+        return current.recommendation
+    }
+
+    /// The standing accumulation target shown beneath a recovery proposal and
+    /// restored when it is dismissed. The store already owns which historical
+    /// plan is safe to resume; the view model only presents that answer.
+    var recoveryFallbackPlan: ExercisePlan? {
+        guard let id = current?.id else { return nil }
+        return recoveryFallbackPlans[id]
+    }
+
     /// Position in the day, e.g. "3 of 7".
     var progressLabel: String {
         "\(session.currentIndex + 1) of \(session.exercises.count)"
@@ -160,28 +192,36 @@ final class SessionViewModel {
     /// Whether the standing values describe a set that can honestly be
     /// written.
     ///
-    /// A cold-start lift on unmeasured equipment opens at `Load.zero`, and a
+    /// A cold-start lift without a known load opens at `Load.zero`, and a
     /// single tap used to write "0 lb × 10" into history — where it then
-    /// feeds targets, volume and records. Zero is a number, not an absence,
-    /// so "unknown means silent" requires refusing it rather than logging
-    /// it. Bodyweight lifts are the one place a zero added load is real.
+    /// feeds targets, volume and records. Bodyweight sets store the observed
+    /// total bodyweight too, so a missing weigh-in remains unknown rather than
+    /// becoming a zero-load set.
     var canLogSet: Bool {
-        guard let current else { return false }
-        return pendingLoad > .zero || current.exercise.equipment == .bodyweight
+        current != nil && pendingLoad > .zero
     }
 
     func logSet(isWarmup: Bool = false) {
-        guard let current, canLogSet else { return }
+        guard canLogSet else { return }
         if !isWarmup, isOnActiveWarmupRung, let rung = nextWarmupRung {
             logWarmup(rung)
             return
         }
+        // The displayed recommendation becomes the workout's active
+        // prescription before the first working set. Keep this guard at the
+        // write boundary as well as the screen-entry path: voice and other
+        // logging surfaces must never create unprescribed evidence merely
+        // because the view lifecycle did not get a chance to prepare first.
+        if !isWarmup, !activateCurrentRecommendationIfNeeded(seedControls: false) {
+            return
+        }
+        guard let current else { return }
         let record = SetRecord(
             exerciseID: current.exercise.id,
             load: pendingLoad,
             reps: pendingReps,
             // Warmups are never scored.
-            rpe: isWarmup ? nil : pendingRPE,
+            rpe: isWarmup || !pendingRPEWasReported ? nil : pendingRPE,
             isWarmup: isWarmup,
             performedAt: Date()
         )
@@ -224,9 +264,15 @@ final class SessionViewModel {
     private func commit(_ record: SetRecord, startsRest: Bool) {
         guard let current else { return }
         do {
-            try store.log(record)
-            session.log(record)
-            recentlyLoggedSet = record
+            let saved = try store.logWorkoutSet(record, workoutID: draftID, startedAt: session.startedAt,
+                                               effortReported: pendingRPEWasReported)
+            guard saved.inserted else { return }
+            session.log(saved.record)
+            recentlyLoggedSet = saved.record
+            if !record.isWarmup {
+                pendingRPEWasReported = false
+                seedNextPlannedSet()
+            }
             liveLogActionID = UUID()
             // Logging on the lift the session moved to is the "next action"
             // the moved-on notice waits for; it has done its job.
@@ -411,6 +457,7 @@ final class SessionViewModel {
             recentlyLoggedSet = nil
             refreshRecords()
             liveLogActionID = UUID()
+            seedNextPlannedSet()
             publishActivity()
         } catch {
             // Put it back rather than leaving screen and disk disagreeing.
@@ -582,6 +629,7 @@ final class SessionViewModel {
             if recentlyLoggedSet?.id == record.id {
                 recentlyLoggedSet = record
             }
+            _ = refreshPlanContext()
             // A correction is a history edit like any other, so the records
             // come back off disk rather than being left as they were. Editing
             // the set that holds the badge is the obvious case; the one that
@@ -715,6 +763,7 @@ final class SessionViewModel {
             ?? 0
         let newIndex = min(max(0, index + steps), chips.count - 1)
         pendingRPE = chips[newIndex]
+        pendingRPEWasReported = true
     }
 
     /// Selects an exact positive count for the visible exercise.
@@ -778,7 +827,7 @@ final class SessionViewModel {
         // A heard set was snapped for the lift it was spoken on; committing
         // it here would log those numbers against this one (#301).
         clearHeard()
-        seedPendingFromCurrent()
+        prepareCurrentExercise()
         publishActivity()
     }
 
@@ -787,6 +836,7 @@ final class SessionViewModel {
     /// should pick up where it left off, not reset to the target.
     private func seedPendingFromCurrent() {
         guard let current else { return }
+        let savedPendingReps = pendingRepsByExercise[current.id]
 
         // A ramp still in progress leads the exercise (#206): the form seeds
         // onto whichever rung nobody has logged yet, instead of the working
@@ -801,6 +851,7 @@ final class SessionViewModel {
             pendingLoad = rung.load
             pendingReps = rung.reps
             pendingRPE = current.prescription.rpe
+            pendingRPEWasReported = false
             isWarmupRampExpanded = current.id == session.exercises.first?.id
             return
         }
@@ -818,7 +869,7 @@ final class SessionViewModel {
         // A draft made after the last logged set wins. Without this ordering,
         // entering 25 after set one, checking another exercise, and returning
         // would replace 25 with set one's reps even though nothing was logged.
-        pendingReps = pendingRepsByExercise[current.id]
+        pendingReps = savedPendingReps
             ?? current.loggedSets.last(where: { !$0.isWarmup })?.reps
             ?? current.prescription.reps
         pendingRepsByExercise[current.id] = pendingReps
@@ -827,6 +878,11 @@ final class SessionViewModel {
         // set, and inheriting a 9.5 from the previous set would quietly log
         // fatigue that hasn't happened yet.
         pendingRPE = current.prescription.rpe
+        pendingRPEWasReported = false
+        // A restored plan can have different targets per set. On a cold
+        // relaunch there is no in-memory edit to preserve, so resume at the
+        // first unlogged planned set instead of repeating the last set.
+        if savedPendingReps == nil { seedNextPlannedSet() }
         // Open only for the first exercise of the day (#157) — everywhere
         // else stays collapsed, per #15's original reasoning. Comparing
         // identity rather than `session.currentIndex == 0` survives a swap:
@@ -936,6 +992,7 @@ final class SessionViewModel {
                 pendingLoad = last.load
                 setPendingReps(last.reps)
                 pendingRPE = last.rpe ?? current.prescription.rpe
+                pendingRPEWasReported = false
             }
         case .note:
             // Notes have nowhere to live yet; dropped rather than pretended at.
@@ -955,7 +1012,7 @@ final class SessionViewModel {
         guard let snapped = heard else { return }
         if let load = snapped.load { pendingLoad = load }
         if let reps = snapped.reps { setPendingReps(reps) }
-        if let rpe = snapped.rpe { pendingRPE = rpe }
+        if let rpe = snapped.rpe { selectRPE(rpe) }
         clearHeard()
         logSet()
     }
@@ -968,16 +1025,32 @@ final class SessionViewModel {
 
     // MARK: - Finishing
 
+    /// A reason is useful when accepted work remains or when part of the day's
+    /// exercise roster was skipped. Fully completed plans keep Finish one tap.
+    var needsEarlyFinishReason: Bool {
+        session.startedCount < session.exercises.count
+            || session.exercises.contains { exercise in
+                guard let plan = exercise.acceptedPlan else { return false }
+                return exercise.workingSets.count < plan.sets.count
+            }
+    }
+
     /// Finishes this workout exactly once. Navigation and disappearance are
     /// deliberately not finishing signals; only the visible Finish action is.
     @discardableResult
-    func finish() -> Bool {
+    func finish(earlyCompletion: ExerciseExposure.Completion? = nil) -> Bool {
         guard !hasFinished else { return true }
         do {
             // Pull in sets logged from the lock-screen intent while this view
             // was not active. Disk is authoritative for performed work.
             session = try store.resumeSession(
                 WorkoutDraft(session: session, id: draftID)
+            )
+            try store.finishExerciseSessions(
+                workoutID: draftID,
+                earlyCompletion: earlyCompletion,
+                focusedExerciseID: earlyCompletion == .stoppedForPain ? session.current?.id : nil,
+                workoutStartedAt: session.startedAt
             )
             let applied = try store.applyProgression(for: session, now: session.startedAt)
             for entry in applied {
@@ -1109,6 +1182,10 @@ final class SessionViewModel {
                     loggedSet: activitySet.map { (id: $0.id, performedAt: $0.performedAt) }
                 )
                 : nil
+            // A lock-screen log can advance a plan whose sets have different
+            // rep targets. Resume the next persisted set before republishing,
+            // or foregrounding would overwrite the activity with stale input.
+            seedNextPlannedSet()
             // The assignment above rescheduled or cancelled the alerts to
             // match — an adopted rest gets its pair back, which is how a set
             // logged from the lock screen keeps its alert once the app is
@@ -1130,18 +1207,28 @@ final class SessionViewModel {
             liveActivity.end()
             return
         }
+        // A recovery proposal requires an explicit choice in the workout.
+        // Do not leave a lock-screen Log action capable of bypassing that
+        // boundary while Use / Adjust / Dismiss is still pending.
+        if recoveryProposal != nil {
+            liveActivity.end()
+            isActivityEnded = true
+            return
+        }
         if liveActivityExerciseID != current.exercise.id {
             liveActivityExerciseID = current.exercise.id
             liveLogActionID = UUID()
         }
         let state = SessionActivityAttributes.ContentState(
             exerciseName: current.exercise.name,
-            targetLine: current.prescription.displayLine(in: GymSettings.shared.unit),
+            targetLine: pendingLoad > .zero
+                ? activityTargetLine(for: current)
+                : current.prescription.displayLine(in: GymSettings.shared.unit),
             setsLogged: current.workingSets.count,
             exerciseID: current.exercise.id,
-            targetPounds: current.prescription.load?.pounds,
-            targetReps: current.prescription.reps,
-            targetRPE: current.prescription.rpe.value,
+            targetPounds: pendingLoad > .zero ? pendingLoad.pounds : nil,
+            targetReps: pendingReps,
+            targetRPE: pendingRPE.value,
             logActionID: liveLogActionID,
             lastLoggedSetID: recentlyLoggedSet?.id,
             restEndsAt: rest?.endsAt,
@@ -1185,6 +1272,13 @@ final class SessionViewModel {
                 ? nil
                 : current.prescription.displayLine(in: GymSettings.shared.unit)
         )
+    }
+
+    private func activityTargetLine(for exercise: SessionExercise) -> String {
+        let target = "\(pendingLoad.formatted(in: GymSettings.shared.unit)) × \(pendingReps) @ \(pendingRPE)"
+        guard let plan = exercise.acceptedPlan,
+              plan.sets.indices.contains(exercise.workingSets.count) else { return target }
+        return "Set \(exercise.workingSets.count + 1) of \(plan.sets.count) · \(target)"
     }
 
     /// Leaving the workout route pauses its glanceable surface without
@@ -1252,12 +1346,16 @@ final class SessionViewModel {
             let rebuilt = try store.sessionExercise(
                 for: corrected,
                 slot: current.slot,
-                startedAt: session.startedAt
+                startedAt: session.startedAt,
+                workoutID: draftID
             )
             // Not `replaceCurrent`: that is the swap path and no-ops when the
             // replacement is the same lift, which a reconfiguration always is.
             session.reconfigureCurrent(with: rebuilt)
-            seedPendingFromCurrent()
+            // Refresh suggestions first because it also routes through the
+            // shared preparation boundary. That boundary restores an exact
+            // recorded bodyweight after pending controls are reset.
+            loadSuggestionContext()
             // Not a navigation change — this is still the exercise the banner
             // belongs to, so `recentlyLoggedSet` is left alone rather than
             // routed through `didChangeCurrentExercise()`. The lock screen is
@@ -1265,7 +1363,6 @@ final class SessionViewModel {
             // what's on screen in the same habit rather than trusting each one
             // to remember on its own (#172).
             publishActivity()
-            loadSuggestionContext()
         } catch {
             failure = "Couldn't save that setting: \(error.localizedDescription)"
         }
@@ -1302,7 +1399,8 @@ final class SessionViewModel {
             let replacement = try store.sessionExercise(
                 for: exercise,
                 slot: replaced.slot,
-                startedAt: session.startedAt
+                startedAt: session.startedAt,
+                workoutID: draftID
             )
             // Asked before the write, and about the lift that was replaced.
             //
@@ -1395,6 +1493,19 @@ final class SessionViewModel {
 
     var suggestions: [Suggestion] {
         guard let current else { return [] }
+        if current.acceptedPlan != nil || current.recommendation != nil {
+            // The plan panel owns progression. Keep only an immediate downward
+            // response to a set whose effort the lifter actually reported.
+            // A bodyweight plan stores frozen total load, so lowering that
+            // number would pretend the lifter's bodyweight changed mid-session.
+            guard !current.exercise.isBodyweight else { return [] }
+            guard let last = current.workingSets.last, last.effortWasReported == true,
+                  let rpe = last.rpe, rpe.value >= current.prescription.rpe.value + 1 else { return [] }
+            let lighter = current.exercise.nearestAchievable(Load(pendingLoad.pounds - current.exercise.increment.pounds))
+            guard lighter >= current.exercise.lightestUsableLoad, lighter < pendingLoad else { return [] }
+            let suggestion = Suggestion(kind: .load(lighter), reason: "The last set was \(rpe) — reduce the next set")
+            return dismissedSuggestions.contains(suggestion.id) ? [] : [suggestion]
+        }
         return SuggestionEngine.suggestions(
             exercise: current.exercise,
             prescription: current.prescription,
@@ -1447,7 +1558,6 @@ final class SessionViewModel {
     /// Fills the caches the chips read from.
     func loadSuggestionContext() {
         latestBodyweight = try? store.bodyweight(on: Date())
-        seedBodyweightIfNeeded()
         for exercise in session.exercises {
             historyCache[exercise.id] = (try? store.sets(forExercise: exercise.id)) ?? []
             if let state = try? store.progressState(forExercise: exercise.id) {
@@ -1456,6 +1566,256 @@ final class SessionViewModel {
         }
         allExercises = (try? store.exercises()) ?? []
         lastPerformed = (try? store.lastPerformedDates()) ?? [:]
+        prepareCurrentExercise()
+    }
+
+    // MARK: - Accepted working-set plans
+
+    var canPlanCurrentExercise: Bool {
+        guard let current else { return false }
+        guard current.exercise.supportsPlannedProgression,
+              current.workingSets.isEmpty else { return false }
+        return planUnavailableReason == nil
+    }
+
+    /// Explains why the planner cannot create an honest first prescription.
+    /// Bodyweight plans store total load, so an absent weigh-in cannot be
+    /// replaced with an equipment minimum or a zero-load target.
+    var planUnavailableReason: String? {
+        guard let current,
+              current.exercise.supportsPlannedProgression,
+              current.workingSets.isEmpty,
+              current.acceptedPlan == nil,
+              current.exercise.isBodyweight,
+              current.recommendation?.sets.isEmpty != false,
+              pendingLoad <= .zero else { return nil }
+        return "Add a bodyweight reading in Health, then return to this exercise to review its set plan."
+    }
+
+    /// The sheet pins the exercise and starting proposal so voice navigation
+    /// beneath it cannot save a plan onto a different lift.
+    func planProposal() -> ExercisePlan? {
+        guard let current, canPlanCurrentExercise else { return nil }
+        if let active = current.acceptedPlan { return active }
+        if let suggestion = current.recommendation, !suggestion.sets.isEmpty {
+            return ExercisePlan(exercise: current.exercise, sets: suggestion.sets,
+                                restSeconds: Int(current.exercise.restTarget),
+                                isDeload: suggestion.action == .deload)
+        }
+        let count = max(1, min(8, current.lastPerformance?.sets.count ?? 3))
+        let range = current.exercise.recommendationPolicy.repRange
+        let reps = max(range.bottom, min(range.top, pendingReps))
+        let load: Load
+        if current.exercise.isBodyweight {
+            // Total bodyweight is observed, not an equipment increment. With
+            // no weigh-in or prior target, do not invent a 2.5 lb plan.
+            guard pendingLoad.pounds.isFinite,
+                  pendingLoad.pounds > 0,
+                  pendingLoad.pounds <= 100_000 else { return nil }
+            load = pendingLoad
+        } else {
+            load = current.exercise.nearestAchievable(
+                max(pendingLoad, current.exercise.lightestUsableLoad)
+            )
+        }
+        return ExercisePlan(exercise: current.exercise,
+            sets: Array(repeating: PlannedWorkingSet(load: load, reps: reps, rpe: current.prescription.rpe), count: count),
+            restSeconds: Int(current.exercise.restTarget))
+    }
+
+    @discardableResult
+    func acceptPlan(
+        _ plan: ExercisePlan,
+        displayedRecommendation: ExerciseRecommendation? = nil
+    ) -> Bool {
+        do {
+            try store.acceptExercisePlan(
+                plan,
+                workoutID: draftID,
+                startedAt: session.startedAt,
+                displayedRecommendation: displayedRecommendation
+            )
+            if current?.id == plan.exercise.id {
+                refreshPlanContext()
+                seedNextPlannedSet()
+                publishActivity()
+            }
+            return true
+        } catch {
+            failure = "Couldn't save the plan: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Explicitly accepts the unchanged recovery proposal. This deliberately
+    /// bypasses the automatic activation path used by normal recommendations.
+    @discardableResult
+    func useRecoveryProposal() -> Bool {
+        guard let current, let recommendation = recoveryProposal else { return false }
+        let plan = ExercisePlan(
+            exercise: current.exercise,
+            sets: recommendation.sets,
+            restSeconds: Int(current.exercise.restTarget),
+            isDeload: true
+        )
+        do {
+            try store.acceptExercisePlan(
+                plan,
+                workoutID: draftID,
+                startedAt: session.startedAt,
+                displayedRecommendation: recommendation
+            )
+            guard refreshPlanContext() else { return false }
+            seedNextPlannedSet()
+            publishActivity()
+            return true
+        } catch {
+            failure = "Couldn't start the recovery plan: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Declines recovery for this workout and returns the controls to the most
+    /// recent non-recovery prescription. No durable preference is inferred
+    /// from a one-workout decision, so a future proposal can still appear.
+    @discardableResult
+    func dismissRecoveryProposal() -> Bool {
+        guard let current, let recommendation = recoveryProposal else { return false }
+        guard let fallback = recoveryFallbackPlans[current.id] else {
+            failure = "There isn't a previous normal target to restore. Adjust the recovery plan to choose today's work."
+            return false
+        }
+        do {
+            try store.acceptExercisePlan(
+                fallback,
+                workoutID: draftID,
+                startedAt: session.startedAt,
+                displayedRecommendation: recommendation
+            )
+            guard refreshPlanContext() else { return false }
+            // Keep the proposal blocking until the accepted fallback has been
+            // persisted and the current exercise has been rebuilt successfully.
+            dismissedRecoveryExercises.insert(current.id)
+            seedNextPlannedSet()
+            publishActivity()
+            return true
+        } catch {
+            failure = "Couldn't restore the normal target: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func noteCompletion(_ completion: ExerciseExposure.Completion) {
+        guard let current else { return }
+        do {
+            try store.recordExerciseCompletion(workoutID: draftID, exerciseID: current.id, completion: completion)
+        } catch { failure = "Couldn't save the completion reason: \(error.localizedDescription)" }
+    }
+
+    /// Refreshes an unstarted proposal from current history, then activates the
+    /// exact proposal shown on screen. Existing plans are returned unchanged by
+    /// the store, which keeps an exercise's targets stable once training has
+    /// begun while making Review set plan an optional editor.
+    private func prepareCurrentExercise() {
+        guard refreshPlanContext() else { return }
+        if recoveryProposal != nil,
+           let target = recoveryFallbackPlan?.sets.first,
+           let current {
+            pendingLoad = target.load
+            pendingReps = target.reps
+            pendingRepsByExercise[current.id] = target.reps
+            pendingRPE = target.rpe
+            pendingRPEWasReported = false
+        } else {
+            seedPendingFromCurrent()
+        }
+        // `seedPendingFromCurrent` resets a cold-start bodyweight exercise to
+        // its zero minimum. Apply the session's captured weigh-in afterward so
+        // first-use pull-ups and dips cannot log a zero-load working set.
+        seedBodyweightIfNeeded()
+        _ = activateCurrentRecommendationIfNeeded(seedControls: true)
+    }
+
+    /// Automatic activation is deliberately idempotent and happens again at
+    /// the logging boundary. A direct edit to the normal controls is preserved
+    /// there (`seedControls == false`): the recommendation remains the recorded
+    /// prescription and the set records what was actually performed.
+    @discardableResult
+    private func activateCurrentRecommendationIfNeeded(seedControls: Bool) -> Bool {
+        guard let current else { return true }
+        guard current.acceptedPlan == nil else {
+            // `seedPendingFromCurrent` already restored either the next plan
+            // row or an in-memory rep edit for this exercise. Re-seeding here
+            // would erase that edit merely because the lifter navigated away
+            // and back before logging it.
+            return true
+        }
+        guard current.workingSets.isEmpty,
+              let recommendation = current.recommendation,
+              !recommendation.sets.isEmpty else { return true }
+        // A deload is a recovery proposal, not an ordinary next-target update.
+        // It must remain visible with Use / Adjust / Dismiss choices and may
+        // never silently become the workout's active prescription.
+        if recommendation.action == .deload {
+            return dismissedRecoveryExercises.contains(current.id)
+        }
+        do {
+            _ = try store.activateExerciseRecommendation(
+                recommendation,
+                workoutID: draftID,
+                startedAt: session.startedAt
+            )
+            guard refreshPlanContext() else { return false }
+            if seedControls {
+                // Main's warmup flow still leads the exercise after an
+                // automatic recommendation becomes active. Re-seeding from
+                // the rebuilt exercise selects the next ramp rung when one
+                // exists and otherwise selects the next planned working set.
+                seedPendingFromCurrent()
+                // A cold-start bodyweight lift has no equipment minimum to
+                // recover from, so restore the captured exact weigh-in after
+                // any re-seed (#15d3247).
+                seedBodyweightIfNeeded()
+            }
+            return true
+        } catch {
+            failure = "Couldn't start this recommendation: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    @discardableResult
+    private func refreshPlanContext() -> Bool {
+        guard let current else { return false }
+        do {
+            let rebuilt = try store.sessionExercise(for: current.exercise, slot: current.slot,
+                startedAt: session.startedAt, workoutID: draftID)
+            session.reconfigureCurrent(with: rebuilt)
+            if rebuilt.acceptedPlan == nil, rebuilt.recommendation?.action == .deload {
+                recoveryFallbackPlans[rebuilt.id] = try store.latestNonDeloadExercisePlan(
+                    for: rebuilt.id,
+                    excluding: draftID
+                )
+            } else {
+                recoveryFallbackPlans.removeValue(forKey: rebuilt.id)
+            }
+            return true
+        } catch {
+            failure = "Couldn't load the set plan: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func seedNextPlannedSet() {
+        guard let current,
+              let target = SessionActivitySelection.nextPlannedSet(
+                  in: current.acceptedPlan,
+                  completedWorkingSets: current.workingSets.count
+              ) else { return }
+        pendingLoad = target.load
+        pendingReps = target.reps
+        pendingRepsByExercise[current.id] = target.reps
+        pendingRPE = target.rpe
     }
 
     // MARK: - Plates and warmups

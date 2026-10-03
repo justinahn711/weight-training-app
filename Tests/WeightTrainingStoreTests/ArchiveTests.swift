@@ -380,6 +380,74 @@ final class ArchiveTests: XCTestCase {
         XCTAssertEqual(try fresh.gymConfig().unit, .kilograms)
     }
 
+    /// Weekly set targets and the training block ride in the gym row of a
+    /// version-2 file. A fresh install already has a gym row (picking a
+    /// split writes one) holding defaults, so restore has to bring these
+    /// back the same way it brings back the rack: when the phone still has
+    /// the fresh value (#316 review).
+    func testRestoreBringsBackCustomVolumeTargetsAndTheTrainingBlock() throws {
+        try seedHistory()
+        var gym = try store.gymConfig()
+        gym.volumeBudgets = gym.volumeBudgets.map {
+            $0.muscle == .chest ? MuscleSetBudget(muscle: .chest, minimum: 14, maximum: 20) : $0
+        }
+        gym.trainingBlock = TrainingBlockConfig(startedAt: midday(-10))
+        try store.saveGymConfig(gym)
+        let backup = try store.archive()
+
+        let fresh = try TrainingStore.inMemory()
+        var defaults = try fresh.gymConfig()
+        defaults.trainingSplit = gym.trainingSplit ?? defaults.trainingSplit
+        try fresh.saveGymConfig(defaults)   // the split picker's write
+        _ = try fresh.restore(from: backup)
+
+        let restored = try fresh.gymConfig()
+        XCTAssertEqual(restored.volumeBudgets.first { $0.muscle == .chest }?.target, 14...20)
+        XCTAssertEqual(restored.trainingBlock, gym.trainingBlock)
+    }
+
+    /// And a phone that already chose its own targets keeps them.
+    func testRestoreKeepsVolumeTargetsChosenOnThisPhone() throws {
+        try seedHistory()
+        var gym = try store.gymConfig()
+        gym.volumeBudgets = gym.volumeBudgets.map {
+            $0.muscle == .chest ? MuscleSetBudget(muscle: .chest, minimum: 14, maximum: 20) : $0
+        }
+        try store.saveGymConfig(gym)
+        let backup = try store.archive()
+
+        let other = try TrainingStore.inMemory()
+        var mine = try other.gymConfig()
+        mine.volumeBudgets = mine.volumeBudgets.map {
+            $0.muscle == .chest ? MuscleSetBudget(muscle: .chest, minimum: 8, maximum: 10) : $0
+        }
+        try other.saveGymConfig(mine)
+        _ = try other.restore(from: backup)
+        XCTAssertEqual(try other.gymConfig().volumeBudgets.first { $0.muscle == .chest }?.target, 8...10)
+    }
+
+    /// Restoring the same file twice adds nothing the second time, and says
+    /// so: recorded exercise sessions included (#271's rule, #316 review).
+    func testRestoringTheSameFileTwiceReportsRecordedSessionsAsKept() throws {
+        let exercise = Exercise(
+            name: "Fixed-stack press", muscles: [.primary(.chest)], equipment: .machineStack,
+            increment: LoadIncrement(pounds: 100),
+            progressionRule: .doubleProgression(range: RepRange(10, 10))
+        )
+        try store.upsert(exercise)
+        _ = try store.acceptExercisePlan(
+            ExercisePlan(exercise: exercise, sets: [PlannedWorkingSet(load: 100, reps: 10, rpe: .eight)]),
+            workoutID: UUID(), startedAt: midday(-1), now: midday(-1))
+        let backup = try store.archive()
+        XCTAssertFalse((backup.exerciseSessions ?? []).isEmpty)
+
+        let fresh = try TrainingStore.inMemory()
+        let first = try fresh.restore(from: backup)
+        XCTAssertGreaterThan(first.exerciseSessions, 0)
+        let second = try fresh.restore(from: backup)
+        XCTAssertEqual(second.exerciseSessions, 0, "nothing new on the second restore")
+    }
+
     /// A file written before the gym was archived still opens, and leaves this
     /// device's gym alone rather than resetting it.
     func testArchiveWithoutAGymLeavesTheLocalOneAlone() throws {

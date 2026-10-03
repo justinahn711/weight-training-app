@@ -92,6 +92,61 @@ final class VolumeReportTests: XCTestCase {
         XCTAssertEqual(volume(report, .chest).sets, 3)
     }
 
+    func testReportSeparatesEffortRolesVarietyAndFrequency() {
+        let exercise = lift("Incline DB Press")
+        let firstWorkout = UUID(), secondWorkout = UUID()
+        let history = [
+            SetRecord(exerciseID: exercise.id, load: 50, reps: 10, rpe: .eight,
+                      performedAt: now.addingTimeInterval(-3_000), workoutID: firstWorkout),
+            SetRecord(exerciseID: exercise.id, load: 50, reps: 10, rpe: nil,
+                      performedAt: now.addingTimeInterval(-2_000), workoutID: secondWorkout),
+            SetRecord(exerciseID: exercise.id, load: 50, reps: 10, rpe: .six,
+                      performedAt: now.addingTimeInterval(-1_000), workoutID: secondWorkout),
+        ]
+
+        let built = report(history)
+        let chest = volume(built, .chest)
+        XCTAssertEqual(chest.totalWorkingSets, 3)
+        XCTAssertEqual(chest.sets, 2)
+        XCTAssertEqual(chest.directSets, 2)
+        XCTAssertEqual(chest.secondarySets, 0)
+        XCTAssertEqual(chest.knownHardSets, 1)
+        XCTAssertEqual(chest.unknownEffortSets, 1)
+        XCTAssertEqual(chest.exerciseCount, 1)
+        XCTAssertEqual(chest.exposureFrequency, 2)
+
+        let triceps = volume(built, .triceps)
+        XCTAssertEqual(triceps.sets, 1)
+        XCTAssertEqual(triceps.directSets, 0)
+        XCTAssertEqual(triceps.secondarySets, 1)
+    }
+
+    func testAcceptedRemainingWorkIsProjectedWithoutBecomingCompletedVolume() {
+        let exercise = lift("Incline DB Press")
+        let built = VolumeReport.trailing(
+            history: [], exercises: ExerciseLibrary.all,
+            plannedWork: [PlannedExerciseWork(exerciseID: exercise.id, remainingSets: 3)],
+            now: now
+        )
+
+        let chest = volume(built, .chest)
+        XCTAssertEqual(chest.sets, 0)
+        XCTAssertEqual(chest.plannedSets, 3)
+        XCTAssertEqual(chest.projectedSets, 3)
+        XCTAssertEqual(volume(built, .triceps).plannedSets, 1.5)
+    }
+
+    func testPersonalizedBudgetReplacesTheDefaultBand() {
+        let custom = MuscleSetBudget(muscle: .chest, minimum: 6, maximum: 12)
+        let built = VolumeReport.trailing(
+            history: [], exercises: ExerciseLibrary.all,
+            budgets: MuscleSetBudget.defaults.filter { $0.muscle != .chest } + [custom],
+            now: now
+        )
+        XCTAssertEqual(volume(built, .chest).target, 6...12)
+        XCTAssertEqual(volume(built, .lats).target, Muscle.lats.weeklySetTarget)
+    }
+
     // MARK: - The window
 
     func testTheWindowRollsRatherThanSnappingToAWeek() {

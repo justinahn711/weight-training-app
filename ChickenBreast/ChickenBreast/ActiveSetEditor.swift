@@ -44,6 +44,7 @@ struct ActiveSetEditor: View {
                     Stepper(value: $reps, in: 1...Int.max) {
                         LabeledContent("Reps", value: "\(reps)")
                     }
+                    .accessibilityIdentifier("setCorrection.reps.stepper")
                 } header: {
                     Text(target.exercise.name)
                 }
@@ -56,7 +57,9 @@ struct ActiveSetEditor: View {
                         }
                     }
                     .disabled(isWarmup)
+                    .accessibilityIdentifier("setCorrection.rpe.picker")
                     Toggle("Warmup", isOn: $isWarmup)
+                        .accessibilityIdentifier("setCorrection.warmup.toggle")
                 } footer: {
                     Text(isWarmup
                          ? "Warmups are recorded but never counted as work."
@@ -68,6 +71,7 @@ struct ActiveSetEditor: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .accessibilityIdentifier("setCorrection.cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -78,6 +82,7 @@ struct ActiveSetEditor: View {
                         corrected.isWarmup = isWarmup
                         if onSave(corrected) { dismiss() }
                     }
+                    .accessibilityIdentifier("setCorrection.save")
                 }
             }
         }
@@ -101,11 +106,13 @@ struct ActiveSetEditor: View {
                     .buttonStyle(.borderless)
                     .disabled(loading.previousBuildable(before: load) == nil)
                     .accessibilityLabel("Decrease weight")
+                    .accessibilityIdentifier("setCorrection.weight.decrease")
 
                     Text(load.formatted(in: GymSettings.shared.unit))
                         .font(.body.monospacedDigit())
                         .frame(minWidth: 76)
                         .accessibilityLabel("Weight")
+                        .accessibilityIdentifier("setCorrection.weight.value")
 
                     Button {
                         if let next = loading.nextBuildable(after: load) {
@@ -118,6 +125,7 @@ struct ActiveSetEditor: View {
                     .buttonStyle(.borderless)
                     .disabled(loading.nextBuildable(after: load) == nil)
                     .accessibilityLabel("Increase weight")
+                    .accessibilityIdentifier("setCorrection.weight.increase")
                 }
 
                 if let breakdown = loading.breakdown(for: load) {
@@ -142,6 +150,7 @@ struct ActiveSetEditor: View {
                     value: load.formatted(in: GymSettings.shared.unit)
                 )
             }
+            .accessibilityIdentifier("setCorrection.weight.stepper")
         }
     }
 }

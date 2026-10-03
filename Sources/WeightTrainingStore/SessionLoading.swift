@@ -68,7 +68,7 @@ extension TrainingStore {
             startingAt: split.startedAt, calendar: calendar
         )
 
-        let sessionExercises = try template.slots.compactMap { slot -> SessionExercise? in
+        let roster = template.slots.compactMap { slot -> (Exercise, Slot)? in
             // Fall back through the slot's candidates so a lift the user
             // deleted leaves the slot working rather than empty.
             let dueID = slot.dueCandidate(completionCount: completed)
@@ -77,11 +77,13 @@ extension TrainingStore {
                 return nil
             }
 
-            return try sessionExercise(
-                for: exercise, slot: slot, startedAt: startedAt, calendar: calendar
-            )
+            return (exercise, slot)
         }
-
+        let recommendations = try workoutRecommendations(for: roster.map { $0.0 }, now: startedAt)
+        let sessionExercises = try roster.map { exercise, slot in
+            try sessionExercise(for: exercise, slot: slot, startedAt: startedAt,
+                                calendar: calendar, recommendations: recommendations)
+        }
         return Session(kind: kind, exercises: sessionExercises, startedAt: startedAt)
     }
 
@@ -101,21 +103,48 @@ extension TrainingStore {
         for exercise: Exercise,
         slot: Slot?,
         startedAt: Date,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        workoutID: UUID? = nil,
+        recommendations: [UUID: ExerciseRecommendation]? = nil
     ) throws -> SessionExercise {
         let state = try progressState(forExercise: exercise.id)
         let history = try sets(forExercise: exercise.id)
-        let today = history.filter { calendar.isDate($0.performedAt, inSameDayAs: startedAt) }
-        let earlier = history.filter { !calendar.isDate($0.performedAt, inSameDayAs: startedAt) }
+        let today = history.filter {
+            if let workoutID { return $0.workoutID == workoutID || ($0.workoutID == nil && $0.performedAt >= startedAt) }
+            return $0.workoutID == nil && calendar.isDate($0.performedAt, inSameDayAs: startedAt)
+        }
+        let todayIDs = Set(today.map(\.id))
+        let earlier = history.filter { !todayIDs.contains($0.id) }
+        let accepted = try workoutID.flatMap { try exerciseSession(workoutID: $0, exerciseID: exercise.id)?.plan }
+        let evaluatedAdvice = try recommendations?[exercise.id]
+            ?? recommendation(for: exercise, excluding: workoutID, now: startedAt)
+        // Equipment without a safe progression model must still surface a
+        // stop decision. Filtering every recommendation here allowed a recent
+        // pain report to fall through to the legacy suggestion path.
+        let advice = exercise.supportsPlannedProgression || evaluatedAdvice.action == .stop
+            ? evaluatedAdvice
+            : nil
+        let prescription: Prescription
+        if let target = accepted?.sets.first {
+            // An active prescription is historical intent. Configuration or
+            // history refreshes must not silently round or replace its targets.
+            prescription = Prescription(load: target.load, reps: target.reps, rpe: target.rpe)
+        } else if let target = advice?.sets.first {
+            prescription = Prescription(load: exercise.nearestAchievable(target.load), reps: target.reps, rpe: target.rpe)
+        } else {
+            prescription = Prescription(exercise: exercise, state: state)
+        }
 
         return SessionExercise(
             exercise: exercise,
             slot: slot,
-            prescription: Prescription(exercise: exercise, state: state),
+            prescription: prescription,
             // "Last time" means the previous session, so today's own sets are
             // excluded from it.
             lastPerformance: LastPerformance.mostRecent(in: earlier),
-            loggedSets: today
+            loggedSets: today,
+            acceptedPlan: accepted,
+            recommendation: advice
         )
     }
 
@@ -129,7 +158,7 @@ extension TrainingStore {
     /// per-person choice (#136) rather than always push/pull/legs: an edit
     /// saved before a split existed, or against one day of it, is looked up by
     /// id and preferred over the split's own baseline shape for that day.
-    private func storedTemplatesOrLibrary() throws -> [DayTemplate] {
+    func storedTemplatesOrLibrary() throws -> [DayTemplate] {
         let split = try gymConfig().effectiveTrainingSplit
         let overrides = Dictionary(
             uniqueKeysWithValues: try dayTemplates().map { ($0.id, $0) }
@@ -144,12 +173,33 @@ extension TrainingStore {
     public func volumeReport(
         days: Int = VolumeReport.windowDays,
         now: Date = Date(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        excludingWorkoutID: UUID? = nil
     ) throws -> VolumeReport {
-        VolumeReport.trailing(
+        let history = try allSets()
+        let exercises = try exercises()
+        let config = try gymConfig()
+        let from = calendar.date(byAdding: .day, value: -days, to: now) ?? now
+        let planned = try exerciseSessions().compactMap { session -> PlannedExerciseWork? in
+            guard session.completedAt == nil,
+                  session.workoutID != excludingWorkoutID,
+                  session.startedAt >= from,
+                  session.startedAt <= now,
+                  let plan = session.plan else { return nil }
+            let completed = history.filter {
+                $0.workoutID == session.workoutID && $0.exerciseID == session.exerciseID && !$0.isWarmup
+            }.count
+            let remaining = max(0, plan.sets.count - completed)
+            return remaining == 0 ? nil : PlannedExerciseWork(
+                exerciseID: session.exerciseID, remainingSets: remaining
+            )
+        }
+        return VolumeReport.trailing(
             days: days,
-            history: try allSets(),
-            exercises: try exercises(),
+            history: history,
+            exercises: exercises,
+            budgets: config.volumeBudgets,
+            plannedWork: planned,
             now: now,
             calendar: calendar
         )
@@ -185,6 +235,12 @@ extension TrainingStore {
         var applied: [(exercise: Exercise, result: ProgressionResult)] = []
 
         for sessionExercise in session.exercises {
+            // An exercise that has adopted planned progression must not also
+            // run the legacy rule (which can increase after a single set).
+            let priorPlan = try latestExercisePlan(for: sessionExercise.id)
+            if sessionExercise.acceptedPlan != nil || priorPlan != nil {
+                continue
+            }
             let working = sessionExercise.workingSets
             guard !working.isEmpty else { continue }
 
@@ -274,7 +330,7 @@ extension TrainingStore {
         let history = try allSets()
 
         var states: [UUID: ProgressState] = [:]
-        for exercise in exercises {
+        for exercise in exercises where !exercise.isBodyweight {
             if let state = try progressState(forExercise: exercise.id) {
                 states[exercise.id] = state
             }
@@ -283,7 +339,10 @@ extension TrainingStore {
         return Digest.build(
             trends: E1RMTrendBuilder.trends(history: history, exercises: exercises,
                                             calendar: calendar),
+            // The lifter's own weekly targets, as the Volume screen and the
+            // recommendations use; the defaults disagreed with both (#316).
             volume: VolumeReport.trailing(history: history, exercises: exercises,
+                                          budgets: try gymConfig().volumeBudgets,
                                           now: now, calendar: calendar),
             states: states,
             history: history,

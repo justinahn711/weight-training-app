@@ -203,8 +203,9 @@ final class ProgressionApplicationTests: XCTestCase {
 
     private var incline: Exercise { ExerciseLibrary.all.first { $0.name == "Incline DB Press" }! }
 
-    /// Log a first session blind, and the second one opens with a target.
-    func testAColdLiftGainsATargetAfterOneSession() throws {
+    /// One unplanned workout establishes a conservative baseline. It cannot
+    /// earn progression before a planned exposure exists to compare against.
+    func testAColdLiftGainsAConservativeBaselineAfterOneSession() throws {
         let day = Date(timeIntervalSince1970: 1_760_000_000)
         var session = try store.startSession(kind: .push, startedAt: day)
         XCTAssertTrue(try XCTUnwrap(session.current).prescription.isColdStart)
@@ -223,7 +224,7 @@ final class ProgressionApplicationTests: XCTestCase {
         let prescription = try XCTUnwrap(next.current).prescription
         XCTAssertFalse(prescription.isColdStart)
         XCTAssertEqual(prescription.load, Load(65))
-        XCTAssertEqual(prescription.reps, 11, "one more rep than the weakest set")
+        XCTAssertEqual(prescription.reps, 10)
     }
 
     /// Leaving and re-entering a session must not be worth a load jump.

@@ -10,9 +10,10 @@ public struct DeduplicationReport: Hashable, Sendable {
     public var dayTemplates: Int = 0
     public var gymConfigs: Int = 0
     public var workoutDrafts: Int = 0
+    public var exerciseSessions: Int = 0
 
     public var total: Int {
-        exercises + sets + progressStates + dayTemplates + gymConfigs + workoutDrafts
+        exercises + sets + progressStates + dayTemplates + gymConfigs + workoutDrafts + exerciseSessions
     }
     public var isEmpty: Bool { total == 0 }
 }
@@ -48,7 +49,15 @@ extension TrainingStore {
 
         report.sets = try collapse(
             FetchDescriptor<StoredSetLog>(), key: \.id,
-            winner: DuplicateSurvivor.set
+            winner: { candidates in
+                guard let resolution = DuplicateSurvivor.resolvedSet(candidates),
+                      !resolution.ambiguous else { return nil }
+                let kept = resolution.winner
+                kept.workoutID = resolution.record.workoutID
+                kept.acceptedPlanID = resolution.record.acceptedPlanID
+                kept.effortWasReported = resolution.record.effortWasReported
+                return kept
+            }
         )
 
         report.progressStates = try collapse(
@@ -81,6 +90,13 @@ extension TrainingStore {
             FetchDescriptor<StoredWorkoutDraft>(), key: \.id
         ) { candidates in
             candidates.max { $0.updatedAt < $1.updatedAt }
+        }
+
+        let sessionRows = try modelContext.fetch(FetchDescriptor<StoredExerciseSession>())
+        let sessions = try exerciseSessions()
+        report.exerciseSessions = sessionRows.count - sessions.count
+        if report.exerciseSessions > 0 {
+            for session in sessions { try writeExerciseSession(session) }
         }
 
         if !report.isEmpty {
@@ -193,10 +209,53 @@ enum DuplicateSurvivor {
                     .adding(row.rpeValue.map { "\($0.bitPattern)" } ?? "-")
                     .adding(row.isWarmup ? "1" : "0")
                     .adding(row.performedAt.timeIntervalSince1970)
+                    .adding(row.workoutID?.uuidString ?? "-")
+                    .adding(row.acceptedPlanID?.uuidString ?? "-")
+                    .adding(row.effortWasReported.map { $0 ? "1" : "0" } ?? "-")
                     .bytes,
                 copyID: row.copyID
             )
         }
+    }
+
+    struct SetResolution {
+        var winner: StoredSetLog
+        var record: SetRecord
+        var ambiguous: Bool
+    }
+
+    /// A deterministic display survivor is not proof that disputed work was
+    /// performed. Keep equally authoritative conflicting copies on disk until
+    /// an explicit, newer correction resolves them. Reads withdraw their
+    /// workout association, so they cannot earn either increases or resets.
+    /// This also keeps a second deduplication or relaunch from losing the fact
+    /// that the performance was disputed.
+    static func resolvedSet(_ candidates: [StoredSetLog]) -> SetResolution? {
+        guard let winner = set(candidates) else { return nil }
+        let authority = Provenance(winner.updatedAt)
+        let current = candidates.filter { Provenance($0.updatedAt) == authority }
+        var record = winner.toDomain()
+        let workouts = Set(current.compactMap(\.workoutID))
+        let plans = Set(current.compactMap(\.acceptedPlanID))
+        let effort = Set(current.compactMap(\.effortWasReported))
+        let ambiguous = workouts.count > 1 || plans.count > 1 || effort.count > 1
+            || current.contains {
+                $0.exerciseID != winner.exerciseID || $0.pounds != winner.pounds
+                    || $0.reps != winner.reps || $0.rpeValue != winner.rpeValue
+                    || $0.isWarmup != winner.isWarmup || $0.performedAt != winner.performedAt
+            }
+        if ambiguous {
+            record.workoutID = nil
+            record.acceptedPlanID = nil
+            record.effortWasReported = nil
+        } else {
+            // Older clients omit these fields. Matching actuals can retain
+            // known provenance without claiming that an unknown value refutes it.
+            record.workoutID = workouts.first
+            record.acceptedPlanID = plans.first
+            record.effortWasReported = effort.first
+        }
+        return SetResolution(winner: winner, record: record, ambiguous: ambiguous)
     }
 
     static func template(_ candidates: [StoredDayTemplate]) -> StoredDayTemplate? {

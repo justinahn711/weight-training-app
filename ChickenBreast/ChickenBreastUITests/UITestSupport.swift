@@ -552,7 +552,10 @@ class ChickenBreastUITestCase: XCTestCase {
         let sheet = app.descendants(matching: .any)["finish.confirmation.sheet"]
         XCTAssertTrue(sheet.waitForExistence(timeout: 5))
         // Hittable once the sheet has finished rising, not at first existence.
-        XCTAssertTrue(wait(for: app.buttons["finish.confirmation.finish"], toMatch: "hittable == true", timeout: 5))
+        // "Keep training" is pinned to the sheet's bottom edge at every text
+        // size; the reasons above it scroll, and at accessibility sizes start
+        // below the medium detent (#316), so they can't be the signal.
+        XCTAssertTrue(wait(for: app.buttons["finish.confirmation.cancel"], toMatch: "hittable == true", timeout: 5))
         if requiresBottomPosition {
             XCTAssertGreaterThan(
                 sheet.frame.minY,

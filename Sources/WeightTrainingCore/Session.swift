@@ -14,6 +14,8 @@ public struct SessionExercise: Identifiable, Hashable, Sendable {
 
     public let prescription: Prescription
     public let lastPerformance: LastPerformance?
+    public let acceptedPlan: ExercisePlan?
+    public let recommendation: ExerciseRecommendation?
 
     /// Sets logged in *this* session, in the order performed.
     public var loggedSets: [SetRecord]
@@ -23,13 +25,17 @@ public struct SessionExercise: Identifiable, Hashable, Sendable {
         slot: Slot? = nil,
         prescription: Prescription,
         lastPerformance: LastPerformance? = nil,
-        loggedSets: [SetRecord] = []
+        loggedSets: [SetRecord] = [],
+        acceptedPlan: ExercisePlan? = nil,
+        recommendation: ExerciseRecommendation? = nil
     ) {
         self.exercise = exercise
         self.slot = slot
         self.prescription = prescription
         self.lastPerformance = lastPerformance
         self.loggedSets = loggedSets
+        self.acceptedPlan = acceptedPlan
+        self.recommendation = recommendation
     }
 
     public var workingSets: [SetRecord] { loggedSets.filter { !$0.isWarmup } }

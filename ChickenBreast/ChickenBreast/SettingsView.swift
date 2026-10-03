@@ -237,10 +237,63 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.weeklySessionTarget")
             }
+            NavigationLink {
+                MuscleVolumeBudgetEditor(
+                    budgets: gym.volumeBudgets,
+                    suggestion: try? store?.volumeBudgetSuggestion()
+                ) { budgets in
+                    var updated = GymSettings.shared.config
+                    updated.volumeBudgets = budgets
+                    commit(updated)
+                }
+            } label: {
+                LabeledContent(
+                    "Weekly set targets",
+                    value: gym.volumeBudgets.filter { !$0.isDefault }.isEmpty
+                        ? "Defaults"
+                        : "Customized"
+                )
+            }
+            .accessibilityIdentifier("settings.muscleVolume")
+
+            NavigationLink {
+                if let store {
+                    let draft = gym.trainingBlock ?? TrainingBlockConfig()
+                    TrainingBlockEditor(
+                        config: gym.trainingBlock,
+                        status: try? store.trainingBlockStatus(for: draft),
+                        unit: gym.unit
+                    ) { block in
+                        var updated = GymSettings.shared.config
+                        updated.trainingBlock = block
+                        commit(updated)
+                    }
+                }
+            } label: {
+                LabeledContent("Training block", value: trainingBlockLabel)
+            }
+            .accessibilityIdentifier("settings.trainingBlock")
+
+            if let store {
+                NavigationLink {
+                    RecommendationFeedbackView(store: store)
+                } label: {
+                    LabeledContent("Recommendation results", value: "Last 28 days")
+                }
+                .accessibilityIdentifier("settings.recommendationResults")
+            }
         } header: {
             Text("Training")
         } footer: {
             Text("Changing the split restarts your rotation at day one. Changing the weekly goal recalculates your streak from training history. Nothing you've logged is changed.")
+        }
+    }
+
+    private var trainingBlockLabel: String {
+        guard let block = gym.trainingBlock else { return "Off" }
+        switch TrainingBlockEngine.phase(for: block) {
+        case .accumulation(let week): return "Build week \(week)"
+        case .deload: return "Recovery week"
         }
     }
 
@@ -404,7 +457,9 @@ struct SettingsView: View {
                 commit(GymConfig(
                     unit: unit,
                     trainingSplit: gym.trainingSplit,
-                    weeklySessionTarget: gym.weeklySessionTarget
+                    weeklySessionTarget: gym.weeklySessionTarget,
+                    volumeBudgets: gym.volumeBudgets,
+                    trainingBlock: gym.trainingBlock
                 ))
             }
         )
@@ -452,6 +507,499 @@ struct SettingsView: View {
         // follower, so no gym save can change which lifts are exceptions — the
         // recount was provably a no-op, and it cost a second full fetch and
         // decode of the library on the main actor for every plate toggle.
+    }
+}
+
+// MARK: - Weekly muscle-volume budgets
+
+private struct MuscleVolumeBudgetEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var budgets: [MuscleSetBudget]
+    let suggestion: VolumeBudgetSuggestion?
+    let onSave: ([MuscleSetBudget]) -> Void
+
+    init(
+        budgets: [MuscleSetBudget],
+        suggestion: VolumeBudgetSuggestion?,
+        onSave: @escaping ([MuscleSetBudget]) -> Void
+    ) {
+        _budgets = State(initialValue: budgets)
+        self.suggestion = suggestion
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        List {
+            if let suggestion {
+                Section {
+                    Button("Use suggested bands") {
+                        for budget in suggestion.budgets {
+                            replace(budget.muscle, minimum: budget.minimum, maximum: budget.maximum)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.volume.useSuggestion")
+                } header: {
+                    Text("From your history")
+                } footer: {
+                    Text("Based on \(suggestion.weeksAnalyzed) complete weeks performed as planned at or below target effort. Review the values below, then Save to apply them.")
+                }
+            } else {
+                Section {
+                    Text("Complete two weeks of planned workouts and report RPE for every working set to unlock a personal starting suggestion.")
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("From your history")
+                }
+            }
+
+            Section {
+                ForEach(Muscle.allCases, id: \.self) { muscle in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(muscle.displayName)
+                            .font(.body.weight(.medium))
+                        VStack(spacing: 4) {
+                            Stepper(value: minimumBinding(for: muscle), in: 0...maximum(for: muscle)) {
+                                LabeledContent("Minimum", value: "\(minimum(for: muscle))")
+                            }
+                            .accessibilityIdentifier("settings.volume.\(muscle.rawValue).minimum")
+                            Stepper(value: maximumBinding(for: muscle), in: minimum(for: muscle)...40) {
+                                LabeledContent("Maximum", value: "\(maximum(for: muscle))")
+                            }
+                            .accessibilityIdentifier("settings.volume.\(muscle.rawValue).maximum")
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            } footer: {
+                Text("Targets use set credits over the last 7 days. A qualifying primary set counts as 1 and secondary work counts as 0.5. Warmups and reported RPE below 7 do not count; sets without RPE still count. These are planning bands, not safety limits.")
+            }
+
+            Section {
+                Button("Restore defaults") { budgets = MuscleSetBudget.defaults }
+            }
+        }
+        .navigationTitle("Weekly set targets")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    onSave(budgets)
+                    dismiss()
+                }
+                .accessibilityIdentifier("settings.volume.save")
+            }
+        }
+    }
+
+    private func budget(for muscle: Muscle) -> MuscleSetBudget {
+        budgets.first { $0.muscle == muscle }
+            ?? MuscleSetBudget(muscle: muscle, target: muscle.weeklySetTarget)
+    }
+
+    private func minimum(for muscle: Muscle) -> Int { budget(for: muscle).minimum }
+    private func maximum(for muscle: Muscle) -> Int { budget(for: muscle).maximum }
+
+    private func replace(_ muscle: Muscle, minimum: Int? = nil, maximum: Int? = nil) {
+        let current = budget(for: muscle)
+        let updated = MuscleSetBudget(
+            muscle: muscle,
+            minimum: minimum ?? current.minimum,
+            maximum: maximum ?? current.maximum
+        )
+        if let index = budgets.firstIndex(where: { $0.muscle == muscle }) {
+            budgets[index] = updated
+        } else {
+            budgets.append(updated)
+        }
+    }
+
+    private func minimumBinding(for muscle: Muscle) -> Binding<Int> {
+        Binding(get: { minimum(for: muscle) }, set: { replace(muscle, minimum: $0) })
+    }
+
+    private func maximumBinding(for muscle: Muscle) -> Binding<Int> {
+        Binding(get: { maximum(for: muscle) }, set: { replace(muscle, maximum: $0) })
+    }
+}
+
+// MARK: - Recommendation feedback
+
+private struct RecommendationFeedbackView: View {
+    let store: TrainingStore
+    @State private var report: RecommendationFeedbackReport?
+    @State private var exerciseNames: [UUID: String] = [:]
+    @State private var failed = false
+
+    var body: some View {
+        List {
+            if let report, report.reviewedPlans > 0 || report.automaticActivations > 0 {
+                Section {
+                    LabeledContent("Automatic targets", value: "\(report.automaticActivations)")
+                        .accessibilityIdentifier("settings.recommendationResults.summary.automaticTargets")
+                    LabeledContent("Plans reviewed", value: "\(report.reviewedPlans)")
+                        .accessibilityIdentifier("settings.recommendationResults.summary.plansReviewed")
+                    LabeledContent("Used as suggested", value: "\(report.acceptedAsSuggested)")
+                        .accessibilityIdentifier("settings.recommendationResults.summary.usedAsSuggested")
+                    LabeledContent("Edited before use", value: "\(report.editedBeforeUse)")
+                        .accessibilityIdentifier("settings.recommendationResults.summary.editedBeforeUse")
+                } header: {
+                    Text("Last \(report.days) days")
+                } footer: {
+                    Text("Automatic targets start in the workout. Opening the optional plan editor records a separate review or edit.")
+                }
+
+                if report.finishedAutomaticPlans > 0 || report.automaticWorkingSets > 0 {
+                    Section {
+                        LabeledContent(
+                            "Completed as planned",
+                            value: "\(report.automaticCompletedAsPlanned) of \(report.finishedAutomaticPlans)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.automatic.completedAsPlanned")
+                        LabeledContent(
+                            "Completed below target RPE",
+                            value: "\(report.automaticCompletedBelowTargetEffort)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.automatic.belowTargetRPE")
+                        LabeledContent("RPE reported", value: percentage(report.automaticEffortCoverage))
+                            .accessibilityIdentifier("settings.recommendationResults.automatic.rpeReported")
+                        LabeledContent(
+                            "Sets above target RPE",
+                            value: "\(report.automaticAboveTargetEffortSets)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.automatic.setsAboveTargetRPE")
+                    } header: {
+                        Text("Automatic targets")
+                    } footer: {
+                        Text("These outcomes include targets used without opening the optional plan editor.")
+                    }
+                }
+
+                if report.reviewedPlans > 0 {
+                    Section {
+                        LabeledContent(
+                            "Completed as planned",
+                            value: "\(report.completedAsPlanned) of \(report.finishedAcceptedPlans)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.summary.completedAsPlanned")
+                        LabeledContent(
+                            "Completed below target RPE",
+                            value: "\(report.completedBelowTargetEffort)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.summary.belowTargetRPE")
+                        LabeledContent("RPE reported", value: percentage(report.effortCoverage))
+                            .accessibilityIdentifier("settings.recommendationResults.summary.rpeReported")
+                        LabeledContent(
+                            "Sets above target RPE",
+                            value: "\(report.aboveTargetEffortSets)"
+                        )
+                        .accessibilityIdentifier("settings.recommendationResults.summary.setsAboveTargetRPE")
+                    } header: {
+                        Text("Explicitly reviewed plans")
+                    } footer: {
+                        Text("These aggregate outcomes use only plans explicitly accepted as suggested. Correcting or deleting a set updates the results automatically.")
+                    }
+                }
+
+                let holdReasons = sortedHoldReasons(report)
+                if !holdReasons.isEmpty {
+                    Section {
+                        ForEach(Array(holdReasons.enumerated()), id: \.offset) { _, item in
+                            LabeledContent(reasonLabel(item.reason), value: "\(item.count)")
+                        }
+                    } header: {
+                        Text("Why targets held")
+                    } footer: {
+                        Text("Counts describe saved recommendations. They are evidence for reviewing the rules, not success or failure scores.")
+                    }
+                }
+
+                Section("Recent recommendations") {
+                    ForEach(report.entries) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(exerciseNames[entry.exerciseID] ?? "Exercise")
+                                    .font(.headline)
+                                Spacer()
+                                Text(entry.generatedAt.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("\(actionLabel(entry.action)) · \(outcomeLabel(entry))")
+                                .font(.subheadline)
+                            if let reason = entry.reason {
+                                Text(reasonLabel(reason))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if entry.decision != .edited {
+                                Text(effortLabel(entry))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("settings.recommendationResults.entry.\(entry.id)")
+                    }
+                }
+            } else if failed {
+                ContentUnavailableView(
+                    "Results unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text("The saved recommendation history could not be read.")
+                )
+                .accessibilityIdentifier("settings.recommendationResults.unavailable")
+            } else {
+                ContentUnavailableView(
+                    "No recommendations yet",
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    description: Text("Automatic targets and optional plan reviews will appear here after a future workout. Existing history remains unchanged.")
+                )
+                .accessibilityIdentifier("settings.recommendationResults.empty")
+            }
+        }
+        .accessibilityIdentifier("settings.recommendationResults.screen")
+        .navigationTitle("Recommendation results")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { reload() }
+    }
+
+    private func reload() {
+        do {
+            report = try store.recommendationFeedbackReport()
+            exerciseNames = Dictionary(
+                try store.exercises().map { ($0.id, $0.name) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            failed = false
+        } catch {
+            report = nil
+            exerciseNames = [:]
+            failed = true
+        }
+    }
+
+    private func percentage(_ coverage: Double?) -> String {
+        guard let coverage else { return "No sets yet" }
+        return "\(Int((coverage * 100).rounded()))%"
+    }
+
+    private func sortedHoldReasons(
+        _ report: RecommendationFeedbackReport
+    ) -> [(reason: ExerciseRecommendation.Reason, count: Int)] {
+        report.holdReasonCounts.map { (reason: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count != $1.count { return $0.count > $1.count }
+                return reasonLabel($0.reason) < reasonLabel($1.reason)
+            }
+    }
+
+    private func actionLabel(_ action: ExerciseRecommendation.Action) -> String {
+        switch action {
+        case .establish: return "Starting plan"
+        case .hold: return "Hold"
+        case .addReps: return "Add reps"
+        case .addLoad: return "Add weight"
+        case .addSet: return "Add a set"
+        case .reduce: return "Reduce demand"
+        case .deload: return "Recovery plan"
+        case .stop: return "Stop movement"
+        }
+    }
+
+    private func outcomeLabel(_ entry: RecommendationFeedbackEntry) -> String {
+        if entry.decision == .edited { return "Edited before use" }
+        if !entry.finished {
+            if entry.workingSets > 0 { return "Workout in progress" }
+            return entry.decision == .automaticallyActivated
+                ? "Activated automatically"
+                : "Not completed yet"
+        }
+        if entry.completedAsPlanned { return "Completed as planned" }
+        switch entry.completion {
+        case .shortenedForTime: return "Ended early for time"
+        case .stoppedForFatigue: return "Ended early for fatigue"
+        case .stoppedForPain: return "Ended early for pain"
+        case .completed: return "Finished with different sets"
+        case .unknown, nil: return "Finished without a completion result"
+        }
+    }
+
+    private func effortLabel(_ entry: RecommendationFeedbackEntry) -> String {
+        guard entry.workingSets > 0 else { return "No working sets logged" }
+        let effort = "RPE reported for \(entry.reportedEffortSets) of \(entry.workingSets) sets"
+        if entry.completedBelowTargetEffort { return "\(effort) · every set below target" }
+        guard entry.aboveTargetEffortSets > 0 else { return effort }
+        return "\(effort) · \(entry.aboveTargetEffortSets) above target"
+    }
+
+    private func reasonLabel(_ reason: ExerciseRecommendation.Reason) -> String {
+        switch reason {
+        case .firstPlanNeeded: return "Starting plan needed"
+        case .legacyBaseline: return "Recent workout baseline"
+        case .invalidInput: return "Plan or history needs review"
+        case .unsupportedEquipment: return "Equipment policy unavailable"
+        case .equipmentChanged: return "Equipment changed"
+        case .ambiguousHistory: return "Conflicting history"
+        case .staleHistory: return "History is stale"
+        case .newPrescription: return "New prescription"
+        case .missingEffort: return "RPE missing"
+        case .incompleteExposure: return "Prescription incomplete"
+        case .techniqueChanged: return "Technique changed"
+        case .unexpectedPerformance: return "Performed work differed"
+        case .effortAboveTarget: return "RPE above target"
+        case .confirmEasyWorkouts(let completed, let required):
+            return "Repeat-easy gate (\(completed) of \(required))"
+        case .addedRep: return "Rep increase"
+        case .addedLoad: return "Weight increase"
+        case .weeklyVolumeBelowBudget: return "Below weekly set target"
+        case .loadStepTooLarge: return "Weight jump too large"
+        case .noHeavierLoad: return "No heavier configured weight"
+        case .bodyweightRepCeiling: return "Bodyweight rep ceiling reached"
+        case .bodyweightRepeatedMisses: return "Repeated bodyweight misses"
+        case .repeatedMisses: return "Repeated missed targets"
+        case .minimumLoad: return "Equipment minimum reached"
+        case .reductionUnavailable: return "Smaller weight unavailable"
+        case .poorRecovery: return "Recovery reported poor"
+        case .acceptedDeload: return "Accepted recovery plan"
+        case .resumeAfterDeload: return "Returning from recovery"
+        case .scheduledDeload: return "Scheduled recovery"
+        case .programFatigue: return "Program-wide fatigue"
+        case .pain: return "Pain reported"
+        }
+    }
+}
+
+// MARK: - Optional training block
+
+private struct TrainingBlockEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var enabled: Bool
+    @State private var startedAt: Date
+    @State private var accumulationWeeks: Int
+    @State private var monthlyIncrease: Double
+    @State private var deloadFraction: Double
+
+    let status: TrainingBlockStatus?
+    let unit: MassUnit
+    let onSave: (TrainingBlockConfig?) -> Void
+
+    init(
+        config: TrainingBlockConfig?,
+        status: TrainingBlockStatus?,
+        unit: MassUnit,
+        onSave: @escaping (TrainingBlockConfig?) -> Void
+    ) {
+        let draft = config ?? TrainingBlockConfig()
+        _enabled = State(initialValue: config != nil)
+        _startedAt = State(initialValue: draft.startedAt)
+        _accumulationWeeks = State(initialValue: draft.accumulationWeeks)
+        _monthlyIncrease = State(initialValue: draft.monthlyIncrease)
+        _deloadFraction = State(initialValue: draft.deloadTonnageFraction)
+        self.status = status
+        self.unit = unit
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Use a training block", isOn: $enabled)
+                    .accessibilityIdentifier("settings.trainingBlock.enabled")
+            } footer: {
+                Text("A block coordinates weekly volume and a recovery week. Exercise recommendations remain proposals that you review before using.")
+            }
+
+            if enabled {
+                Section("Schedule") {
+                    DatePicker("Starts", selection: $startedAt, displayedComponents: .date)
+                        .accessibilityIdentifier("settings.trainingBlock.startedAt")
+                    Stepper(value: $accumulationWeeks, in: 2...6) {
+                        LabeledContent("Build weeks", value: "\(accumulationWeeks)")
+                    }
+                    .accessibilityIdentifier("settings.trainingBlock.buildWeeks")
+                }
+
+                Section {
+                    Picker("Build target", selection: $monthlyIncrease) {
+                        Text("5% above baseline").tag(0.05)
+                        Text("7.5% above baseline").tag(0.075)
+                        Text("10% above baseline").tag(0.10)
+                    }
+                    .accessibilityIdentifier("settings.trainingBlock.buildTarget")
+                    Picker("Recovery target", selection: $deloadFraction) {
+                        Text("70% of baseline").tag(0.70)
+                        Text("75% of baseline").tag(0.75)
+                        Text("80% of baseline").tag(0.80)
+                    }
+                    .accessibilityIdentifier("settings.trainingBlock.recoveryTarget")
+                } header: {
+                    Text("Tonnage targets")
+                } footer: {
+                    Text("Tonnage is weight × reps across working sets. The baseline is the median of two or three consecutive, comparable weeks completed as planned with reported RPE.")
+                }
+
+                Section("Current status") {
+                    LabeledContent("Phase", value: phaseLabel)
+                    if let status, let baseline = status.baselineTonnage {
+                        LabeledContent("Baseline", value: tonnage(baseline))
+                        LabeledContent("This week", value: tonnage(status.currentTonnage))
+                        LabeledContent("Target", value: tonnage(target(from: baseline)))
+                    } else {
+                        Text("A tonnage target appears after two comparable, fully completed weeks. The calendar phase can still guide a recovery week meanwhile.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Training block")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    let block = enabled ? TrainingBlockConfig(
+                        startedAt: startedAt,
+                        accumulationWeeks: accumulationWeeks,
+                        monthlyIncrease: monthlyIncrease,
+                        deloadTonnageFraction: deloadFraction
+                    ) : nil
+                    onSave(block)
+                    dismiss()
+                }
+                .accessibilityIdentifier("settings.trainingBlock.save")
+            }
+        }
+    }
+
+    private var phaseLabel: String {
+        let config = TrainingBlockConfig(
+            startedAt: startedAt,
+            accumulationWeeks: accumulationWeeks,
+            monthlyIncrease: monthlyIncrease,
+            deloadTonnageFraction: deloadFraction
+        )
+        switch TrainingBlockEngine.phase(for: config) {
+        case .accumulation(let week): return "Build week \(week) of \(accumulationWeeks)"
+        case .deload: return "Recovery week"
+        }
+    }
+
+    private func tonnage(_ poundsReps: Double) -> String {
+        let value = unit.value(fromPounds: poundsReps)
+        return "\(Int(value.rounded()).formatted()) \(unit.symbol)-reps"
+    }
+
+    private func target(from baseline: Double) -> Double {
+        let config = TrainingBlockConfig(
+            startedAt: startedAt,
+            accumulationWeeks: accumulationWeeks,
+            monthlyIncrease: monthlyIncrease,
+            deloadTonnageFraction: deloadFraction
+        )
+        switch TrainingBlockEngine.phase(for: config) {
+        case .accumulation: return baseline * (1 + monthlyIncrease)
+        case .deload: return baseline * deloadFraction
+        }
     }
 }
 

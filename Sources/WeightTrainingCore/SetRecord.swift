@@ -21,6 +21,12 @@ public struct SetRecord: Identifiable, Hashable, Codable, Sendable {
 
     public var performedAt: Date
 
+    /// Nil on legacy logs; never infer session identity or effort provenance
+    /// from a calendar day or a preselected target.
+    public var workoutID: UUID?
+    public var acceptedPlanID: UUID?
+    public var effortWasReported: Bool?
+
     public init(
         id: UUID = UUID(),
         exerciseID: UUID,
@@ -28,7 +34,10 @@ public struct SetRecord: Identifiable, Hashable, Codable, Sendable {
         reps: Int,
         rpe: RPE? = nil,
         isWarmup: Bool = false,
-        performedAt: Date
+        performedAt: Date,
+        workoutID: UUID? = nil,
+        acceptedPlanID: UUID? = nil,
+        effortWasReported: Bool? = nil
     ) {
         self.id = id
         self.exerciseID = exerciseID
@@ -37,6 +46,9 @@ public struct SetRecord: Identifiable, Hashable, Codable, Sendable {
         self.rpe = rpe
         self.isWarmup = isWarmup
         self.performedAt = performedAt
+        self.workoutID = workoutID
+        self.acceptedPlanID = acceptedPlanID
+        self.effortWasReported = effortWasReported
     }
 
     /// Whether this set counts toward weekly volume.

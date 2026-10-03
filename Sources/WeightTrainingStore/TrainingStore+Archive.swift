@@ -20,7 +20,8 @@ extension TrainingStore {
             progressStates: try allProgressStates(),
             dayTemplates: try dayTemplates(),
             bodyweights: try bodyweights(),
-            gymConfig: try gymConfig()
+            gymConfig: try gymConfig(),
+            exerciseSessions: try exerciseSessions()
         )
     }
 
@@ -139,6 +140,30 @@ extension TrainingStore {
             let states = try mergeProgressStates(archive.progressStates)
             report.progressStates = states.added
             report.kept += states.kept
+
+            let existingSessions = Dictionary(try exerciseSessions().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            for session in archive.exerciseSessions ?? [] {
+                if let existing = existingSessions[session.id] {
+                    // Newer here, or the same row: kept, not added — the
+                    // report #271 made honest for every other kind.
+                    if existing.updatedAt > session.updatedAt || existing == session {
+                        report.kept += 1
+                        continue
+                    }
+                    if existing.updatedAt == session.updatedAt, existing != session {
+                        var conflict = existing
+                        conflict.plan = nil
+                        conflict.recommendationTrace = nil
+                        conflict.completion = .unknown
+                        conflict.completedAt = [existing.completedAt, session.completedAt].compactMap { $0 }.max()
+                        try writeExerciseSession(conflict)
+                        report.exerciseSessions += 1
+                        continue
+                    }
+                }
+                try writeExerciseSession(session)
+                report.exerciseSessions += 1
+            }
 
             let weighIns = try mergeBodyweights(archive.bodyweights, calendar: calendar)
             report.bodyweights = weighIns.added
@@ -274,6 +299,14 @@ extension TrainingStore {
         if mine.weeklySessionTarget == fresh.weeklySessionTarget {
             merged.weeklySessionTarget = theirs.weeklySessionTarget
         }
+        // Version-2 additions, on the same rule: a fresh install's gym row
+        // (written by the split picker before restore is reachable) still
+        // holds the defaults, and the file's choices should win over those,
+        // never over targets or a block chosen on this phone (#316 review).
+        if mine.volumeBudgets == fresh.volumeBudgets {
+            merged.volumeBudgets = theirs.volumeBudgets
+        }
+        if mine.trainingBlock == nil { merged.trainingBlock = theirs.trainingBlock }
 
         guard merged != mine else { return false }
         // The row now holds this phone's choices too, some made after the

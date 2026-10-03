@@ -288,6 +288,54 @@ final class GymConfigTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(GymConfig.self, from: data).weeklySessionTarget, 4)
     }
 
+    func testPersonalizedVolumeBudgetsSurviveARoundTrip() throws {
+        var gym = GymConfig.standard
+        gym.volumeBudgets = gym.volumeBudgets.map {
+            $0.muscle == .chest
+                ? MuscleSetBudget(muscle: .chest, minimum: 6, maximum: 12)
+                : $0
+        }
+
+        let data = try JSONEncoder().encode(gym)
+        let decoded = try JSONDecoder().decode(GymConfig.self, from: data)
+
+        XCTAssertEqual(decoded.volumeTarget(for: .chest), 6...12)
+        XCTAssertEqual(decoded.volumeBudgets.count, Muscle.allCases.count)
+    }
+
+    func testOptionalTrainingBlockSurvivesARoundTrip() throws {
+        let block = TrainingBlockConfig(
+            startedAt: Date(timeIntervalSince1970: 1234), accumulationWeeks: 4,
+            monthlyIncrease: 0.075, deloadTonnageFraction: 0.8
+        )
+        let gym = GymConfig(trainingBlock: block)
+        let decoded = try JSONDecoder().decode(
+            GymConfig.self, from: JSONEncoder().encode(gym)
+        )
+        XCTAssertEqual(decoded.trainingBlock, block)
+        XCTAssertNil(try JSONDecoder().decode(
+            GymConfig.self, from: "{}".data(using: .utf8)!
+        ).trainingBlock)
+    }
+
+    func testLegacyConfigGetsDefaultVolumeBudgets() throws {
+        let json = """
+        {"unit":"pounds","availablePlates":[45,25,10,5,2.5],
+         "barWeight":{"pounds":45}}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(GymConfig.self, from: json)
+
+        XCTAssertEqual(decoded.volumeBudgets, MuscleSetBudget.defaults)
+    }
+
+    func testDefaultGymConfigIsImmediatelyReadyForVolumeAllocation() {
+        let gym = GymConfig()
+
+        XCTAssertEqual(gym.volumeBudgets, MuscleSetBudget.defaults)
+        XCTAssertEqual(gym.volumeBudgets.count, Muscle.allCases.count)
+        XCTAssertTrue(Muscle.allCases.allSatisfy { gym.volumeTarget(for: $0) == $0.weeklySetTarget })
+    }
+
     func testLegacyConfigDefaultsToThreeTrainingDays() throws {
         let json = """
         {"unit":"pounds","availablePlates":[45,25,10,5,2.5],

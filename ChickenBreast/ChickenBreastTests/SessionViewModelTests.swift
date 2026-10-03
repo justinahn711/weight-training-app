@@ -302,7 +302,13 @@ final class SessionViewModelTests: XCTestCase {
         vm.logSet()
         vm.restDidComplete()
         XCTAssertEqual(vm.autoAdvancedFrom?.exercise.name, "First")
+        // This fixture's history exists only on the in-memory SessionExercise;
+        // navigation rebuilds from an intentionally empty store. Enter the
+        // known second-lift load rather than relying on the former ability to
+        // write a zero-load working set.
+        vm.pendingLoad = Load(20)
         vm.logSet()
+        XCTAssertNil(vm.failure, vm.failure ?? "unexpected logging failure")
         XCTAssertNil(vm.autoAdvancedFrom, "logging on the new lift is the action the notice waits for")
     }
 
@@ -315,7 +321,9 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.rest?.setID, before.setID, "still anchored to the set that started it")
 
         // And the next set on the new lift replaces it.
+        vm.pendingLoad = Load(20)
         vm.logSet()
+        XCTAssertNil(vm.failure, vm.failure ?? "unexpected logging failure")
         XCTAssertNotEqual(vm.rest?.startedAt, before.startedAt)
     }
 
@@ -412,10 +420,126 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.session.current?.loggedSets.count, 1)
     }
 
-    func test_canLogSet_trueForBodyweightAtZeroAddedLoad() throws {
+    func test_canLogSet_falseForBodyweightWithoutAWeighIn() throws {
         let vm = try coldStartViewModel(equipment: .bodyweight)
         vm.pendingLoad = .zero
-        XCTAssertTrue(vm.canLogSet, "zero added load is a real bodyweight set")
+        XCTAssertFalse(vm.canLogSet, "bodyweight history stores total load, which is unknown without a weigh-in")
+        XCTAssertFalse(vm.canPlanCurrentExercise)
+        XCTAssertNotNil(vm.planUnavailableReason)
+        XCTAssertNil(vm.planProposal(), "a missing weigh-in must not become a 2.5 lb bodyweight plan")
+        vm.logSet()
+        XCTAssertTrue(vm.session.current?.loggedSets.isEmpty ?? false)
+    }
+
+    func test_bodyweightWeighInSurvivesPreparationAndSeedsExactPlanAndSet() throws {
+        let store = try TrainingStore.inMemory()
+        let pullUp = Exercise(
+            name: "Pull-up", muscles: [.primary(.lats)], equipment: .bodyweight,
+            progressionRule: .doubleProgression(range: RepRange(6, 10))
+        )
+        try store.create(pullUp)
+        try store.record(BodyweightReading(
+            pounds: 173.3, recordedAt: Date().addingTimeInterval(-60)
+        ))
+        let session = Session(kind: .pull, exercises: [SessionExercise(
+            exercise: pullUp,
+            prescription: Prescription(load: nil, reps: 6, rpe: .eight)
+        )])
+        let vm = SessionViewModel(store: store, session: session, draftID: UUID())
+
+        vm.loadSuggestionContext()
+
+        XCTAssertEqual(vm.pendingLoad, Load(173.3))
+        XCTAssertTrue(vm.canLogSet)
+        XCTAssertTrue(vm.canPlanCurrentExercise)
+        XCTAssertNil(vm.planUnavailableReason)
+        let plan = try XCTUnwrap(vm.planProposal())
+        XCTAssertEqual(Set(plan.sets.map(\.load)), [Load(173.3)])
+
+        vm.logSet()
+        XCTAssertEqual(vm.session.current?.workingSets.last?.load, Load(173.3))
+    }
+
+    func test_bodyweightWeighInIsRestoredWhenNavigatingBack() throws {
+        let store = try TrainingStore.inMemory()
+        let press = benchPress()
+        let pullUp = Exercise(
+            name: "Pull-up", muscles: [.primary(.lats)], equipment: .bodyweight,
+            progressionRule: .doubleProgression(range: RepRange(6, 10))
+        )
+        try store.create(press)
+        try store.create(pullUp)
+        try store.record(BodyweightReading(
+            pounds: 181.4, recordedAt: Date().addingTimeInterval(-60)
+        ))
+        let session = Session(kind: .pull, exercises: [
+            sessionExercise(press),
+            SessionExercise(
+                exercise: pullUp,
+                prescription: Prescription(load: nil, reps: 6, rpe: .eight)
+            ),
+        ])
+        let vm = SessionViewModel(store: store, session: session, draftID: UUID())
+        vm.loadSuggestionContext()
+
+        vm.select(exerciseID: pullUp.id)
+        XCTAssertEqual(vm.pendingLoad, Load(181.4))
+        vm.select(exerciseID: press.id)
+        vm.select(exerciseID: pullUp.id)
+        XCTAssertEqual(vm.pendingLoad, Load(181.4))
+    }
+
+    func test_swappingToBodyweightUsesTheRecordedTotalLoad() throws {
+        let store = try TrainingStore.inMemory()
+        let press = benchPress()
+        let pullUp = Exercise(
+            name: "Pull-up", muscles: [.primary(.lats)], equipment: .bodyweight,
+            progressionRule: .doubleProgression(range: RepRange(6, 10))
+        )
+        try store.create(press)
+        try store.create(pullUp)
+        try store.record(BodyweightReading(
+            pounds: 176.8, recordedAt: Date().addingTimeInterval(-60)
+        ))
+        let session = Session(kind: .pull, exercises: [sessionExercise(press)])
+        let vm = SessionViewModel(store: store, session: session, draftID: UUID())
+        vm.loadSuggestionContext()
+
+        let replaced = try XCTUnwrap(vm.current)
+        vm.swap(replaced, to: pullUp)
+
+        XCTAssertEqual(vm.current?.exercise.id, pullUp.id)
+        XCTAssertEqual(vm.pendingLoad, Load(176.8))
+        XCTAssertTrue(vm.canLogSet)
+    }
+
+    func test_reconfiguringBodyweightPreservesTheRecordedTotalLoad() throws {
+        let store = try TrainingStore.inMemory()
+        let pullUp = Exercise(
+            name: "Pull-up", muscles: [.primary(.lats)], equipment: .bodyweight,
+            progressionRule: .doubleProgression(range: RepRange(6, 10))
+        )
+        try store.create(pullUp)
+        try store.record(BodyweightReading(
+            pounds: 169.6, recordedAt: Date().addingTimeInterval(-60)
+        ))
+        let session = Session(kind: .pull, exercises: [SessionExercise(
+            exercise: pullUp,
+            prescription: Prescription(load: nil, reps: 6, rpe: .eight)
+        )])
+        let vm = SessionViewModel(store: store, session: session, draftID: UUID())
+        vm.loadSuggestionContext()
+
+        vm.updateConfiguration(
+            of: pullUp,
+            increment: LoadIncrement(pounds: 5),
+            loading: nil,
+            restOverride: 120
+        )
+
+        XCTAssertEqual(vm.pendingLoad, Load(169.6))
+        XCTAssertTrue(vm.canLogSet)
+        XCTAssertEqual(Set(try XCTUnwrap(vm.planProposal()).sets.map(\.load)), [Load(169.6)])
     }
 
     // MARK: - Records at log time
@@ -771,7 +895,8 @@ final class SessionViewModelTests: XCTestCase {
         let logged = try XCTUnwrap(vm.session.current?.loggedSets.last)
         XCTAssertFalse(logged.isWarmup, "a working set, not a warmup, despite a ramp still being active moments ago")
         XCTAssertEqual(logged.load, Load(135))
-        XCTAssertNotNil(logged.rpe, "working sets are scored")
+        XCTAssertNil(logged.rpe, "the target RPE is not actual effort until the lifter reports it")
+        XCTAssertEqual(logged.effortWasReported, false)
         XCTAssertTrue(vm.warmupRamp.isEmpty, "the ramp is retired the moment a working set lands (#15)")
     }
 

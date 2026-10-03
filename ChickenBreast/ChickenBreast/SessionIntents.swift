@@ -60,6 +60,7 @@ struct LogTargetSetIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         guard let id = UUID(uuidString: exerciseID),
               let setID = UUID(uuidString: actionID),
+              let workoutUUID = UUID(uuidString: workoutID),
               let activity = SessionActivityRefresh.current(workoutID: workoutID),
               activity.content.state.logActionID == setID,
               activity.content.state.restEndsAt.map({ $0 <= Date() }) ?? true else {
@@ -72,21 +73,49 @@ struct LogTargetSetIntent: LiveActivityIntent {
             exerciseID: id,
             load: Load(pounds),
             reps: reps,
-            rpe: rpe.flatMap { RPE($0) ?? RPE(snapping: $0) },
+            // The Live Activity displays the target RPE, but tapping Log does
+            // not report that the set actually felt that way.
+            rpe: nil,
             isWarmup: false,
             performedAt: Date()
         )
-        let inserted = try store.logIfAbsent(record)
-        guard inserted else { return .result() }
+        guard let draft = try store.workoutDraft(), draft.id == workoutUUID else { return .result() }
+        if let exercise = try store.exercise(id: id) {
+            let refreshed = try store.sessionExercise(
+                for: exercise,
+                slot: nil,
+                startedAt: draft.startedAt,
+                workoutID: workoutUUID
+            )
+            // Recovery targets are proposals until the lifter chooses Use,
+            // Adjust, or Dismiss in the workout. A stale Live Activity from a
+            // prior process must not log one without an active prescription.
+            if refreshed.acceptedPlan == nil,
+               refreshed.recommendation?.action == .deload {
+                return .result()
+            }
+        }
+        let saved = try store.logWorkoutSet(
+            record, workoutID: workoutUUID, startedAt: draft.startedAt, effortReported: false
+        )
+        guard saved.inserted else { return .result() }
+
+        let nextTarget = try? SessionActivityRefresh.nextPlannedTarget(
+            store: store,
+            workoutID: workoutUUID,
+            exerciseID: id,
+            startedAt: draft.startedAt
+        )
 
         // The lock screen has to reflect the tap immediately: rest restarts and
-        // the set count moves. Nothing else is watching — the session screen
-        // isn't on screen, or the phone wouldn't be locked.
+        // the set count and per-set target move. Nothing else is watching — the
+        // session screen isn't on screen, or the phone wouldn't be locked.
         await SessionActivityRefresh.afterLoggedSet(
             workoutID: workoutID,
             setID: setID,
-            restStartedAt: record.performedAt,
-            restEndsAt: record.performedAt.addingTimeInterval(
+            nextTarget: nextTarget,
+            restStartedAt: saved.record.performedAt,
+            restEndsAt: saved.record.performedAt.addingTimeInterval(
                 (try? store.exercise(id: id))?.restTarget ?? 180
             )
         )
@@ -138,7 +167,23 @@ struct UndoLiveSetIntent: LiveActivityIntent {
               activity.content.state.lastLoggedSetID == id else { return .result() }
         let store = try AppStore.shared.store()
         _ = try store.deleteSet(id: id)
-        await SessionActivityRefresh.afterUndo(workoutID: workoutID, setID: id)
+        let nextTarget: SessionActivityRefresh.PlannedTarget?
+        if let workoutUUID = UUID(uuidString: workoutID),
+           let draft = try store.workoutDraft(), draft.id == workoutUUID {
+            nextTarget = try? SessionActivityRefresh.nextPlannedTarget(
+                store: store,
+                workoutID: workoutUUID,
+                exerciseID: activity.content.state.exerciseID,
+                startedAt: draft.startedAt
+            )
+        } else {
+            nextTarget = nil
+        }
+        await SessionActivityRefresh.afterUndo(
+            workoutID: workoutID,
+            setID: id,
+            nextTarget: nextTarget
+        )
         return .result()
     }
 }
@@ -151,6 +196,11 @@ struct UndoLiveSetIntent: LiveActivityIntent {
 /// it next appears, which is what keeps the two from disagreeing.
 @MainActor
 enum SessionActivityRefresh {
+
+    struct PlannedTarget {
+        let line: String
+        let set: PlannedWorkingSet
+    }
 
     static func current(workoutID: String) -> Activity<SessionActivityAttributes>? {
         Activity<SessionActivityAttributes>.activities.first {
@@ -169,17 +219,19 @@ enum SessionActivityRefresh {
     static func afterLoggedSet(
         workoutID: String,
         setID: UUID,
+        nextTarget: PlannedTarget?,
         restStartedAt: Date,
         restEndsAt: Date,
         alerts: RestAlertScheduling = SystemRestAlerts()
     ) async {
         guard let activity = current(workoutID: workoutID) else { return }
-        let state = loggingSet(
+        var state = loggingSet(
             setID,
             restStartedAt: restStartedAt,
             restEndsAt: restEndsAt,
             in: activity.content.state
         )
+        apply(nextTarget, to: &state)
         syncRestAlerts(to: state, using: alerts)
         await activity.update(ActivityContent(state: state, staleDate: restEndsAt))
     }
@@ -197,12 +249,14 @@ enum SessionActivityRefresh {
     static func afterUndo(
         workoutID: String,
         setID: UUID,
+        nextTarget: PlannedTarget?,
         alerts: RestAlertScheduling = SystemRestAlerts()
     ) async {
         guard let activity = current(workoutID: workoutID),
               activity.content.state.lastLoggedSetID == setID else { return }
         let before = activity.content.state
-        let state = undoing(setID, in: before)
+        var state = undoing(setID, in: before)
+        apply(nextTarget, to: &state)
         // Only when the rest actually went: a hand-started rest outlives the
         // undo, and its alerts with it.
         if state.restEndsAt != before.restEndsAt {
@@ -282,5 +336,46 @@ enum SessionActivityRefresh {
             exercise: state.exerciseName,
             next: state.targetLine
         )
+    }
+
+    /// Reads the accepted plan after a lock-screen write and returns the exact
+    /// next set. This is the same persisted boundary the foreground session
+    /// resumes from; deriving from the old activity state would repeat set one
+    /// for plans such as 10/10/9.
+    static func nextPlannedTarget(
+        store: TrainingStore,
+        workoutID: UUID,
+        exerciseID: UUID,
+        startedAt: Date
+    ) throws -> PlannedTarget? {
+        guard let exercise = try store.exercise(id: exerciseID) else { return nil }
+        let refreshed = try store.sessionExercise(
+            for: exercise,
+            slot: nil,
+            startedAt: startedAt,
+            workoutID: workoutID
+        )
+        guard let plan = refreshed.acceptedPlan,
+              let target = SessionActivitySelection.nextPlannedSet(
+                  in: plan, completedWorkingSets: refreshed.workingSets.count
+              ) else { return nil }
+        let index = refreshed.workingSets.count
+        let unit = try store.gymConfig().unit
+        return PlannedTarget(
+            line: "Set \(index + 1) of \(plan.sets.count) · "
+                + "\(target.load.formatted(in: unit)) × \(target.reps) @ \(target.rpe)",
+            set: target
+        )
+    }
+
+    private static func apply(
+        _ target: PlannedTarget?,
+        to state: inout SessionActivityAttributes.ContentState
+    ) {
+        guard let target else { return }
+        state.targetLine = target.line
+        state.targetPounds = target.set.load.pounds
+        state.targetReps = target.set.reps
+        state.targetRPE = target.set.rpe.value
     }
 }
