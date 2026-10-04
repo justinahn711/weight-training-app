@@ -82,6 +82,9 @@ final class AppStore {
 enum UITestLaunchState {
     static let isolatedStoreArgument = "-UITestIsolatedStore"
     static let resetArgument = "-UITestResetState"
+    /// The root's accessibility identifier while the isolated store is open
+    /// (#321). Spelled the same in `UITestSupport.swift`.
+    static let isolationMarker = "uitest.isolatedStore"
     static let seedYesterdayArgument = "-UITestSeedYesterday"
 
     static var usesIsolatedStore: Bool {

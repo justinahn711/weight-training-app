@@ -57,14 +57,38 @@ class ChickenBreastUITestCase: XCTestCase {
     /// `freshState: false` is for a test that relaunches on purpose to read
     /// back what it just wrote (the Progress tab, Train after a finish): the
     /// same isolated store, kept.
-    func launch(arguments: [String] = [], freshState: Bool = true) -> XCUIApplication {
+    ///
+    /// And it checks that the store really is isolated (#321). iOS can start
+    /// the app without these arguments (prewarming a fresh install, or a
+    /// background launch for a Live Activity), and `launch()` sometimes
+    /// adopts that process: the test then drove an app on the *real* store,
+    /// measured as `isolated=NO … args=` in 2 of 4 runs. Terminating first
+    /// didn't prevent it (the stray process appears around the launch), so
+    /// what protects the test is the check: the app's Debug-only marker must
+    /// appear, or the app is relaunched once, then the test fails saying why
+    /// rather than running against real data. A launch that's right shows
+    /// the marker at once; a wrong one costs the 8 s wait and a relaunch,
+    /// which happened on about half of first launches locally.
+    func launch(arguments: [String] = [], freshState: Bool = true,
+                file: StaticString = #filePath, line: UInt = #line) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-UITestIsolatedStore"]
             + (freshState ? ["-UITestResetState"] : [])
             + arguments
-        retryingOnceOnLaunchTimeout { app.launch() }
+        for attempt in 1...2 {
+            app.terminate()
+            retryingOnceOnLaunchTimeout { app.launch() }
+            if app.descendants(matching: .any)[Self.isolationMarker].waitForExistence(timeout: 8) { return app }
+            print("UITest launch \(attempt) did not open the isolated store; relaunching (#321)")
+            XCTContext.runActivity(named: "launch \(attempt) did not open the isolated store (#321)") { _ in }
+        }
+        XCTFail("The app never confirmed the isolated UI-test store after two launches; "
+                + "refusing to run against the real store (#321).", file: file, line: line)
         return app
     }
+
+    /// `UITestLaunchState.isolationMarker` in the app (#321).
+    static let isolationMarker = "uitest.isolatedStore"
 
     /// `launch` (in practice `app.launch()`), retried once when — and only
     /// when — XCTest reports that the launch itself timed out (#285).
