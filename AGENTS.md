@@ -1,5 +1,17 @@
 # Codex instructions for ChickenBreast
 
+## Read the project guide first
+
+Before any work here, read `CLAUDE.md`. It is the project guide every agent
+follows: the code layout, the rules that are not negotiable (suggest, never
+change; derived data is computed, never stored; every proposal routes through
+`Exercise.nearestAchievable`), the CloudKit constraints, the verification ladder,
+the evidence manifest PRs carry, and the traps this project has already hit.
+Codex does not load `CLAUDE.md` on its own, which is why this pointer exists.
+
+This file only adds Codex model routing and worktree habits. Where the two
+disagree, `CLAUDE.md` wins.
+
 ## Model routing and token budget
 
 Use the least expensive available model that can reliably handle the task. Route
