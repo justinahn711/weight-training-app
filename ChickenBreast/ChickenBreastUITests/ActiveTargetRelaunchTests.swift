@@ -13,11 +13,9 @@ final class ActiveTargetRelaunchTests: ChickenBreastUITestCase {
         // draft or prior history used to skip this test, so CI, whose
         // simulator other tests have used, could never really run it.
         let locale = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
-        let app = XCUIApplication()
-        app.launchArguments = ["-UITestIsolatedStore", "-UITestResetState"] + locale
-        app.launch()
-        // Relaunches below keep the same isolated store, without resetting it.
-        app.launchArguments = ["-UITestIsolatedStore"] + locale
+        // Through the shared helper, which verifies the isolated store
+        // really opened (#321). Relaunches below keep it, without a reset.
+        let app = launch(arguments: locale)
         defer { app.terminate() }
 
         let resume = app.buttons["home.resume"]
@@ -60,8 +58,7 @@ final class ActiveTargetRelaunchTests: ChickenBreastUITestCase {
         assertTarget(target, equals: expectedSecond)
         assertPendingReps(9, in: app)
 
-        app.terminate()
-        app.launch()
+        _ = launch(arguments: locale, freshState: false)
         XCTAssertTrue(resume.waitForExistence(timeout: 20))
         resume.tap()
         XCTAssertTrue(target.waitForExistence(timeout: 20))
@@ -74,8 +71,7 @@ final class ActiveTargetRelaunchTests: ChickenBreastUITestCase {
         XCTAssertTrue(log.waitForExistence(timeout: 5) && log.isHittable)
         log.tap()
         assertTarget(target, equals: expectedThird)
-        app.terminate()
-        app.launch()
+        _ = launch(arguments: locale, freshState: false)
         XCTAssertTrue(resume.waitForExistence(timeout: 20))
         resume.tap()
         XCTAssertTrue(target.waitForExistence(timeout: 20))
