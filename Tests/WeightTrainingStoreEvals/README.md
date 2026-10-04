@@ -3,11 +3,14 @@
 `ArchiveTests` proves the backup round-trips *one* carefully-built history.
 These ask whether it round-trips *every shape of history the app produces* —
 warmups, half-point efforts, a measured apparatus, a lift loaded by bodyweight,
-a session straddling midnight, six months of training.
+a session straddling midnight, six months of training, and workouts run against
+set plans (#316).
 
 ```sh
-swift test --filter WeightTrainingStoreEvals
+sh hooks/run-evals.sh WeightTrainingStoreEvals   # zero tests run is a failure, not a pass
 ```
+
+They also run in a plain `swift test`, so CI and the pre-push hook cover them.
 
 ## The properties
 
