@@ -42,7 +42,11 @@ extension TrainingStore {
             }
             freshest[state.exerciseID] = state
         }
-        return Array(freshest.values)
+        // A fixed order (#87/#88): a dictionary's values come back in no
+        // particular order, so a restored phone re-exported the same history
+        // as a different file, which defeats "export twice and diff", the
+        // cheap check a backup is honest. Caught by WeightTrainingStoreEvals.
+        return freshest.values.sorted { $0.exerciseID.uuidString < $1.exerciseID.uuidString }
     }
 
     // MARK: - Restore (#88)

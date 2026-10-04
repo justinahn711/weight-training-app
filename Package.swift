@@ -28,5 +28,12 @@ let package = Package(
         // with `swift test --filter WeightTrainingEvals` while the fast suite
         // stays the thing you run on every save.
         .testTarget(name: "WeightTrainingEvals", dependencies: ["WeightTrainingCore"]),
+
+        // Round-trip evals for the backup (#87, #88). Separate from the store
+        // unit tests because they ask a different question: not "does this
+        // history come back" but "does every shape of history come back",
+        // checked as properties over a corpus. Run with
+        // `sh hooks/run-evals.sh WeightTrainingStoreEvals`.
+        .testTarget(name: "WeightTrainingStoreEvals", dependencies: ["WeightTrainingStore"]),
     ]
 )
