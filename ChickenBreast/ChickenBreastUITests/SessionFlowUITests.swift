@@ -339,6 +339,55 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
     /// the newest logged set and Log Set must all still be on screen and
     /// tappable. Opening an editor must not cost the lifter the context the
     /// edit is about, or the one action it leads to.
+    /// Warmups are when plates change between every rung, so logging one
+    /// leaves the plate row open; the first working set closes it (#320,
+    /// re-cut from a shelved commit). Flat Bench with yesterday's 135 lb
+    /// has a target, so its ramp leads the form and Log Set logs rungs.
+    func testPlateRowStaysOpenForWarmupsAndClosesForAWorkingSet() throws {
+        let app = launch(arguments: ["-UITestSeedYesterdayBench"])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let choose = app.buttons["session.exercise.choose"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 20))
+        tapWhenSettled(choose)
+        XCTAssertTrue(app.navigationBars["Workout exercises"].waitForExistence(timeout: 10))
+        let flatBench = app.buttons["Flat Bench"].firstMatch
+        XCTAssertTrue(flatBench.waitForExistence(timeout: 5))
+        tapWhenSettled(flatBench)
+
+        let plates = app.descendants(matching: .any)["session.plates.toggle"]
+        XCTAssertTrue(plates.waitForExistence(timeout: 10), "Flat Bench should offer Adjust plates")
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 5))
+        // Log Set says what it will write: "Warmup, …" while a rung leads.
+        let onAWarmup = NSPredicate(format: "value BEGINSWITH 'Warmup'")
+        XCTAssertTrue(wait(for: logSet, toMatch: "value BEGINSWITH 'Warmup'", timeout: 5),
+                      "a lift with a target should lead with its warmup ramp")
+
+        tapWhenSettled(plates)
+        XCTAssertTrue(wait(for: plates, toMatch: "value CONTAINS 'expanded'", timeout: 5))
+        // Every rung, through Log Set, as a lifter loading plates would.
+        var warmups = 0
+        while onAWarmup.evaluate(with: logSet), warmups < 6 {
+            let before = logSet.value as? String ?? ""
+            tapWhenSettled(logSet)
+            warmups += 1
+            // The form moves on to the next rung, or to the working weight.
+            let movedOn = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value != %@", before), object: logSet)
+            XCTAssertEqual(XCTWaiter().wait(for: [movedOn], timeout: 5), .completed,
+                           "logging warmup \(warmups) should move the form on")
+            XCTAssertTrue(wait(for: plates, toMatch: "value CONTAINS 'expanded'", timeout: 2),
+                          "warmup \(warmups) is a waypoint: the plate row must stay open for the next rung")
+        }
+        XCTAssertGreaterThan(warmups, 0)
+
+        // The first working set settles the weight and closes the row (#170).
+        tapWhenSettled(logSet)
+        XCTAssertTrue(wait(for: plates, toMatch: "value CONTAINS 'collapsed'", timeout: 5),
+                      "the first working set should close the plate row")
+    }
+
     func testPlateRowKeepsLiftSetAndLogInView() throws {
         try assertPlateRowKeepsContextInView(arguments: [], sizeName: "default")
     }

@@ -1271,9 +1271,16 @@ struct SessionView: View {
                 // ever *sets* `failure` on its own catch, so if the string is
                 // unchanged this call didn't fail, whatever the value was
                 // going in.
+                //
+                // Only a working set closes it (#320). On a warmup rung this
+                // tap logs the rung (`logSet` routes on the same check), and
+                // warmups are exactly when plates change between sets, so
+                // closing it after each rung made the lifter reopen it every
+                // time. Read before logging: the log moves the form on.
                 let failureBeforeLogging = model.failure
+                let logsAWarmup = model.isOnActiveWarmupRung
                 withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.logSet() }
-                if model.failure == failureBeforeLogging {
+                if !logsAWarmup, model.failure == failureBeforeLogging {
                     withAnimation(Theme.quick(reduceMotion: reduceMotion)) { isPlateRowExpanded = false }
                 }
             } label: {
