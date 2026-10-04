@@ -68,7 +68,8 @@ final class AppStore {
 ///   ends any Live Activity and pending rest alert an earlier launch left.
 ///   It only ever deletes the isolated store: without the first argument it
 ///   does nothing, so no argument combination can wipe the real one.
-/// - `-UITestSeedYesterday` logs one working set of Incline DB Press, dated
+/// - `-UITestSeedYesterday` (and `-UITestSeedYesterdayBench`, for Flat
+///   Bench) logs one working set of Incline DB Press, dated
 ///   yesterday at midday, into that isolated store (#293). A lift with
 ///   history from an earlier day is what most sessions open on — the full
 ///   Target / Last time card — and no UI test can reach it by tapping,
@@ -86,6 +87,7 @@ enum UITestLaunchState {
     /// (#321). Spelled the same in `UITestSupport.swift`.
     static let isolationMarker = "uitest.isolatedStore"
     static let seedYesterdayArgument = "-UITestSeedYesterday"
+    static let seedYesterdayBenchArgument = "-UITestSeedYesterdayBench"
 
     static var usesIsolatedStore: Bool {
         ProcessInfo.processInfo.arguments.contains(isolatedStoreArgument)
@@ -112,16 +114,26 @@ enum UITestLaunchState {
     /// See `-UITestSeedYesterday` above. Runs after the library is seeded,
     /// since the set needs a lift to belong to; midday, not an offset from
     /// now, so a run near midnight can't land it on the wrong day (#79).
+    ///
+    /// `-UITestSeedYesterdayBench` does the same for Flat Bench at 135 lb:
+    /// a measured barbell lift with a target, so its warmup ramp leads the
+    /// form and Log Set logs rungs (#320).
     static func seedYesterdayIfAsked(_ store: TrainingStore) throws {
-        guard usesIsolatedStore,
-              ProcessInfo.processInfo.arguments.contains(seedYesterdayArgument),
-              let lift = try store.exercises().first(where: { $0.name == "Incline DB Press" })
-        else { return }
+        guard usesIsolatedStore else { return }
+        let arguments = ProcessInfo.processInfo.arguments
         let calendar = Calendar.current
         guard let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()),
               let midday = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: yesterday)
         else { return }
-        try store.log(SetRecord(exerciseID: lift.id, load: Load(40), reps: 8, rpe: RPE(8), performedAt: midday))
+        let seeds: [(argument: String, lift: String, load: Load)] = [
+            (seedYesterdayArgument, "Incline DB Press", Load(40)),
+            (seedYesterdayBenchArgument, "Flat Bench", Load(135)),
+        ]
+        let library = try store.exercises()
+        for seed in seeds where arguments.contains(seed.argument) {
+            guard let lift = library.first(where: { $0.name == seed.lift }) else { continue }
+            try store.log(SetRecord(exerciseID: lift.id, load: seed.load, reps: 8, rpe: RPE(8), performedAt: midday))
+        }
     }
 
     /// Ends what outlives the process: a Live Activity (and the rest on it)
