@@ -1,3 +1,4 @@
+import CloudKit
 import CoreData
 import Foundation
 import SwiftData
@@ -21,23 +22,54 @@ import SwiftData
 /// talks to iCloud.
 public enum CloudKitSchemaInitializer {
 
-    public enum Failure: Error, CustomStringConvertible {
+    public enum Failure: Error, CustomStringConvertible, Equatable {
+        case noICloudAccount(status: String)
+        case accountStatusTimedOut
         case modelUnavailable
-        case storeFailedToLoad(Error)
+        case storeFailedToLoad(String)
 
         public var description: String {
             switch self {
+            case .noICloudAccount(let status):
+                return "iCloud isn't available on this device (account status: \(status)). "
+                    + "Sign in under Settings → Apple Account, then run again."
+            case .accountStatusTimedOut:
+                return "CloudKit didn't report the iCloud account status within 10 s; nothing was pushed."
             case .modelUnavailable:
                 return "Couldn't build a Core Data model from TrainingSchema.models"
-            case .storeFailedToLoad(let error):
-                return "Throwaway store failed to load: \(error.localizedDescription)"
+            case .storeFailedToLoad(let reason):
+                return "Throwaway store failed to load: \(reason)"
             }
         }
     }
 
+    /// Asks CloudKit whether this device has a usable iCloud account. Nil
+    /// means it didn't answer in time. Injected so a test can run the
+    /// not-signed-in path without iCloud.
+    public typealias AccountStatus = (_ containerIdentifier: String) -> CKAccountStatus?
+
+    public static let liveAccountStatus: AccountStatus = { identifier in
+        let answered = DispatchSemaphore(value: 0)
+        var status: CKAccountStatus?
+        CKContainer(identifier: identifier).accountStatus { result, _ in
+            status = result
+            answered.signal()
+        }
+        return answered.wait(timeout: .now() + 10) == .success ? status : nil
+    }
+
     /// - Parameter containerIdentifier: the app's iCloud container, as in its
     ///   entitlements (`iCloud.com.justinloves.ChickenBreast`).
-    public static func run(containerIdentifier: String) throws {
+    /// - Parameter accountStatus: checked first. Without a signed-in iCloud
+    ///   account, `initializeCloudKitSchema()` doesn't fail; it waits
+    ///   indefinitely (seen on a simulator with no account, which logged
+    ///   `CKAccountStatusTemporarilyUnavailable` and never returned). So
+    ///   this fails in seconds, says why, and opens nothing.
+    public static func run(containerIdentifier: String,
+                           accountStatus: AccountStatus = liveAccountStatus) throws {
+        guard let status = accountStatus(containerIdentifier) else { throw Failure.accountStatusTimedOut }
+        guard status == .available else { throw Failure.noICloudAccount(status: name(of: status)) }
+
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "CloudKitSchemaInit-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -57,7 +89,7 @@ public enum CloudKitSchemaInitializer {
             container.persistentStoreDescriptions = [description]
             var loadError: Error?
             container.loadPersistentStores { _, error in loadError = error }
-            if let loadError { throw Failure.storeFailedToLoad(loadError) }
+            if let loadError { throw Failure.storeFailedToLoad(loadError.localizedDescription) }
 
             try container.initializeCloudKitSchema()
 
@@ -66,6 +98,17 @@ public enum CloudKitSchemaInitializer {
             for store in container.persistentStoreCoordinator.persistentStores {
                 try container.persistentStoreCoordinator.remove(store)
             }
+        }
+    }
+
+    static func name(of status: CKAccountStatus) -> String {
+        switch status {
+        case .available: return "available"
+        case .noAccount: return "no account"
+        case .restricted: return "restricted"
+        case .couldNotDetermine: return "could not determine"
+        case .temporarilyUnavailable: return "temporarily unavailable"
+        @unknown default: return "unknown (\(status.rawValue))"
         }
     }
 }
