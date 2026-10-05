@@ -1,3 +1,4 @@
+import CoreData
 import SwiftData
 import XCTest
 @testable import WeightTrainingStore
@@ -52,5 +53,20 @@ final class CloudKitSchemaTests: XCTestCase {
         }
 
         XCTAssertEqual(offenders, [], "CloudKit mirroring forbids unique constraints")
+    }
+
+    /// `CloudKitSchemaInitializer` (the Debug-only way to push the whole
+    /// schema to CloudKit Development) starts by building a Core Data model
+    /// from the same `@Model` types the store opens. If that ever fails, or
+    /// drops a type, the initializer would push an incomplete schema, so it's
+    /// checked here, where no iCloud account is needed.
+    func testTheCloudKitSchemaInitializerCanBuildAModelOfEveryStoredType() throws {
+        let model = try XCTUnwrap(NSManagedObjectModel.makeManagedObjectModel(for: TrainingSchema.models))
+        let names = Set(model.entities.compactMap(\.name))
+        for type in TrainingSchema.models {
+            XCTAssertTrue(names.contains(String(describing: type)),
+                          "\(type) is missing from the model the schema initializer would push")
+        }
+        XCTAssertEqual(model.entities.count, TrainingSchema.models.count)
     }
 }
