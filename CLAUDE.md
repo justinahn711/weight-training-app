@@ -66,6 +66,16 @@ every `@Model`:
 
 `CloudKitSchemaTests` enforces both. If it fails, fix the model, not the test.
 
+**Before any release build that changes a `@Model`, deploy the schema.** Debug
+builds sync to CloudKit's Development environment; TestFlight and App Store
+builds use Production, which only knows what was deployed to it. To get every
+type and field into Development in one go, run a Debug build from Xcode with
+the launch argument `-InitializeCloudKitSchema` (iCloud signed in). It uses a
+throwaway local file, never the real store, and logs the result. Then, in the
+CloudKit Console (`iCloud.com.justinloves.ChickenBreast`, Development), click
+**Deploy Schema Changes** and review the list: Production schema can only grow.
+
+
 ## Traps this project has already hit
 
 - **A plist inside a file-system-synchronized group** is copied as a resource

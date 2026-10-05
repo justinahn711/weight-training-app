@@ -36,6 +36,18 @@ final class AppStore {
     func store() throws -> TrainingStore {
         if let opened { return opened }
         #if DEBUG
+        // Run from Xcode with `-InitializeCloudKitSchema` before deploying
+        // the schema to Production: it pushes every record type and field to
+        // the Development environment, using a throwaway local file, never
+        // this store. Watch the console for the result line. Debug only.
+        if ProcessInfo.processInfo.arguments.contains("-InitializeCloudKitSchema") {
+            do {
+                try CloudKitSchemaInitializer.run(containerIdentifier: "iCloud.com.justinloves.ChickenBreast")
+                NSLog("CloudKit schema initialized in Development. Next: CloudKit Console → Deploy Schema Changes.")
+            } catch {
+                NSLog("CloudKit schema initialization FAILED: %@", String(describing: error))
+            }
+        }
         if UITestLaunchState.usesIsolatedStore {
             let store = try TrainingStore(url: UITestLaunchState.prepareStore(), syncsWithCloudKit: false)
             opened = store
