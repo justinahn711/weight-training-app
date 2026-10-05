@@ -1,3 +1,4 @@
+import CloudKit
 import CoreData
 import SwiftData
 import XCTest
@@ -68,5 +69,22 @@ final class CloudKitSchemaTests: XCTestCase {
                           "\(type) is missing from the model the schema initializer would push")
         }
         XCTAssertEqual(model.entities.count, TrainingSchema.models.count)
+    }
+
+    /// Without a usable iCloud account the initializer fails at once, saying
+    /// why, instead of waiting forever inside initializeCloudKitSchema().
+    func testTheSchemaInitializerFailsFastWithoutAnICloudAccount() {
+        for status in [CKAccountStatus.noAccount, .temporarilyUnavailable, .restricted, .couldNotDetermine] {
+            XCTAssertThrowsError(try CloudKitSchemaInitializer.run(containerIdentifier: "iCloud.test",
+                                                                   accountStatus: { _ in status })) { error in
+                guard case CloudKitSchemaInitializer.Failure.noICloudAccount = error else {
+                    return XCTFail("\(status): expected noICloudAccount, got \(error)")
+                }
+            }
+        }
+        XCTAssertThrowsError(try CloudKitSchemaInitializer.run(containerIdentifier: "iCloud.test",
+                                                               accountStatus: { _ in nil })) { error in
+            XCTAssertEqual(error as? CloudKitSchemaInitializer.Failure, .accountStatusTimedOut)
+        }
     }
 }
