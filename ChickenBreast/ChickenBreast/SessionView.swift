@@ -1297,13 +1297,27 @@ struct SessionView: View {
                 // large-text contrast on the most-read control in the app. On
                 // the warmup rung's dimmed tint that pairing inverts, so the
                 // label goes light there instead.
-                VStack(spacing: 0) {
-                    Text(logSetTitle)
-                        .font(isCompact ? .title3.bold() : .title2.bold())
-                    Text(model.canLogSet ? logSetSummary : "Set a weight first")
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .contentTransition(.numericText())
-                        .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
+                //
+                // One line, action and payload together (bolder pass): "Log
+                // 135 lb × 8", the numbers in the same black rounded numerals
+                // as the weight readout and the connectors lighter, so the
+                // set itself is what lands. Nothing to log yet keeps the
+                // two-line "Log Set / Set a weight first", which is honest
+                // about why the button is off.
+                Group {
+                    if model.canLogSet {
+                        logSetLine(isCompact: isCompact)
+                            .multilineTextAlignment(.center)
+                            .contentTransition(.numericText())
+                            .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
+                    } else {
+                        VStack(spacing: 0) {
+                            Text(logSetTitle)
+                                .font(isCompact ? .title3.bold() : .title2.bold())
+                            Text("Set a weight first")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
                 }
                 .foregroundStyle(logSetForeground)
                 .frame(maxWidth: .infinity)
@@ -1404,6 +1418,23 @@ struct SessionView: View {
     /// now named on the control that does it).
     private var logSetTitle: String {
         model.isOnActiveWarmupRung ? "Log Warmup" : "Log Set"
+    }
+
+    /// "Log 135 lb × 8" / "Log warmup 45 lb × 10" as one scaling `Text`:
+    /// heavy verb, black rounded tabular numbers, lighter unit and "×".
+    private func logSetLine(isCompact: Bool) -> Text {
+        let style: Font.TextStyle = isCompact ? .title2 : .title
+        let verb = model.isOnActiveWarmupRung ? "Log warmup" : "Log"
+        let symbol = gym.unit.symbol
+        let weight = model.pendingLoad.formatted(in: gym.unit)
+        let number = weight.hasSuffix(" " + symbol) ? String(weight.dropLast(symbol.count + 1)) : weight
+        let unit = weight.hasSuffix(" " + symbol) ? " " + symbol : ""
+        let figure = Font.system(style, design: .rounded, weight: .black).monospacedDigit()
+        let connector = Font.system(.subheadline, design: .rounded, weight: .semibold)
+        return Text(verb + "  ").font(.system(style, weight: .heavy))
+            + Text(number).font(figure)
+            + Text(unit + " × ").font(connector)
+            + Text("\(model.pendingReps)").font(figure)
     }
 
     @ViewBuilder
@@ -2952,8 +2983,7 @@ private struct WeightStepper: View {
 
     private func plateReadout(detail: String?) -> some View {
         VStack(spacing: 1) {
-            Text(displayedLoad)
-                .font(.system(size: readoutSize, weight: .bold, design: .rounded).monospacedDigit())
+            readoutNumber
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
@@ -2974,8 +3004,7 @@ private struct WeightStepper: View {
 
     private func readout(detail: String, showsEntry: Bool) -> some View {
         VStack(spacing: 0) {
-            Text(displayedLoad)
-                .font(.system(size: readoutSize, weight: .bold, design: .rounded).monospacedDigit())
+            readoutNumber
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
@@ -2999,6 +3028,26 @@ private struct WeightStepper: View {
 
     private var displayedLoad: String {
         isWeightUnset ? "—" : load.formatted(in: gym.unit)
+    }
+
+    /// The weight as the bench reads it (bolder pass): the number in black
+    /// rounded numerals, the unit small and quiet beside it, so the figure
+    /// is the one thing on the dock that lands from across the room. The
+    /// size is unchanged (`readoutSize`, #297); the punch is weight and the
+    /// number/unit contrast. One concatenated `Text`, so it still scales,
+    /// still fits with `minimumScaleFactor`, and still reads as "135 lb".
+    private var readoutNumber: Text {
+        let symbol = gym.unit.symbol
+        guard !isWeightUnset, displayedLoad.hasSuffix(" " + symbol) else {
+            return Text(displayedLoad)
+                .font(.system(size: readoutSize, weight: .black, design: .rounded).monospacedDigit())
+        }
+        let number = String(displayedLoad.dropLast(symbol.count + 1))
+        return Text(number)
+            .font(.system(size: readoutSize, weight: .black, design: .rounded).monospacedDigit())
+            + Text(" " + symbol)
+            .font(.system(size: readoutSize * 0.45, weight: .semibold, design: .rounded))
+            .foregroundStyle(Theme.quietLabel)
     }
 
     private func button(_ symbol: String, caption: String?, label: String,
