@@ -23,7 +23,7 @@ typography:
   readout:
     fontFamily: "SF Pro Rounded (system, scaled relative to .largeTitle)"
     fontSize: "40pt"
-    fontWeight: 700
+    fontWeight: 900
     fontFeature: "tnum"
   headline:
     fontFamily: "SF Pro (system, Dynamic Type: .title2)"
@@ -194,9 +194,10 @@ rounded numbers that hold still as they change.
 - **Large Title** (bold, 34 pt `.largeTitle`): the exercise name on tall
   screens. It doesn't switch style at accessibility sizes, so it only ever
   grows (#278).
-- **Readout** (SF Pro Rounded bold, 40 pt at the default size, scaled relative
-  to `.largeTitle`, monospaced digits): the weight on the stepper. The
-  number the bench reads (#297).
+- **Readout** (SF Pro Rounded black, 40 pt at the default size, scaled
+  relative to `.largeTitle`, monospaced digits; the unit at 45% size,
+  semibold, in Quiet Label): the weight on the stepper. The number the bench
+  reads (#297).
 - **Headline** (bold, 22 pt `.title2`; `.title3` when compact): the Log Set
   title and the rest clock.
 - **Title** (semibold, 20 pt `.title3`, monospaced digits): stepper values and
@@ -255,9 +256,12 @@ outlines; edges are defined by the change of fill.
 ## Components
 
 ### Buttons
-- **Hero (Log Set):** big, unmistakable, thumb-sized. Ember fill, near-black
-  bold title plus a semibold summary line ("135 lb × 8"), full width, 62 pt
-  minimum (56 compact), 16 pt corners. It says what one tap will write.
+- **Hero (Log Set):** big, unmistakable, thumb-sized. Ember fill, full width,
+  62 pt minimum (56 compact), 16 pt corners. One line in near-black that says
+  the action and what one tap writes: "**Log 135** lb × **8**", with a heavy
+  verb, the numbers in black SF Pro Rounded tabular numerals (`.title`,
+  `.title2` compact), and the unit and "×" lighter. With nothing to log it
+  falls back to "Log Set" over "Set a weight first".
 - **Hero, warmup state:** on an active warmup rung the hero takes the system
   `.secondary` tint (a reduction of the same control, not a new hue) and says
   "Log Warmup". It's still the thing to tap, but it no longer

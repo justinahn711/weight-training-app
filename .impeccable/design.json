@@ -97,7 +97,7 @@
       },
       "readout": {
         "displayName": "Readout",
-        "purpose": "The weight on the stepper, the number the bench reads; scales relative to .largeTitle."
+        "purpose": "The weight on the stepper, the number the bench reads; black rounded numerals, unit small in Quiet Label; scales relative to .largeTitle."
       },
       "headline": {
         "displayName": "Headline",
@@ -156,9 +156,9 @@
       "name": "Log Set (hero)",
       "kind": "button",
       "refersTo": "button-hero",
-      "description": "The one action the session screen exists for; says what one tap will write.",
-      "html": "<button class=\"ds-btn-hero\"><span class=\"ds-btn-hero-title\">Log Set</span><span class=\"ds-btn-hero-sub\">135 lb × 8</span></button>",
-      "css": ".ds-btn-hero{display:flex;flex-direction:column;align-items:center;justify-content:center;width:320px;min-height:62px;background:#EA8B52;color:#120F0D;border:none;border-radius:16px;font-family:-apple-system,system-ui,sans-serif;cursor:pointer;transition:filter .2s,transform .2s}.ds-btn-hero-title{font-size:22px;font-weight:700}.ds-btn-hero-sub{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}.ds-btn-hero:hover{filter:brightness(1.06)}.ds-btn-hero:active{transform:scale(.98)}.ds-btn-hero:focus-visible{outline:3px solid #F2AE84;outline-offset:2px}"
+      "description": "The one action the session screen exists for: one line, action and payload, numbers in black rounded numerals.",
+      "html": "<button class=\"ds-btn-hero\"><span class=\"ds-hero-verb\">Log</span> <span class=\"ds-hero-num\">135</span><span class=\"ds-hero-conn\"> lb × </span><span class=\"ds-hero-num\">8</span></button>",
+      "css": ".ds-btn-hero{display:flex;align-items:baseline;justify-content:center;gap:2px;width:320px;min-height:62px;background:#EA8B52;color:#120F0D;border:none;border-radius:16px;font-family:-apple-system,system-ui,sans-serif;cursor:pointer;transition:filter .2s,transform .2s}.ds-hero-verb{font-size:28px;font-weight:800;margin-right:8px}.ds-hero-num{font-family:ui-rounded,-apple-system,system-ui,sans-serif;font-size:28px;font-weight:900;font-variant-numeric:tabular-nums}.ds-hero-conn{font-family:ui-rounded,-apple-system,system-ui,sans-serif;font-size:15px;font-weight:600}.ds-btn-hero:hover{filter:brightness(1.06)}.ds-btn-hero:active{transform:scale(.98)}.ds-btn-hero:focus-visible{outline:3px solid #F2AE84;outline-offset:2px}"
     },
     {
       "name": "Quiet button",
