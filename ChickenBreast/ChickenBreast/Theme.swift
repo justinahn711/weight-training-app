@@ -40,6 +40,16 @@ enum Theme {
     /// derive its text from, so the pairing is named here once.
     static let onAccent = Color(red: 0.07, green: 0.06, blue: 0.05)
 
+    /// The Log Set fill on a warmup rung: Ember with the hue taken out.
+    ///
+    /// The warmup hero used `.secondary` under white text, about 2.8:1, below
+    /// even the large-text floor on the button tapped through every barbell
+    /// ramp (critique, 2026-10-06). This grey matches Ember's luminance
+    /// (0.367 vs 0.366), so the warmup hero weighs exactly what the working
+    /// one does and differs only in hue; `onAccent` on it clears 7.5:1.
+    /// Chalk on the chalkboard: neutral, so it can't be read as news.
+    static let warmupFill = Color(white: 0.64)
+
     /// Tint for secondary controls — Undo, Skip, Stay, Go back.
     ///
     /// Orange is reserved for the one action the screen exists for and the

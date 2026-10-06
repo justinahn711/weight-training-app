@@ -1324,14 +1324,13 @@ struct SessionView: View {
                 .frame(minHeight: isCompact ? 56 : 62)
             }
             // Prominent either way — a warmup rung is still the thing to tap
-            // next, not a lesser action — but tinted down from the accent
-            // color while on one, so the difference registers on the glance
-            // before the label is even read. This is the same restraint
-            // Theme.swift asks of every colour choice: not a new hue, a
-            // reduction in the same one, and it only ever appears while the
-            // category is actually in question.
+            // next, not a lesser action — but the accent's hue is taken out
+            // while on one, so the difference registers on the glance before
+            // the label is even read. `Theme.warmupFill` keeps the accent's
+            // lightness, so the button weighs the same and the same dark
+            // text reads on both.
             .buttonStyle(.borderedProminent)
-            .tint(model.isOnActiveWarmupRung ? Color.secondary : Color.accentColor)
+            .tint(model.isOnActiveWarmupRung ? Theme.warmupFill : Color.accentColor)
             .buttonBorderShape(.roundedRectangle(radius: 16))
             .disabled(model.recoveryProposal != nil || !model.canLogSet)
             .accessibilityLabel("Log Set")
@@ -1521,15 +1520,13 @@ struct SessionView: View {
         }
     }
 
-    /// Near-black on the accent fill, light on the dimmed fill a warmup rung
-    /// uses (#211), muted when the button is refusing a zero load. A single
-    /// colour can't serve all three: `Theme.onAccent` on grey is as unreadable
-    /// as white on orange was.
+    /// Near-black on both fills — the accent and the warmup grey share a
+    /// lightness, so one text colour serves both (white measured 2.5:1 on
+    /// the orange and about 2.8:1 on the old grey). Muted when the button is
+    /// refusing a zero load.
     private var logSetForeground: AnyShapeStyle {
         guard model.canLogSet else { return AnyShapeStyle(.secondary) }
-        return model.isOnActiveWarmupRung
-            ? AnyShapeStyle(Color.white)
-            : AnyShapeStyle(Theme.onAccent)
+        return AnyShapeStyle(Theme.onAccent)
     }
 
     /// Spoken as the button's value, never its name: the name stays "Log Set"
