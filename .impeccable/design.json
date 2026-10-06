@@ -1,0 +1,278 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-06T02:23:34.420188+00:00",
+  "title": "Design System: ChickenBreast",
+  "extensions": {
+    "colorMeta": {
+      "chalkboard": {
+        "role": "neutral",
+        "displayName": "Chalkboard",
+        "canonical": "rgb(11 11 13)",
+        "tonalRamp": [
+          "#050506",
+          "#0B0B0D",
+          "#18181B",
+          "#26262A",
+          "#3A3A3F",
+          "#5A5A61",
+          "#8E8E95",
+          "#C7C7CC"
+        ]
+      },
+      "ember": {
+        "role": "primary",
+        "displayName": "Ember",
+        "canonical": "Assets AccentColor (dark): rgb(234 139 82)",
+        "tonalRamp": [
+          "#3B1A07",
+          "#5E2B0F",
+          "#8A4218",
+          "#B45129",
+          "#D86B37",
+          "#EA8B52",
+          "#F2AE84",
+          "#F9D6BF"
+        ]
+      },
+      "on-ember": {
+        "role": "neutral",
+        "displayName": "Bar Shadow",
+        "canonical": "Theme.onAccent rgb(18 15 13)"
+      },
+      "quiet-label": {
+        "role": "neutral",
+        "displayName": "Quiet Label",
+        "canonical": "Theme.quietLabel white 0.75"
+      },
+      "fill-raised": {
+        "role": "neutral",
+        "displayName": "Raised Fill",
+        "canonical": "system tertiarySystemFill (dark)"
+      },
+      "fill-recessed": {
+        "role": "neutral",
+        "displayName": "Recessed Fill",
+        "canonical": "system quaternarySystemFill (dark)"
+      },
+      "record-gold": {
+        "role": "secondary",
+        "displayName": "Record Gold",
+        "canonical": "Theme.record rgb(255 204 61)"
+      },
+      "done-green": {
+        "role": "secondary",
+        "displayName": "Done Green",
+        "canonical": "system green (dark)"
+      },
+      "attention-coral": {
+        "role": "secondary",
+        "displayName": "Attention Coral",
+        "canonical": "Theme.attention rgb(255 107 89)"
+      },
+      "category-blue": {
+        "role": "tertiary",
+        "displayName": "Category Blue",
+        "canonical": "Theme.categories[0]"
+      },
+      "category-magenta": {
+        "role": "tertiary",
+        "displayName": "Category Magenta",
+        "canonical": "Theme.categories[1]"
+      },
+      "category-teal": {
+        "role": "tertiary",
+        "displayName": "Category Teal",
+        "canonical": "Theme.categories[2]"
+      },
+      "on-category": {
+        "role": "neutral",
+        "displayName": "On Category",
+        "canonical": "Theme.onCategory"
+      }
+    },
+    "typographyMeta": {
+      "large-title": {
+        "displayName": "Large Title",
+        "purpose": "Exercise name on tall screens; never swaps style at accessibility sizes."
+      },
+      "readout": {
+        "displayName": "Readout",
+        "purpose": "The weight on the stepper, the number the bench reads; scales relative to .largeTitle."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Log Set title and the rest clock."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Stepper values and logged set rows, tabular digits."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Last time, explanations, list rows."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Secondary actions and the Log Set summary line."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Uppercase section heads; never .caption2 for standalone text."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "spring",
+        "value": "spring(duration: 0.45, bounce: 0.22); Reduce Motion: easeOut 0.2s",
+        "purpose": "State that moves on screen: a banner arriving, an exercise changing."
+      },
+      {
+        "name": "quick",
+        "value": "spring(duration: 0.28, bounce: 0.12); Reduce Motion: easeOut 0.15s",
+        "purpose": "A number changing under a thumb."
+      },
+      {
+        "name": "edge-transition",
+        "value": "move from top + opacity; Reduce Motion: opacity",
+        "purpose": "Banners and disclosures arriving from their edge."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "short-screen",
+        "value": "height < 650pt",
+        "purpose": "Compact dock, title2 exercise name."
+      },
+      {
+        "name": "accessibility-text",
+        "value": "Dynamic Type accessibility sizes",
+        "purpose": "Compact dock that scrolls; stacked layouts via AnyLayout."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Log Set (hero)",
+      "kind": "button",
+      "refersTo": "button-hero",
+      "description": "The one action the session screen exists for; says what one tap will write.",
+      "html": "<button class=\"ds-btn-hero\"><span class=\"ds-btn-hero-title\">Log Set</span><span class=\"ds-btn-hero-sub\">135 lb × 8</span></button>",
+      "css": ".ds-btn-hero{display:flex;flex-direction:column;align-items:center;justify-content:center;width:320px;min-height:62px;background:#EA8B52;color:#120F0D;border:none;border-radius:16px;font-family:-apple-system,system-ui,sans-serif;cursor:pointer;transition:filter .2s,transform .2s}.ds-btn-hero-title{font-size:22px;font-weight:700}.ds-btn-hero-sub{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}.ds-btn-hero:hover{filter:brightness(1.06)}.ds-btn-hero:active{transform:scale(.98)}.ds-btn-hero:focus-visible{outline:3px solid #F2AE84;outline-offset:2px}"
+    },
+    {
+      "name": "Quiet button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "Undo, Skip, Stay, Go back: system bordered, neutral tint, never ember.",
+      "html": "<button class=\"ds-btn-quiet\">Undo</button>",
+      "css": ".ds-btn-quiet{min-height:44px;padding:0 18px;background:rgba(118,118,128,.24);color:#fff;border:none;border-radius:999px;font:600 17px -apple-system,system-ui,sans-serif;cursor:pointer;transition:background .2s}.ds-btn-quiet:hover{background:rgba(118,118,128,.32)}.ds-btn-quiet:focus-visible{outline:3px solid #BFBFBF;outline-offset:2px}"
+    },
+    {
+      "name": "Forward capsule",
+      "kind": "button",
+      "refersTo": "button-hero",
+      "description": "Next exercise / Finish workout: bordered capsule tinted ember.",
+      "html": "<button class=\"ds-btn-forward\">› Next exercise</button>",
+      "css": ".ds-btn-forward{min-height:44px;padding:0 20px;background:rgba(234,139,82,.2);color:#EA8B52;border:none;border-radius:999px;font:600 17px -apple-system,system-ui,sans-serif;cursor:pointer}.ds-btn-forward:hover{background:rgba(234,139,82,.28)}.ds-btn-forward:focus-visible{outline:3px solid #EA8B52;outline-offset:2px}"
+    },
+    {
+      "name": "Stepper",
+      "kind": "input",
+      "refersTo": "stepper",
+      "description": "− value + on a recessed fill; the session's inputs.",
+      "html": "<div class=\"ds-stepper\"><button aria-label=\"Fewer reps\">−</button><span>8 reps</span><button aria-label=\"More reps\">+</button></div>",
+      "css": ".ds-stepper{display:flex;align-items:center;justify-content:space-between;width:180px;min-height:52px;background:rgba(118,118,128,.18);border-radius:12px;color:#fff;font:600 20px -apple-system,system-ui,sans-serif;font-variant-numeric:tabular-nums}.ds-stepper button{width:44px;height:44px;background:none;border:none;color:#fff;font-size:24px;cursor:pointer}.ds-stepper button:hover{color:#BFBFBF}.ds-stepper button:focus-visible{outline:2px solid #BFBFBF;border-radius:8px}"
+    },
+    {
+      "name": "Context card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Target / Last time on a raised fill; no border, no shadow.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-head\">TARGET</div><div class=\"ds-card-value\">135 lb × 9 @ RPE 8</div></div>",
+      "css": ".ds-card{width:320px;padding:16px;background:rgba(118,118,128,.24);border-radius:14px;font-family:-apple-system,system-ui,sans-serif}.ds-card-head{font-size:12px;font-weight:600;color:rgba(235,235,245,.6);letter-spacing:.02em}.ds-card-value{margin-top:2px;font-size:22px;font-weight:600;color:#fff}"
+    },
+    {
+      "name": "Filter chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Recessed capsule; selected adds a bolder label and a check, never colour alone.",
+      "html": "<button class=\"ds-chip ds-chip-on\">✓ All</button><button class=\"ds-chip\">Chest</button>",
+      "css": ".ds-chip{height:36px;padding:0 14px;margin:4px;background:rgba(118,118,128,.18);color:#fff;border:none;border-radius:999px;font:500 15px -apple-system,system-ui,sans-serif;cursor:pointer}.ds-chip-on{font-weight:700;background:rgba(118,118,128,.32)}.ds-chip:hover{background:rgba(118,118,128,.28)}.ds-chip:focus-visible{outline:2px solid #BFBFBF;outline-offset:2px}"
+    },
+    {
+      "name": "Rest card",
+      "kind": "custom",
+      "refersTo": "rest-card",
+      "description": "Floating rest clock: ultra-thin material, ember ring, Quiet Label caption, bold tabular clock.",
+      "html": "<div class=\"ds-rest\"><div class=\"ds-rest-cap\">⏱ RESTING</div><div class=\"ds-rest-row\"><span class=\"ds-rest-ring\"></span><span class=\"ds-rest-time\">2:58</span><button class=\"ds-btn-quiet\">Skip</button></div></div>",
+      "css": ".ds-rest{width:320px;padding:8px 20px;background:rgba(40,40,44,.72);backdrop-filter:blur(20px);border-radius:24px;font-family:-apple-system,system-ui,sans-serif;color:#fff}.ds-rest-cap{font-size:12px;font-weight:600;color:#BFBFBF}.ds-rest-row{display:flex;align-items:center;gap:12px}.ds-rest-ring{width:16px;height:16px;border-radius:50%;border:3px solid rgba(118,118,128,.4);border-top-color:#EA8B52}.ds-rest-time{flex:1;font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}.ds-btn-quiet{min-height:44px;padding:0 18px;background:rgba(118,118,128,.24);color:#fff;border:none;border-radius:999px;font:600 17px -apple-system,system-ui,sans-serif}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Chalk Board",
+    "overview": "A gym's whiteboard at the end of the day: matte, dark and practical, chalked over by people who were busy lifting. Everything ordinary is a shade of grey on near-black, and colour is written on it only where something happened: a record, a set done, the one thing to press next. When colour appears, it reads as news, not decoration. The app is dark, always. A gym is bright overhead and the phone sits on a bench or the floor, so a white screen at that angle is glare. The energy is tough and punchy, and it's concentrated, not spread. The punch lives in the heavy numbers (bold, rounded, tabular), the single orange hero button, and the moments of colour. The chrome around them stays native and quiet so they hit harder. One hero, the rest stock iOS: Log Set is big, unmistakable and thumb-sized, while navigation, sheets, lists, toggles and secondary buttons are the platform's own, kept plain. Density follows the bench: one glance answers \"what's next, and how do I log it\". Information that doesn't serve the next set waits until the set is done.",
+    "keyCharacteristics": [
+      "Near-black chalkboard surface, never pure black, never light.",
+      "One accent (ember orange), spent on the hero action and the rest ring only.",
+      "Colour as signal: gold for records, green for done, coral for \"behind\".",
+      "Depth from tonal fills and system materials; no shadows anywhere.",
+      "System type only (SF Pro), Dynamic Type everywhere, heavy rounded numerals.",
+      "Native controls; one oversized hero; 44 pt minimum on every target."
+    ],
+    "rules": [
+      {
+        "name": "The News Rule",
+        "body": "Colour is information. A saturated hue appears only when it carries its one meaning (record, done, behind, act, category). Decorative colour is a bug.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Ember Rule",
+        "body": "Ember paints the primary action and the rest ring and nothing else. Secondary controls (Undo, Skip, Stay, Go back) use the neutral `quietTint`. When ember painted every button it stopped meaning anything (a critique found it on eight controls at once).",
+        "section": "colors"
+      },
+      {
+        "name": "The Dark Text On Colour Rule",
+        "body": "Text on any brand fill (ember, gold, categories) is near-black, never white. Every one of them measured below contrast with white.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Number Rule",
+        "body": "Every number that changes in place (weights, reps, RPE, the rest clock) uses monospaced digits, so it doesn't jitter as it counts.",
+        "section": "typography"
+      },
+      {
+        "name": "The Grow-Only Rule",
+        "body": "Text never gets smaller as the lifter's text size gets bigger: no style swaps or `minimumScaleFactor` shrinking at accessibility sizes. Rearrange the layout instead (`AnyLayout`).",
+        "section": "typography"
+      },
+      {
+        "name": "The Bench Rule",
+        "body": "The next number and the action to take are visible without scrolling in the default layout. Anything that pushes them below the fold waits until after the set.",
+        "section": "layout"
+      },
+      {
+        "name": "The No-Shadow Rule",
+        "body": "Nothing casts a shadow. Separation is tone and material, the way chalk sits on a board.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** keep the background Chalkboard (#0B0B0D) and the app dark-only.",
+      "Do** spend Ember (#EA8B52) on the one primary action and the rest ring; put near-black (#120F0D) text on it.",
+      "Do** give every recurring meaning one colour and keep it there: gold records, green done, coral behind.",
+      "Do** use system text styles and SF Symbols; set numbers that change in monospaced digits.",
+      "Do** make every tap target at least 44 × 44 pt, and make the hero obviously the biggest thing on the dock.",
+      "Do** build depth from Raised / Recessed fills and system materials.",
+      "Do** honour Reduce Motion through `Theme.spring` / `quick` / `edgeTransition`: things still move, they ease instead of spring."
+    ],
+    "donts": [
+      "**Don't** add drop shadows, borders or outlines.",
+      "**Don't** paint secondary buttons ember, or use colour as the only cue for a state.",
+      "**Don't** put white text on ember, gold or a category colour.",
+      "**Don't** use `.caption2` for standalone text, `.system(size:)` without scaling, or `minimumScaleFactor` to fit text at large sizes.",
+      "**Don't** use `.secondary` for small text on the raised working surfaces; use Quiet Label (#BFBFBF).",
+      "**Don't** introduce a light appearance, a custom font for UI text, or a custom navigation bar."
+    ]
+  }
+}
