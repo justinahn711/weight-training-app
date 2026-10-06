@@ -264,7 +264,7 @@ outlines; edges are defined by the change of fill.
   falls back to "Log Set" over "Set a weight first".
 - **Hero, warmup state:** on an active warmup rung the hero takes the system
   `.secondary` tint (a reduction of the same control, not a new hue) and says
-  "Log Warmup". It's still the thing to tap, but it no longer
+  "Log warmup 45 lb × 5". It's still the thing to tap, but it no longer
   claims a working set. Its accessible name stays "Log Set".
 - **Forward (Next exercise / Finish workout):** a bordered capsule tinted
   ember, the only other ember element on the dock.
