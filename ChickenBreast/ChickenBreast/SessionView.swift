@@ -629,10 +629,14 @@ struct SessionView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(exercise.exercise.name)
                                 .foregroundStyle(.primary)
+                            // Only once there is something to count: six rows
+                            // of "0 working sets" said nothing (critique).
                             let count = exercise.workingSets.count
-                            Text("\(count) working \(count == 1 ? "set" : "sets")")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                            if count > 0 {
+                                Text("\(count) working \(count == 1 ? "set" : "sets")")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -677,6 +681,11 @@ struct SessionView: View {
     /// on the card, even though neither fact told the lifter anything. Defaults
     /// collapse to a short route label; corrections stay visible because they
     /// are the facts that can explain a surprising target.
+    /// What `configSummary` says when there is no fact to state: a lift with
+    /// no loading model, and one on the gym's own rack and bar.
+    private static let standardSetupLabel = "Standard setup"
+    private static let gymSetupLabel = "Gym setup"
+
     private func configSummary(_ exercise: SessionExercise) -> String {
         let definition = exercise.exercise
 
@@ -688,7 +697,7 @@ struct SessionView: View {
         var facts = customStep ? ["\(definition.increment.formatted) steps"] : []
 
         guard let loading = definition.loading else {
-            return facts.first ?? "Standard setup"
+            return facts.first ?? Self.standardSetupLabel
         }
 
         if !loading.usesGymRack {
@@ -740,7 +749,7 @@ struct SessionView: View {
             facts.append("\(baseText) empty")
         }
 
-        return facts.isEmpty ? "Gym setup" : facts.joined(separator: " · ")
+        return facts.isEmpty ? Self.gymSetupLabel : facts.joined(separator: " · ")
     }
 
     /// What the app assumes, then what it therefore proposes, then what was
@@ -837,11 +846,12 @@ struct SessionView: View {
 
     private func fullContext(_ exercise: SessionExercise, isCompact: Bool) -> some View {
         // With no fact to state (a bar that follows the gym, a default step)
-        // the line said only "Gym setup": a 44 pt row and a divider spent on
-        // a label, about 70 pt that pushed the target under the dock on an
-        // SE (critique, 2026-10-06). Then the route shrinks to the collapsed
+        // the line said only "Gym setup" or "Standard setup": a 44 pt row and
+        // a divider spent on a label, about 70 pt that pushed the target
+        // under the dock on an SE (critique, 2026-10-06). Then the route shrinks to the collapsed
         // card's glyph beside the target; any real fact keeps the line (#95).
-        let hasSetupFacts = configSummary(exercise) != "Gym setup"
+        let summary = configSummary(exercise)
+        let hasSetupFacts = summary != Self.gymSetupLabel && summary != Self.standardSetupLabel
         return VStack(alignment: .leading, spacing: 12) {
             if hasSetupFacts {
                 // Sits directly under the lift's name, which is what it is about,
@@ -1541,7 +1551,10 @@ struct SessionView: View {
             Button {
                 withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.advance() }
             } label: {
-                Label("Next exercise", systemImage: "chevron.forward")
+                // "lift", like Previous lift beside it: one word for the
+                // thing on both sides of the bar, and short enough that the
+                // SE stops wrapping it onto two lines (polish).
+                Label("Next lift", systemImage: "chevron.forward")
                     .font(.subheadline.weight(.semibold))
                     // + the bordered style's 7pt above and below = 44.
                     .frame(minHeight: 30)
@@ -3110,8 +3123,15 @@ private struct WeightStepper: View {
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 1) {
-                Image(systemName: symbol).font(.title.weight(.semibold))
-                // Dropped at accessibility sizes, where "Previous"/"Next" only
+                // Laid out at the plus's height for both: the minus glyph is
+                // shorter, so its caption rode higher than the plus's
+                // (polish). A hidden plus sizes the slot and scales with
+                // Dynamic Type; the real glyph sits centred in it.
+                Image(systemName: "plus")
+                    .hidden()
+                    .overlay { Image(systemName: symbol) }
+                    .font(.title.weight(.semibold))
+                // Dropped at accessibility sizes, where "Lighter"/"Heavier" only
                 // truncated to "Pr…"; the spoken label still says it.
                 if let caption, !dynamicTypeSize.isAccessibilitySize {
                     // caption, not caption2 (#276): at 11pt the SE simulator's
@@ -3142,16 +3162,18 @@ private struct WeightStepper: View {
     }
 
     private var decrementCaption: String? {
-        equipment == .dumbbell ? "Previous" : nil
+        // Lighter / Heavier rather than Previous / Next, which the action
+        // bar's Previous lift / Next lift already mean (critique).
+        equipment == .dumbbell ? "Lighter" : nil
     }
 
     private var incrementCaption: String? {
-        equipment == .dumbbell ? "Next" : nil
+        equipment == .dumbbell ? "Heavier" : nil
     }
 
     private var decrementLabel: String {
         switch equipment {
-        case .dumbbell: return "Previous dumbbell"
+        case .dumbbell: return "Lighter dumbbell"
         case .machineStack, .cable: return "One notch down"
         default: return "Decrease weight by \(increment.formatted)"
         }
@@ -3159,7 +3181,7 @@ private struct WeightStepper: View {
 
     private var incrementLabel: String {
         switch equipment {
-        case .dumbbell: return "Next dumbbell"
+        case .dumbbell: return "Heavier dumbbell"
         case .machineStack, .cable: return "One notch up"
         default: return "Increase weight by \(increment.formatted)"
         }
