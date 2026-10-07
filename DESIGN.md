@@ -129,7 +129,7 @@ each held to one meaning.
 
 ### Primary
 - **Ember** (#EA8B52): the one action the screen exists for (Log Set, the
-  forward "Next exercise" capsule) and the rest ring closing. Text on it is
+  forward "Next lift" capsule) and the rest ring closing. Text on it is
   **Bar Shadow** (#120F0D, `on-ember`), because white measured 2.53:1 on this
   orange and failed even large-text contrast; near-black clears 7:1. The asset
   catalogue also defines a light-appearance ember (#B45129), unused while the
@@ -228,7 +228,7 @@ accessibility sizes. Rearrange the layout instead (`AnyLayout`).
 A single column on iPhone, from SE through Pro Max, portrait first, with
 landscape supported as two columns (context left, actions right). The session
 screen is a scrolling document over a fixed action dock (stepper, reps/RPE,
-Log Set, More / Next exercise). At accessibility text sizes and on short
+Log Set, More / Next lift). At accessibility text sizes and on short
 screens the dock compacts, and at accessibility sizes it scrolls instead of
 compressing. Screen edges are 20 pt (16 pt in compact), and cards pad 16 pt.
 Spacing runs on a 4 / 8 / 12 / 16 / 20 rhythm. Every tappable element is at
@@ -275,7 +275,7 @@ outlines; edges are defined by the change of fill.
   what it builds to, so the warmup number never reads alone. It's still the
   thing to tap, but it no longer claims a working set. Its accessible name
   stays "Log Set".
-- **Forward (Next exercise / Finish workout):** a bordered capsule tinted
+- **Forward (Next lift / Finish workout):** a bordered capsule tinted
   ember, the only other ember element on the dock.
 - **Quiet (Undo, Skip, Stay, Go back, Review / Edit set plan):** system
   bordered buttons in the neutral `quietTint`, never ember.
@@ -296,7 +296,7 @@ outlines; edges are defined by the change of fill.
 - **Setup route:** a lift's settings line ("Dumbbell rack · 5 lb steps")
   heads the context card only when it states a fact; with nothing to say it
   is a 44 pt slider glyph in the card's top-right corner, never a row that
-  only reads "Gym setup".
+  only reads "Gym setup" or "Standard setup".
 - **Background:** Raised Fill on the chalkboard.
 - **Shadow Strategy:** none; see Elevation.
 - **Border:** none.

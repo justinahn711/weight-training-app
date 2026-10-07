@@ -177,8 +177,8 @@
       "name": "Forward capsule",
       "kind": "button",
       "refersTo": "button-hero",
-      "description": "Next exercise / Finish workout: bordered capsule tinted ember.",
-      "html": "<button class=\"ds-btn-forward\">› Next exercise</button>",
+      "description": "Next lift / Finish workout: bordered capsule tinted ember.",
+      "html": "<button class=\"ds-btn-forward\">› Next lift</button>",
       "css": ".ds-btn-forward{min-height:44px;padding:0 20px;background:rgba(234,139,82,.2);color:#EA8B52;border:none;border-radius:999px;font:600 17px -apple-system,system-ui,sans-serif;cursor:pointer}.ds-btn-forward:hover{background:rgba(234,139,82,.28)}.ds-btn-forward:focus-visible{outline:3px solid #EA8B52;outline-offset:2px}"
     },
     {
