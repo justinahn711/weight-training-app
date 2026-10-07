@@ -812,6 +812,26 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertFalse(vm.isOnActiveWarmupRung)
     }
 
+    /// Log Set's second line on a rung: its place in the ramp and the
+    /// weight the ramp builds to, counted from the rungs already logged and
+    /// gone the moment the form leaves the rung.
+    func test_warmupProgress_countsTheRungAndNamesTheWorkingWeight() throws {
+        let bench = benchPress()
+        let ramp = WarmupRamp.generate(for: bench, workingLoad: Load(135))
+        XCTAssertGreaterThanOrEqual(ramp.count, 2, "sanity: a ramp worth counting")
+        let vm = try makeViewModel(sessionExercises: [
+            sessionExercise(bench, loggedSets: [warmupRecord(ramp[0], exerciseID: bench.id)])
+        ])
+
+        let progress = try XCTUnwrap(vm.warmupProgress)
+        XCTAssertEqual(progress.rung, 2)
+        XCTAssertEqual(progress.count, ramp.count)
+        XCTAssertEqual(progress.working, Load(135))
+
+        vm.adjustLoad(by: 1)
+        XCTAssertNil(vm.warmupProgress, "off the rung, the button no longer logs a warmup")
+    }
+
     /// `isOnActiveWarmupRung` reflects the numbers on screen, not just
     /// whether a rung exists — editing the stepper away from the suggestion
     /// is what lets a working set through without a separate escape hatch

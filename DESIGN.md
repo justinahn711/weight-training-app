@@ -270,8 +270,11 @@ outlines; edges are defined by the change of fill.
   **Warmup Chalk** (#A3A3A3, `Theme.warmupFill`), Ember with the hue taken
   out: the same luminance, so it weighs the same and keeps the near-black
   text (7.5:1; the old `.secondary` fill under white text measured about
-  2.8:1). It says "Log warmup 45 lb × 5". It's still the thing to tap, but it no longer
-  claims a working set. Its accessible name stays "Log Set".
+  2.8:1). It says "Log warmup 45 lb × 5", with a footnote line under it
+  inside the same height, "1 of 4 · then 135 lb": where the ramp stands and
+  what it builds to, so the warmup number never reads alone. It's still the
+  thing to tap, but it no longer claims a working set. Its accessible name
+  stays "Log Set".
 - **Forward (Next exercise / Finish workout):** a bordered capsule tinted
   ember, the only other ember element on the dock.
 - **Quiet (Undo, Skip, Stay, Go back):** system bordered buttons in the
@@ -286,6 +289,10 @@ outlines; edges are defined by the change of fill.
 
 ### Cards / Containers
 - **Corner Style:** 14 pt (context card), 16 pt (larger cards).
+- **Setup route:** a lift's settings line ("Dumbbell rack · 5 lb steps")
+  heads the context card only when it states a fact; with nothing to say it
+  is a 44 pt slider glyph in the card's top-right corner, never a row that
+  only reads "Gym setup".
 - **Background:** Raised Fill on the chalkboard.
 - **Shadow Strategy:** none; see Elevation.
 - **Border:** none.
