@@ -277,10 +277,14 @@ outlines; edges are defined by the change of fill.
   stays "Log Set".
 - **Forward (Next exercise / Finish workout):** a bordered capsule tinted
   ember, the only other ember element on the dock.
-- **Quiet (Undo, Skip, Stay, Go back):** system bordered buttons in the
-  neutral `quietTint`, never ember.
-- **Text actions (More, Previous lift):** plain buttons in Quiet Label with a
-  44 pt frame and a full-row content shape.
+- **Quiet (Undo, Skip, Stay, Go back, Review / Edit set plan):** system
+  bordered buttons in the neutral `quietTint`, never ember.
+- **Text actions (More, Previous lift, warmup Clear):** plain buttons in
+  Quiet Label with a 44 pt frame and a full-row content shape.
+- **Lists in sheets** (the exercise chooser): rows in chalk and Secondary
+  Label under a `quietTint`, the current one marked by a neutral checkmark
+  and the selected trait. A List paints button rows in the tint, so without
+  it every row came out ember.
 
 ### Chips
 - **Style:** recessed-fill capsules, 36 pt drawn inside a 44 pt tap frame.

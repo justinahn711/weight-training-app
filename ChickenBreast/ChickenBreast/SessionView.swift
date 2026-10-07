@@ -639,7 +639,7 @@ struct SessionView: View {
                         if exercise.id == model.current?.id {
                             Image(systemName: "checkmark")
                                 .font(.body.weight(.semibold))
-                                .foregroundStyle(.tint)
+                                .foregroundStyle(.primary)
                         }
                     }
                     .contentShape(Rectangle())
@@ -648,6 +648,12 @@ struct SessionView: View {
                 .accessibilityValue(exercisePickerAccessibilityValue(for: exercise))
                 .accessibilityAddTraits(exercise.id == model.current?.id ? .isSelected : [])
             }
+            // A List paints its button rows in the tint, so every lift name
+            // and its set count came out ember: six orange rows saying
+            // nothing was news (One Ember Rule, critique 2026-10-06). The
+            // neutral tint keeps them chalk; the checkmark and the selected
+            // trait carry which one is current.
+            .tint(Theme.quietTint)
             .navigationTitle("Workout exercises")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -943,8 +949,12 @@ struct SessionView: View {
                 }
             }
             .font(.subheadline.weight(.semibold))
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            // A quiet bordered button, like Undo and Stay, not an ember link:
+            // ember is Log Set's, and an orange line in the card competed
+            // with it from above the dock (critique 2026-10-06).
+            .buttonStyle(.bordered)
+            .tint(Theme.quietTint)
+            .controlSize(.large)
             .accessibilityIdentifier("session.plan.review")
         } else if model.current?.id == exercise.id,
                   let reason = model.planUnavailableReason {
@@ -2425,7 +2435,9 @@ private struct WarmupBlock: View {
                 Button("Clear", action: onClear)
                     .font(.subheadline)
                     .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
+                    // A text action, so Quiet Label, like More and Previous
+                    // lift: ember is spent on Log Set alone.
+                    .foregroundStyle(Theme.quietLabel)
                     .frame(minWidth: 44, minHeight: 44)
                     .accessibilityLabel("Clear warmup ramp")
                     .accessibilityHint("Dismisses the remaining suggested warmup sets for this lift")
@@ -2447,7 +2459,7 @@ private struct WarmupBlock: View {
                             }
                             Spacer()
                             Image(systemName: "plus.circle")
-                                .foregroundStyle(.tint)
+                                .foregroundStyle(Theme.quietLabel)
                         }
                         .padding(.vertical, 8)
                         .padding(.horizontal, 12)
