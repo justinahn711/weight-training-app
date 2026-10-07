@@ -303,13 +303,30 @@ struct SessionView: View {
                 // them: Log Set's label spilled over "Finish workout" and
                 // covered it. Scrolling, as landscape already does, keeps
                 // every control whole and reachable (critique, adapt).
-                ScrollView {
-                    actionBar(exercise, isCompact: isCompact)
+                //
+                // Log Set itself stays out of that scroll, pinned under it
+                // (re-critique, 2026-10-07): inside it, at AccessibilityXXXL
+                // the hero sat cut off at the bottom edge on every iPhone,
+                // so logging a set began with scrolling a scroll view inside
+                // the page. The steppers, plates and footer scroll; the one
+                // action the screen exists for never does.
+                VStack(spacing: 0) {
+                    ScrollView {
+                        actionBar(exercise, isCompact: isCompact, pinsLogSet: true)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    // Its full height, always: the scroll above gives way
+                    // instead, or "Set a weight first" truncated on an SE.
+                    logSetButton(isCompact: isCompact)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, isCompact ? 12 : 20)
+                        .padding(.vertical, 8)
                 }
-                .scrollBounceBehavior(.basedOnSize)
                 .frame(maxHeight: height * 0.6)
                 .layoutPriority(1)
                 .background(.bar)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("session.actionBar")
             } else {
                 actionBar(exercise, isCompact: isCompact)
             }
@@ -1217,7 +1234,9 @@ struct SessionView: View {
 
     // MARK: - Action below
 
-    private func actionBar(_ exercise: SessionExercise, isCompact: Bool = false) -> some View {
+    /// `pinsLogSet` leaves Log Set out, for the accessibility-size layout
+    /// that pins it under this bar's scroll view instead.
+    private func actionBar(_ exercise: SessionExercise, isCompact: Bool = false, pinsLogSet: Bool = false) -> some View {
         // 10 rather than 12 between rows: the bigger stepper and Log Set
         // below (task 6) are paid for here and in the row heights, so the
         // bar stays under the ceiling #205 set and its UI test enforces.
@@ -1300,96 +1319,9 @@ struct SessionView: View {
                 }
             }
 
-            Button {
-                // Once this set is written the weight is settled — the next
-                // set inherits it, and the plate buttons have nothing left to
-                // correct until something changes. Leaving the row open just
-                // pushes the set rows underneath it down for the rest of the
-                // exercise (#170).
-                //
-                // `logSet` returns nothing, and `model.failure` isn't cleared
-                // on success, so a stale failure from something unrelated
-                // could make "did this call fail" unreadable from `failure`
-                // alone. Comparing before/after sidesteps that: `commit` only
-                // ever *sets* `failure` on its own catch, so if the string is
-                // unchanged this call didn't fail, whatever the value was
-                // going in.
-                //
-                // Only a working set closes it (#320). On a warmup rung this
-                // tap logs the rung (`logSet` routes on the same check), and
-                // warmups are exactly when plates change between sets, so
-                // closing it after each rung made the lifter reopen it every
-                // time. Read before logging: the log moves the form on.
-                let failureBeforeLogging = model.failure
-                let logsAWarmup = model.isOnActiveWarmupRung
-                withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.logSet() }
-                if !logsAWarmup, model.failure == failureBeforeLogging {
-                    withAnimation(Theme.quick(reduceMotion: reduceMotion)) { isPlateRowExpanded = false }
-                }
-            } label: {
-                // The values on the button, so confirming them is the same
-                // glance as tapping: one look says "185 × 8, yes" and one tap
-                // logs it. The accessible NAME stays the literal "Log Set"
-                // whatever the category — `SessionFlowUITests` and VoiceOver
-                // both find this control by that exact label (#211). The
-                // visible headline says which kind of set the tap will write,
-                // since on a warmup rung it silently logged a warmup.
-                //
-                // Near-black on the orange, not white: white measured 2.53:1
-                // (and 2.23:1 for the subtitle at 85% opacity), failing even
-                // large-text contrast on the most-read control in the app. The
-                // warmup rung's grey shares the orange's lightness, so the
-                // same near-black reads on both (#329).
-                //
-                // One line, action and payload together (bolder pass): "Log
-                // 135 lb × 8", the numbers in the same black rounded numerals
-                // as the weight readout and the connectors lighter, so the
-                // set itself is what lands. Nothing to log yet keeps the
-                // two-line "Log Set / Set a weight first", which is honest
-                // about why the button is off.
-                Group {
-                    if model.canLogSet {
-                        VStack(spacing: 0) {
-                            logSetLine(isCompact: isCompact)
-                                .multilineTextAlignment(.center)
-                                .contentTransition(.numericText())
-                                .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
-                            // On a rung, where the ramp stands and what it
-                            // builds to, inside the button's existing height:
-                            // the 45 on it otherwise reads with nothing to
-                            // tie it to the 135 the card scrolled away.
-                            if let progress = warmupProgressLine {
-                                Text(progress)
-                                    .font(.footnote.weight(.semibold))
-                                    .monospacedDigit()
-                            }
-                        }
-                    } else {
-                        VStack(spacing: 0) {
-                            Text(logSetTitle)
-                                .font(isCompact ? .title3.bold() : .title2.bold())
-                            Text("Set a weight first")
-                                .font(.subheadline.weight(.semibold))
-                        }
-                    }
-                }
-                .foregroundStyle(logSetForeground)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: isCompact ? 56 : 62)
+            if !pinsLogSet {
+                logSetButton(isCompact: isCompact)
             }
-            // Prominent either way — a warmup rung is still the thing to tap
-            // next, not a lesser action — but the accent's hue is taken out
-            // while on one, so the difference registers on the glance before
-            // the label is even read. `Theme.warmupFill` keeps the accent's
-            // lightness, so the button weighs the same and the same dark
-            // text reads on both.
-            .buttonStyle(.borderedProminent)
-            .tint(model.isOnActiveWarmupRung ? Theme.warmupFill : Color.accentColor)
-            .buttonBorderShape(.roundedRectangle(radius: 16))
-            .disabled(model.recoveryProposal != nil || !model.canLogSet)
-            .accessibilityLabel("Log Set")
-            .accessibilityValue(logSetAccessibilityValue)
-            .accessibilityIdentifier("session.log-set")
 
             // Previous lift, a More menu, and the one forward action.
             //
@@ -1431,7 +1363,105 @@ struct SessionView: View {
         // number, not a font-metrics estimate) needs to read off the
         // simulator.
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("session.actionBar")
+        // With Log Set pinned outside, the frame tests and the audit's
+        // chrome list read is the whole dock's, named on the outer stack.
+        .accessibilityIdentifier(pinsLogSet ? "session.actionBar.controls" : "session.actionBar")
+    }
+
+    /// The hero. One function so the accessibility-size layout can pin it
+    /// outside the scrolling controls while every other layout keeps it in
+    /// the bar's own stack.
+    private func logSetButton(isCompact: Bool) -> some View {
+        Button {
+            // Once this set is written the weight is settled — the next
+            // set inherits it, and the plate buttons have nothing left to
+            // correct until something changes. Leaving the row open just
+            // pushes the set rows underneath it down for the rest of the
+            // exercise (#170).
+            //
+            // `logSet` returns nothing, and `model.failure` isn't cleared
+            // on success, so a stale failure from something unrelated
+            // could make "did this call fail" unreadable from `failure`
+            // alone. Comparing before/after sidesteps that: `commit` only
+            // ever *sets* `failure` on its own catch, so if the string is
+            // unchanged this call didn't fail, whatever the value was
+            // going in.
+            //
+            // Only a working set closes it (#320). On a warmup rung this
+            // tap logs the rung (`logSet` routes on the same check), and
+            // warmups are exactly when plates change between sets, so
+            // closing it after each rung made the lifter reopen it every
+            // time. Read before logging: the log moves the form on.
+            let failureBeforeLogging = model.failure
+            let logsAWarmup = model.isOnActiveWarmupRung
+            withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.logSet() }
+            if !logsAWarmup, model.failure == failureBeforeLogging {
+                withAnimation(Theme.quick(reduceMotion: reduceMotion)) { isPlateRowExpanded = false }
+            }
+        } label: {
+            // The values on the button, so confirming them is the same
+            // glance as tapping: one look says "185 × 8, yes" and one tap
+            // logs it. The accessible NAME stays the literal "Log Set"
+            // whatever the category — `SessionFlowUITests` and VoiceOver
+            // both find this control by that exact label (#211). The
+            // visible headline says which kind of set the tap will write,
+            // since on a warmup rung it silently logged a warmup.
+            //
+            // Near-black on the orange, not white: white measured 2.53:1
+            // (and 2.23:1 for the subtitle at 85% opacity), failing even
+            // large-text contrast on the most-read control in the app. The
+            // warmup rung's grey shares the orange's lightness, so the
+            // same near-black reads on both (#329).
+            //
+            // One line, action and payload together (bolder pass): "Log
+            // 135 lb × 8", the numbers in the same black rounded numerals
+            // as the weight readout and the connectors lighter, so the
+            // set itself is what lands. Nothing to log yet keeps the
+            // two-line "Log Set / Set a weight first", which is honest
+            // about why the button is off.
+            Group {
+                if model.canLogSet {
+                    VStack(spacing: 0) {
+                        logSetLine(isCompact: isCompact)
+                            .multilineTextAlignment(.center)
+                            .contentTransition(.numericText())
+                            .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
+                        // On a rung, where the ramp stands and what it
+                        // builds to, inside the button's existing height:
+                        // the 45 on it otherwise reads with nothing to
+                        // tie it to the 135 the card scrolled away.
+                        if let progress = warmupProgressLine {
+                            Text(progress)
+                                .font(.footnote.weight(.semibold))
+                                .monospacedDigit()
+                        }
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        Text(logSetTitle)
+                            .font(isCompact ? .title3.bold() : .title2.bold())
+                        Text("Set a weight first")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                }
+            }
+            .foregroundStyle(logSetForeground)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: isCompact ? 56 : 62)
+        }
+        // Prominent either way — a warmup rung is still the thing to tap
+        // next, not a lesser action — but the accent's hue is taken out
+        // while on one, so the difference registers on the glance before
+        // the label is even read. `Theme.warmupFill` keeps the accent's
+        // lightness, so the button weighs the same and the same dark
+        // text reads on both.
+        .buttonStyle(.borderedProminent)
+        .tint(model.isOnActiveWarmupRung ? Theme.warmupFill : Color.accentColor)
+        .buttonBorderShape(.roundedRectangle(radius: 16))
+        .disabled(model.recoveryProposal != nil || !model.canLogSet)
+        .accessibilityLabel("Log Set")
+        .accessibilityValue(logSetAccessibilityValue)
+        .accessibilityIdentifier("session.log-set")
     }
 
     private func repsStepper(_ exercise: SessionExercise) -> some View {

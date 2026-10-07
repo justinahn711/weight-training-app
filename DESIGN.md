@@ -229,8 +229,9 @@ A single column on iPhone, from SE through Pro Max, portrait first, with
 landscape supported as two columns (context left, actions right). The session
 screen is a scrolling document over a fixed action dock (stepper, reps/RPE,
 Log Set, More / Next lift). At accessibility text sizes and on short
-screens the dock compacts, and at accessibility sizes it scrolls instead of
-compressing. Screen edges are 20 pt (16 pt in compact), and cards pad 16 pt.
+screens the dock compacts, and at accessibility sizes its controls scroll
+instead of compressing while Log Set stays pinned beneath them at full
+height, so logging a set never starts with a scroll. Screen edges are 20 pt (16 pt in compact), and cards pad 16 pt.
 Spacing runs on a 4 / 8 / 12 / 16 / 20 rhythm. Every tappable element is at
 least 44 × 44 pt, and the hero is 62 pt tall (56 compact).
 

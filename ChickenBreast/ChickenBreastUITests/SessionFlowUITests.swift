@@ -403,8 +403,8 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
     /// this size the latest set row alone is ~150pt tall and Log Set ~138pt,
     /// against a context area of ~180pt, so all three cannot share one screen
     /// with the plate row open on any iPhone. What this guards is what does
-    /// fit: the lift's name stays on screen, and Log Set stays one scroll of
-    /// the action bar away rather than lost.
+    /// fit: the lift's name stays on screen, and Log Set stays on screen,
+    /// pinned under the action bar's scrolling controls.
     func testPlateRowKeepsLiftInViewAndLogReachableAtAccessibilityText() throws {
         try assertPlateRowKeepsContextInView(
             arguments: [
@@ -415,6 +415,30 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
             expectsStackedSteppers: true,
             requiresAllOnOneScreen: false
         )
+    }
+
+    /// The hero at the largest text size, on the screen a session opens on:
+    /// wholly on screen with nothing scrolled. Inside the action bar's
+    /// capped scroll view it sat cut off at the bottom edge, "Set a weight
+    /// first" sliced through, on an SE and an iPhone 17 alike (re-critique,
+    /// 2026-10-07); it is pinned under that scroll view now. Read by frame,
+    /// not `isHittable`, since on a first outing the button is disabled.
+    func testLogSetIsWhollyOnScreenWithoutScrollingAtAccessibilityText() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(arguments: [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        Thread.sleep(forTimeInterval: 1)
+        let window = app.windows.firstMatch.frame
+        attachScreenshot("log-set-AccessibilityXXXL")
+        XCTAssertFalse(logSet.frame.isEmpty)
+        XCTAssertTrue(window.contains(logSet.frame),
+                      "Log Set should be wholly on screen at AccessibilityXXXL (\(logSet.frame) in \(window))")
     }
 
     private func assertPlateRowKeepsContextInView(
@@ -532,23 +556,10 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
                                      "the lift name should sit wholly above the action bar")
         } else {
             XCTAssertTrue(latestSet.exists, "the latest set should still be in the context, if scrolled")
-            // Dragged on the part of the action bar that is on screen, not on
-            // the plate row: once the readout grew with the text size (#297)
-            // the row sat at the screen's bottom edge, its centre off screen,
-            // and a swipe "on" it scrolled nothing.
-            let bar = app.otherElements["session.actionBar"].frame
-            let visibleTop = max(bar.minY, window.minY)
-            let visibleBottom = min(bar.maxY, window.maxY)
-            let origin = app.coordinate(withNormalizedOffset: .zero)
-            let start = origin.withOffset(CGVector(dx: window.midX, dy: visibleTop + (visibleBottom - visibleTop) * 0.8))
-            let end = origin.withOffset(CGVector(dx: window.midX, dy: visibleTop + (visibleBottom - visibleTop) * 0.2))
-            var swipes = 0
-            while !logSet.isHittable && swipes < 4 {
-                start.press(forDuration: 0.05, thenDragTo: end)
-                swipes += 1
-            }
-            print("#216 [\(sizeName)] Log Set after \(swipes) action-bar swipe(s): \(logSet.frame)")
-            XCTAssertTrue(logSet.isHittable, "Log Set should be reachable by scrolling the action bar")
+            // Pinned under the scrolling controls at these sizes (re-critique,
+            // 2026-10-07), so it is on screen with no scrolling at all. It
+            // used to take up to four drags of the action bar to reach.
+            mustBeOnScreen.append(("Log Set", logSet))
         }
         for (name, element) in mustBeOnScreen {
             XCTAssertTrue(element.exists, "\(name) should still exist with the plate row open")
