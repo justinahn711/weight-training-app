@@ -44,6 +44,11 @@
         "displayName": "Quiet Label",
         "canonical": "Theme.quietLabel white 0.75"
       },
+      "warmup-chalk": {
+        "role": "neutral",
+        "displayName": "Warmup Chalk",
+        "canonical": "Theme.warmupFill white 0.64"
+      },
       "fill-raised": {
         "role": "neutral",
         "displayName": "Raised Fill",

@@ -6,6 +6,7 @@ colors:
   ember: "#EA8B52"
   on-ember: "#120F0D"
   quiet-label: "#BFBFBF"
+  warmup-chalk: "#A3A3A3"
   fill-raised: "#7676803D"
   fill-recessed: "#7676802E"
   record-gold: "#FFCC3D"
@@ -163,6 +164,9 @@ each held to one meaning.
   TIME and explanatory lines, on the chalkboard only. It measured 5.1–6.3:1 on
   the raised working surfaces and failed the audit there, which is why Quiet
   Label exists.
+- **Warmup Chalk** (#A3A3A3, 64% white): the Log Set fill on a warmup
+  rung, and nothing else. Ember's luminance without its hue, so the hero
+  weighs the same and keeps its near-black text (7.5:1).
 - **Raised Fill / Recessed Fill** (system `tertiarySystemFill` / `quaternary`,
   #7676803D / #7676802E): cards, banners, steppers, chips. Grey layers, not
   borders.
@@ -262,9 +266,11 @@ outlines; edges are defined by the change of fill.
   verb, the numbers in black SF Pro Rounded tabular numerals (`.title`,
   `.title2` compact), and the unit and "×" lighter. With nothing to log it
   falls back to "Log Set" over "Set a weight first".
-- **Hero, warmup state:** on an active warmup rung the hero takes the system
-  `.secondary` tint (a reduction of the same control, not a new hue) and says
-  "Log warmup 45 lb × 5". It's still the thing to tap, but it no longer
+- **Hero, warmup state:** on an active warmup rung the hero takes
+  **Warmup Chalk** (#A3A3A3, `Theme.warmupFill`), Ember with the hue taken
+  out: the same luminance, so it weighs the same and keeps the near-black
+  text (7.5:1; the old `.secondary` fill under white text measured about
+  2.8:1). It says "Log warmup 45 lb × 5". It's still the thing to tap, but it no longer
   claims a working set. Its accessible name stays "Log Set".
 - **Forward (Next exercise / Finish workout):** a bordered capsule tinted
   ember, the only other ember element on the dock.
