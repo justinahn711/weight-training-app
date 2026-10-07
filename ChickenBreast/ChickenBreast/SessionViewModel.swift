@@ -1897,6 +1897,18 @@ final class SessionViewModel {
         return pendingLoad == rung.load && pendingReps == rung.reps
     }
 
+    /// Where the form is in the ramp while it leads with a rung: that rung's
+    /// place (1-based), the ramp's length, and the weight it climbs to. Nil
+    /// off a rung. Feeds Log Set's second line, "1 of 3 · then 135 lb", so a
+    /// glance at the 45 on the button also says what it is building towards
+    /// (critique, 2026-10-06: the ramp list sits below the fold).
+    var warmupProgress: (rung: Int, count: Int, working: Load?)? {
+        guard isOnActiveWarmupRung, let rung = nextWarmupRung else { return nil }
+        let ramp = warmupRamp
+        guard let index = ramp.firstIndex(of: rung) else { return nil }
+        return (index + 1, ramp.count, rampWorkingLoad)
+    }
+
     /// Skips the ramp entirely and jumps straight to the working weight —
     /// the one control #206 asks for. Reuses #15's per-exercise, per-session
     /// dismissal (`clearedRamps`) rather than adding a second, differently-

@@ -789,20 +789,7 @@ struct SessionView: View {
                 }
                 .accessibilityElement(children: .combine)
                 Spacer(minLength: 8)
-                Button {
-                    configuring = exercise.exercise
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Configure \(exercise.exercise.name)")
-                .accessibilityValue(configSummary(exercise))
-                .accessibilityHint("Corrects what the app assumes about this lift")
-                .accessibilityIdentifier("session.exercise.configure")
+                configureIcon(exercise)
             }
             planAvailability(exercise)
                 .padding(.trailing, 12)
@@ -815,6 +802,25 @@ struct SessionView: View {
         .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 14))
     }
 
+    /// The route into the lift's settings as a bare 44 pt slider glyph, for
+    /// a card with nothing about the setup worth saying in words.
+    private func configureIcon(_ exercise: SessionExercise) -> some View {
+        Button {
+            configuring = exercise.exercise
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Configure \(exercise.exercise.name)")
+        .accessibilityValue(configSummary(exercise))
+        .accessibilityHint("Corrects what the app assumes about this lift")
+        .accessibilityIdentifier("session.exercise.configure")
+    }
+
     private func collapsedLine(_ exercise: SessionExercise) -> String {
         var parts = ["Target \(exercise.prescription.displayLine(in: gym.unit))"]
         if let last = exercise.lastPerformance {
@@ -824,36 +830,44 @@ struct SessionView: View {
     }
 
     private func fullContext(_ exercise: SessionExercise, isCompact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Sits directly under the lift's name, which is what it is about,
-            // and is still the line you are reading at the moment you notice a
-            // stack moves in 15s (#20).
-            Button {
-                configuring = exercise.exercise
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "slider.horizontal.3")
-                    Text(configSummary(exercise))
-                    Spacer(minLength: 0)
+        // With no fact to state (a bar that follows the gym, a default step)
+        // the line said only "Gym setup": a 44 pt row and a divider spent on
+        // a label, about 70 pt that pushed the target under the dock on an
+        // SE (critique, 2026-10-06). Then the route shrinks to the collapsed
+        // card's glyph beside the target; any real fact keeps the line (#95).
+        let hasSetupFacts = configSummary(exercise) != "Gym setup"
+        return VStack(alignment: .leading, spacing: 12) {
+            if hasSetupFacts {
+                // Sits directly under the lift's name, which is what it is about,
+                // and is still the line you are reading at the moment you notice a
+                // stack moves in 15s (#20).
+                Button {
+                    configuring = exercise.exercise
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "slider.horizontal.3")
+                        Text(configSummary(exercise))
+                        Spacer(minLength: 0)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    // A caption's glyphs are 14pt, and contentShape without a
+                    // minimum shapes exactly that — so the route into every
+                    // per-lift setting was a 14pt target, in a room, mid-set. The
+                    // audit measured it; nobody had (#114).
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                // A caption's glyphs are 14pt, and contentShape without a
-                // minimum shapes exactly that — so the route into every
-                // per-lift setting was a 14pt target, in a room, mid-set. The
-                // audit measured it; nobody had (#114).
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Configure \(exercise.exercise.name)")
-            .accessibilityValue(configSummary(exercise))
-            .accessibilityHint("Corrects what the app assumes about this lift")
-            .accessibilityIdentifier("session.exercise.configure")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Configure \(exercise.exercise.name)")
+                .accessibilityValue(configSummary(exercise))
+                .accessibilityHint("Corrects what the app assumes about this lift")
+                .accessibilityIdentifier("session.exercise.configure")
 
-            // Keeps the once-ever tap from reading as a third row of the pair
-            // below, which are read every set and are not controls at all.
-            Divider()
+                // Keeps the once-ever tap from reading as a third row of the pair
+                // below, which are read every set and are not controls at all.
+                Divider()
+            }
 
             if let proposal = model.recoveryProposal {
                 recoveryProposal(proposal)
@@ -868,9 +882,18 @@ struct SessionView: View {
             let pair = isCompact && !dynamicTypeSize.isAccessibilitySize
                 ? AnyLayout(HStackLayout(alignment: .top, spacing: 20))
                 : AnyLayout(VStackLayout(alignment: .leading, spacing: isCompact ? 10 : 12))
-            pair {
-                targetSummary(exercise)
-                lastTimeSummary(exercise)
+            HStack(alignment: .top, spacing: 4) {
+                pair {
+                    targetSummary(exercise)
+                    lastTimeSummary(exercise)
+                }
+                if !hasSetupFacts {
+                    // Into the card's corner, so the glyph's 44 pt frame
+                    // sits on the padding instead of beside the heading.
+                    configureIcon(exercise)
+                        .padding(.top, -12)
+                        .padding(.trailing, -12)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1294,9 +1317,9 @@ struct SessionView: View {
                 //
                 // Near-black on the orange, not white: white measured 2.53:1
                 // (and 2.23:1 for the subtitle at 85% opacity), failing even
-                // large-text contrast on the most-read control in the app. On
-                // the warmup rung's dimmed tint that pairing inverts, so the
-                // label goes light there instead.
+                // large-text contrast on the most-read control in the app. The
+                // warmup rung's grey shares the orange's lightness, so the
+                // same near-black reads on both (#329).
                 //
                 // One line, action and payload together (bolder pass): "Log
                 // 135 lb × 8", the numbers in the same black rounded numerals
@@ -1306,10 +1329,21 @@ struct SessionView: View {
                 // about why the button is off.
                 Group {
                     if model.canLogSet {
-                        logSetLine(isCompact: isCompact)
-                            .multilineTextAlignment(.center)
-                            .contentTransition(.numericText())
-                            .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
+                        VStack(spacing: 0) {
+                            logSetLine(isCompact: isCompact)
+                                .multilineTextAlignment(.center)
+                                .contentTransition(.numericText())
+                                .animation(Theme.quick(reduceMotion: reduceMotion), value: logSetSummary)
+                            // On a rung, where the ramp stands and what it
+                            // builds to, inside the button's existing height:
+                            // the 45 on it otherwise reads with nothing to
+                            // tie it to the 135 the card scrolled away.
+                            if let progress = warmupProgressLine {
+                                Text(progress)
+                                    .font(.footnote.weight(.semibold))
+                                    .monospacedDigit()
+                            }
+                        }
                     } else {
                         VStack(spacing: 0) {
                             Text(logSetTitle)
@@ -1533,7 +1567,20 @@ struct SessionView: View {
     /// so VoiceOver and the UI tests keep finding it (#211).
     private var logSetAccessibilityValue: String {
         guard model.canLogSet else { return "Set a weight first" }
-        return model.isOnActiveWarmupRung ? "Warmup, \(logSetSummary)" : logSetSummary
+        guard model.isOnActiveWarmupRung else { return logSetSummary }
+        if let progress = warmupProgressLine {
+            // Spoken, so a comma where the button shows a dot.
+            return "Warmup, \(logSetSummary), " + progress.replacingOccurrences(of: " · ", with: ", ")
+        }
+        return "Warmup, \(logSetSummary)"
+    }
+
+    /// "1 of 3 · then 135 lb" on a warmup rung, nil otherwise.
+    private var warmupProgressLine: String? {
+        guard let progress = model.warmupProgress else { return nil }
+        let position = "\(progress.rung) of \(progress.count)"
+        guard let working = progress.working else { return position }
+        return position + " · then " + working.formatted(in: gym.unit)
     }
 
     /// What one tap of `Log Set` will write, spelled on the button itself.
