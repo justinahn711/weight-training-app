@@ -53,10 +53,12 @@ never decides.
   sets, never stored. Warmups count only in history.
 - Every proposed load must be one the equipment can actually make
   (`Exercise.nearestAchievable`).
-- **Open decision:** since #316 a set plan *activates automatically* for a
-  lift. That sits uneasily with "it suggests, I decide" (below). Whether an
-  automatic plan should stay, become an explicit opt-in, or read as plainly
-  as a suggestion is undecided.
+- **Plans suggest; logging decides** (owner, 2026-10-07). A recommendation
+  shows as "Suggested" with its numbers already on the controls and a Change
+  button. Nothing is activated when a lift opens; the first logged working
+  set takes the suggestion up as the lift's plan (zero extra taps), and
+  Change opens it to edit first. This settles the tension #316's automatic
+  activation had with "it suggests, I decide".
 
 ## Brand Commitments
 

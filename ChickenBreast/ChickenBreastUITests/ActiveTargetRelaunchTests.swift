@@ -24,10 +24,10 @@ final class ActiveTargetRelaunchTests: ChickenBreastUITestCase {
 
         let review = app.buttons["session.plan.review"]
         XCTAssertTrue(review.waitForExistence(timeout: 20))
-        // Either label: recommendations now activate automatically, so a
-        // fresh lift may already carry a plan to edit. The test only needs
-        // the plan sheet, whichever door opens it.
-        XCTAssertTrue(["Review set plan", "Edit set plan"].contains(review.label), review.label)
+        // A fresh lift offers its recommendation as a suggestion (2026-10-07),
+        // so the door reads "Change suggested plan"; a lift already started
+        // reads "Edit set plan". The test only needs the plan sheet.
+        XCTAssertTrue(["Change suggested plan", "Edit set plan"].contains(review.label), review.label)
         reveal(review, in: app.scrollViews.firstMatch)
         review.tap()
         XCTAssertTrue(app.navigationBars["Set plan"].waitForExistence(timeout: 5))

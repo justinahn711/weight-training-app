@@ -460,6 +460,42 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.session.current?.workingSets.last?.load, Load(173.3))
     }
 
+    /// "It suggests, I decide" (owner, 2026-10-07): opening a lift with a
+    /// recommendation stores no plan; the controls already hold the
+    /// suggestion's numbers, and the first logged working set takes it up.
+    func test_openingALiftLeavesItsRecommendationASuggestionUntilASetIsLogged() throws {
+        // Yesterday's three sets give the engine a recommendation to offer
+        // (the same history `AutomaticPrescriptionTests` builds).
+        let store = try TrainingStore.inMemory()
+        let press = Exercise(name: "Suggested press", muscles: [.primary(.chest)],
+                             equipment: .barbell,
+                             progressionRule: .doubleProgression(range: RepRange(8, 12)))
+        try store.upsert(press)
+        let yesterday = Date().addingTimeInterval(-86_400)
+        for (index, reps) in [10, 10, 9].enumerated() {
+            try store.log(SetRecord(exerciseID: press.id, load: 100, reps: reps,
+                                    performedAt: yesterday.addingTimeInterval(Double(index) * 60)))
+        }
+        let session = Session(kind: .push, exercises: [sessionExercise(press)])
+        let draftID = UUID()
+        let vm = SessionViewModel(store: store, session: session, draftID: draftID)
+
+        vm.loadSuggestionContext()
+        vm.clearWarmupRamp()
+
+        let suggestion = try XCTUnwrap(vm.session.current?.recommendation?.sets.first,
+                                       "sanity: the lift offers a suggestion")
+        XCTAssertNil(vm.session.current?.acceptedPlan, "opening the lift must not activate its plan")
+        XCTAssertNil(try store.exerciseSession(workoutID: draftID, exerciseID: press.id)?.plan,
+                     "nor store one")
+        XCTAssertEqual(vm.pendingReps, suggestion.reps, "the controls already hold the suggestion")
+
+        vm.logSet()
+
+        XCTAssertNotNil(vm.session.current?.acceptedPlan, "logging a working set takes the suggestion up")
+        XCTAssertNotNil(try store.exerciseSession(workoutID: draftID, exerciseID: press.id)?.plan)
+    }
+
     func test_bodyweightWeighInIsRestoredWhenNavigatingBack() throws {
         let store = try TrainingStore.inMemory()
         let press = benchPress()
