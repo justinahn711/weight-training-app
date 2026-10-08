@@ -278,7 +278,7 @@ outlines; edges are defined by the change of fill.
   stays "Log Set".
 - **Forward (Next lift / Finish workout):** a bordered capsule tinted
   ember, the only other ember element on the dock.
-- **Quiet (Undo, Skip, Stay, Go back, Review / Edit set plan):** system
+- **Quiet (Undo, Skip, Stay, Go back, Change / Edit set plan):** system
   bordered buttons in the neutral `quietTint`, never ember.
 - **Text actions (More, Previous lift, warmup Clear):** plain buttons in
   Quiet Label with a 44 pt frame and a full-row content shape.

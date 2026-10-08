@@ -207,12 +207,12 @@ final class SessionViewModel {
             logWarmup(rung)
             return
         }
-        // The displayed recommendation becomes the workout's active
-        // prescription before the first working set. Keep this guard at the
-        // write boundary as well as the screen-entry path: voice and other
-        // logging surfaces must never create unprescribed evidence merely
-        // because the view lifecycle did not get a chance to prepare first.
-        if !isWarmup, !activateCurrentRecommendationIfNeeded(seedControls: false) {
+        // The displayed suggestion becomes the workout's active prescription
+        // at the first working set: logging it is the lifter's decision to
+        // take it up (owner, 2026-10-07). The only activation point, so voice
+        // and every other logging surface go through it too, and no set is
+        // ever logged as unprescribed evidence against a shown suggestion.
+        if !isWarmup, !activateCurrentRecommendationIfNeeded() {
             return
         }
         guard let current else { return }
@@ -1712,10 +1712,15 @@ final class SessionViewModel {
         } catch { failure = "Couldn't save the completion reason: \(error.localizedDescription)" }
     }
 
-    /// Refreshes an unstarted proposal from current history, then activates the
-    /// exact proposal shown on screen. Existing plans are returned unchanged by
-    /// the store, which keeps an exercise's targets stable once training has
-    /// begun while making Review set plan an optional editor.
+    /// Refreshes an unstarted proposal from current history and seeds the
+    /// controls from it, without activating it. The recommendation is a
+    /// suggestion until the lifter acts on it: the first logged working set
+    /// activates it (`logSet`, at the logging boundary), and Change opens the
+    /// plan editor. Opening a lift used to activate the plan on the spot,
+    /// which decided for the lifter before they had done anything (owner,
+    /// 2026-10-07: "it suggests, I decide"). The controls read the same
+    /// numbers either way: with no plan, `prescription` is the suggestion's
+    /// first set.
     private func prepareCurrentExercise() {
         guard refreshPlanContext() else { return }
         if recoveryProposal != nil,
@@ -1733,15 +1738,14 @@ final class SessionViewModel {
         // its zero minimum. Apply the session's captured weigh-in afterward so
         // first-use pull-ups and dips cannot log a zero-load working set.
         seedBodyweightIfNeeded()
-        _ = activateCurrentRecommendationIfNeeded(seedControls: true)
     }
 
-    /// Automatic activation is deliberately idempotent and happens again at
-    /// the logging boundary. A direct edit to the normal controls is preserved
-    /// there (`seedControls == false`): the recommendation remains the recorded
-    /// prescription and the set records what was actually performed.
+    /// Takes up the shown suggestion as the lift's plan, at the logging
+    /// boundary. Idempotent. A direct edit to the controls is preserved: the
+    /// recommendation becomes the recorded prescription and the set records
+    /// what was actually performed.
     @discardableResult
-    private func activateCurrentRecommendationIfNeeded(seedControls: Bool) -> Bool {
+    private func activateCurrentRecommendationIfNeeded() -> Bool {
         guard let current else { return true }
         guard current.acceptedPlan == nil else {
             // `seedPendingFromCurrent` already restored either the next plan
@@ -1765,19 +1769,7 @@ final class SessionViewModel {
                 workoutID: draftID,
                 startedAt: session.startedAt
             )
-            guard refreshPlanContext() else { return false }
-            if seedControls {
-                // Main's warmup flow still leads the exercise after an
-                // automatic recommendation becomes active. Re-seeding from
-                // the rebuilt exercise selects the next ramp rung when one
-                // exists and otherwise selects the next planned working set.
-                seedPendingFromCurrent()
-                // A cold-start bodyweight lift has no equipment minimum to
-                // recover from, so restore the captured exact weigh-in after
-                // any re-seed (#15d3247).
-                seedBodyweightIfNeeded()
-            }
-            return true
+            return refreshPlanContext()
         } catch {
             failure = "Couldn't start this recommendation: \(error.localizedDescription)"
             return false

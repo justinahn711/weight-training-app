@@ -966,7 +966,10 @@ struct SessionView: View {
     @ViewBuilder
     private func planAvailability(_ exercise: SessionExercise) -> some View {
         if model.canPlanCurrentExercise, model.current?.id == exercise.id {
-            Button(exercise.acceptedPlan == nil ? "Review set plan" : "Edit set plan") {
+            // "Change" while it is still a suggestion: the plan is the app's
+            // offer until a set is logged, so the button is about altering
+            // that offer, not reviewing a decision already made.
+            Button(exercise.acceptedPlan == nil ? "Change" : "Edit set plan") {
                 if let plan = model.planProposal() {
                     planning = PlanningTarget(
                         plan: plan,
@@ -982,6 +985,7 @@ struct SessionView: View {
             .buttonStyle(.bordered)
             .tint(Theme.quietTint)
             .controlSize(.large)
+            .accessibilityLabel(exercise.acceptedPlan == nil ? "Change suggested plan" : "Edit set plan")
             .accessibilityIdentifier("session.plan.review")
         } else if model.current?.id == exercise.id,
                   let reason = model.planUnavailableReason {
@@ -1001,7 +1005,14 @@ struct SessionView: View {
             return "\(target.load.formatted(in: gym.unit)) × \(target.reps) @ \(target.rpe)"
         }
         guard let plan = exercise.acceptedPlan, !plan.sets.isEmpty else {
-            return exercise.prescription.displayLine(in: gym.unit)
+            let line = exercise.prescription.displayLine(in: gym.unit)
+            // A suggestion of several sets says so; its first set is the one
+            // on the controls, and logging it starts the rest.
+            if isUnstartedSuggestion(exercise),
+               let count = exercise.recommendation?.sets.count, count > 1 {
+                return line + " · \(count) sets"
+            }
+            return line
         }
         let next = min(exercise.workingSets.count, plan.sets.count - 1)
         let target = plan.sets[next]
@@ -1033,10 +1044,22 @@ struct SessionView: View {
         return exercise.recommendation?.summary
     }
 
+    /// A planned-progression recommendation with no plan behind it yet.
+    private func isUnstartedSuggestion(_ exercise: SessionExercise) -> Bool {
+        guard exercise.acceptedPlan == nil,
+              let recommendation = exercise.recommendation,
+              recommendation.action != .deload, recommendation.action != .stop
+        else { return false }
+        return !recommendation.sets.isEmpty
+    }
+
     private func targetHeading(_ exercise: SessionExercise) -> String {
         if exercise.acceptedPlan?.isDeload == true { return "Recovery plan" }
         if exercise.acceptedPlan != nil { return "Set plan" }
         if exercise.recommendation?.action == .deload { return "Normal target" }
+        // A recommendation not yet acted on: offered, not decided. The first
+        // logged set takes it up; Change opens it to edit (owner, 2026-10-07).
+        if isUnstartedSuggestion(exercise) { return "Suggested" }
         return "Target"
     }
 
