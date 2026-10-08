@@ -1016,16 +1016,18 @@ struct SessionView: View {
         }
         let next = min(exercise.workingSets.count, plan.sets.count - 1)
         let target = plan.sets[next]
+        // "Set 1 of 1" only counted to one; a single-set plan is just its set.
+        let position = plan.sets.count > 1 ? "Set \(next + 1) of \(plan.sets.count) · " : ""
         if exercise.exercise.isBodyweight {
-            return "Set \(next + 1) of \(plan.sets.count) · \(target.reps) reps @ \(target.rpe)"
+            return position + "\(target.reps) reps @ \(target.rpe)"
         }
-        return "Set \(next + 1) of \(plan.sets.count) · \(target.load.formatted(in: gym.unit)) × \(target.reps) @ \(target.rpe)"
+        return position + "\(target.load.formatted(in: gym.unit)) × \(target.reps) @ \(target.rpe)"
     }
 
     private func planExplanation(_ exercise: SessionExercise) -> String? {
         if let plan = exercise.acceptedPlan {
             if exercise.workingSets.count >= plan.sets.count {
-                return "Planned work complete. Extra sets still count as training, but do not earn this progression."
+                return "Plan done. Extra sets count as training, not toward progress."
             }
             if !plan.isDeload, exercise.recommendation?.action == .deload {
                 return "Recovery dismissed — follow your normal plan today."
@@ -1034,7 +1036,7 @@ struct SessionView: View {
             // disappear. The reason belongs beside the target in the normal
             // workout; the sheet is only for details and edits.
             return exercise.recommendation?.summary
-                ?? "RPE is optional to log; every planned set needs a reported RPE to earn progression."
+                ?? "Log RPE on every planned set to progress."
         }
         if exercise.recommendation?.action == .deload {
             return model.recoveryFallbackPlan == nil
