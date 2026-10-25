@@ -157,9 +157,11 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
     /// The newest row after a set that set a record (#337): gold, two lines,
     /// with the kind spelled out and Undo beside it. The row is the only
     /// place a just-logged set is shown now, so the one state where it is
-    /// taller and tinted is audited too — hit regions, clipping and Dynamic
-    /// Type. Yesterday's 40 lb is the history to beat; one increment up is
-    /// "heaviest ever".
+    /// taller and tinted is audited too — hit regions, clipping, Dynamic Type
+    /// and contrast on the gold line against its tint. Yesterday's 40 lb is
+    /// the history to beat; one increment up is "heaviest ever". On an SE the
+    /// plan card's text runs under the dock and its contrast findings are the
+    /// ones held as content under chrome (#276); the row is clear of it.
     func testSessionScreenWithARecordRowPassesSystemAudit() throws {
         let app = launch(arguments: ["-UITestSeedYesterday"])
         try openPushDay(app)
@@ -179,13 +181,7 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
         XCTAssertTrue(wait(for: row, toMatch: "label CONTAINS 'Personal record'", timeout: 10),
                       "the logged set should say which record it set (label: \(row.label))")
         XCTAssertTrue(app.buttons["session.set.latest.undo"].waitForExistence(timeout: 5))
-        // Everything but contrast, as the other audits of a session with
-        // history are (#276, #316): the plan card scrolled behind the rest
-        // card fails it, and on this screen it was the card's "LAST TIME"
-        // caption that did — the one contrast finding, none on the row.
-        var contrastless = XCUIAccessibilityAuditType.all
-        contrastless.remove(.contrast)
-        let issues = try audit(app, only: contrastless)
+        let issues = try audit(app)
         if !issues.isEmpty { print("Session screen (record row) a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
