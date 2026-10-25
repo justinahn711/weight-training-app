@@ -93,7 +93,7 @@ public final class StoredExercise {
     /// The person's own rest target for this lift, in seconds (#174). Nil
     /// means no override — every row written before this landed reads that
     /// way automatically, since SwiftData hands back `nil` for a column it
-    /// has never seen, and `Exercise.restTarget` treats a nil override as
+    /// has never seen, and `Exercise.restTarget(using:)` treats a nil override as
     /// "keep using the heuristic", exactly what those rows have always meant.
     public var restOverrideSeconds: Double?
 
@@ -404,6 +404,10 @@ public final class StoredGymConfig {
     public var volumeBudgetsData: Data = Data()
     /// JSON `TrainingBlockConfig?`. Empty means the optional feature is off.
     public var trainingBlockData: Data = Data()
+    /// JSON `RestDefaults` (#341). Empty is a row written before the setting
+    /// existed, which reads as `RestDefaults.standard` — the 3:00 and 1:00
+    /// live in Core, not repeated here as column defaults.
+    public var restDefaultsData: Data = Data()
 
     /// When this was last written, used to settle a sync conflict.
     public var updatedAt: Date = Date()
@@ -417,6 +421,7 @@ public final class StoredGymConfig {
         self.weeklySessionTarget = config.weeklySessionTarget
         self.volumeBudgetsData = encoded(config.volumeBudgets)
         self.trainingBlockData = encoded(config.trainingBlock)
+        self.restDefaultsData = encoded(config.restDefaults)
         self.updatedAt = updatedAt
     }
 
@@ -428,6 +433,7 @@ public final class StoredGymConfig {
         weeklySessionTarget = config.weeklySessionTarget
         volumeBudgetsData = encoded(config.volumeBudgets)
         trainingBlockData = encoded(config.trainingBlock)
+        restDefaultsData = encoded(config.restDefaults)
         updatedAt = date
     }
 
@@ -452,7 +458,10 @@ public final class StoredGymConfig {
                     : try decoded([MuscleSetBudget].self, from: volumeBudgetsData),
                 trainingBlock: trainingBlockData.isEmpty
                     ? nil
-                    : try decoded(TrainingBlockConfig?.self, from: trainingBlockData)
+                    : try decoded(TrainingBlockConfig?.self, from: trainingBlockData),
+                restDefaults: restDefaultsData.isEmpty
+                    ? .standard
+                    : try decoded(RestDefaults.self, from: restDefaultsData)
             )
         } catch {
             throw StoreError.corruptRecord(entity: "GymConfig", id: id, underlying: error)

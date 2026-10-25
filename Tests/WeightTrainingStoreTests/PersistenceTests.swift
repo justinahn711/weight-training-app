@@ -182,12 +182,13 @@ final class PersistenceTests: XCTestCase {
             try store.upsert(raise)
         }
         XCTAssertEqual(try reopen().exercise(id: raise.id)?.restOverride, 150)
-        XCTAssertEqual(try reopen().exercise(id: raise.id)?.restTarget, 150)
+        XCTAssertEqual(try reopen().exercise(id: raise.id)?.restTarget(using: .standard), 150)
     }
 
-    /// A lift nobody has touched keeps falling back to the heuristic after a
-    /// relaunch, not to some materialized 90 or 180 written the day #174
-    /// landed.
+    /// A lift nobody has touched keeps falling back to the lifter's defaults
+    /// after a relaunch, not to some materialized number written the day #174
+    /// landed. Asked under defaults that are not the standard ones, so a
+    /// stored 60 or 180 could not pass for "still follows the setting".
     func testAbsentRestOverrideSurvivesRelaunch() throws {
         let pulldown = ExerciseLibrary.all.first { $0.name == "Lat Pulldown" }!
         do {
@@ -196,7 +197,9 @@ final class PersistenceTests: XCTestCase {
         }
         let reloaded = try XCTUnwrap(try reopen().exercise(id: pulldown.id))
         XCTAssertNil(reloaded.restOverride)
-        XCTAssertEqual(reloaded.restTarget, pulldown.restTarget)
+        let mine = RestDefaults(compound: 150, accessory: 45)
+        XCTAssertEqual(reloaded.restTarget(using: mine), pulldown.restTarget(using: mine))
+        XCTAssertEqual(reloaded.restTarget(using: mine), pulldown.defaultRest(using: mine))
     }
 
     func testProgressStateSurvivesRelaunch() throws {

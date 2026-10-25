@@ -227,16 +227,4 @@ extension Exercise {
     public func restTarget(using defaults: RestDefaults) -> TimeInterval {
         restOverride ?? defaultRest(using: defaults)
     }
-
-    /// `restTarget(using: .standard)`: the rest when the lifter has never
-    /// changed a default.
-    ///
-    /// Transitional. It exists only so the Store and its tests keep compiling
-    /// until the App half of #341 moves every caller onto
-    /// `restTarget(using:)` with the gym's own defaults, and it will be
-    /// removed then. New code must not call it: it silently ignores the
-    /// lifter's setting, which is the bug #341 fixes.
-    public var restTarget: TimeInterval {
-        restTarget(using: .standard)
-    }
 }
