@@ -222,13 +222,15 @@ final class RestTargetTests: XCTestCase {
             equipment: .dumbbell
         )
         XCTAssertTrue(press.isCompound)
-        XCTAssertEqual(press.restTarget, 180)
+        XCTAssertEqual(press.restTarget(using: .standard), 180)
     }
 
-    func testIsolationGetsNinetySeconds() {
+    /// 90 seconds until #341, when the owner asked for one minute on
+    /// accessories; the number is now a setting, and this is its default.
+    func testIsolationGetsOneMinute() {
         let raise = exercise(muscles: [.primary(.sideDelts)], equipment: .dumbbell)
         XCTAssertFalse(raise.isCompound)
-        XCTAssertEqual(raise.restTarget, 90)
+        XCTAssertEqual(raise.restTarget(using: .standard), 60)
     }
 
     /// Plate-built lifts count as compound regardless of how they're tagged —
@@ -237,7 +239,7 @@ final class RestTargetTests: XCTestCase {
     func testPlateBuiltCountsAsCompound() {
         let rdl = exercise(muscles: [.primary(.hamstrings)], equipment: .barbell)
         XCTAssertTrue(rdl.isCompound)
-        XCTAssertEqual(rdl.restTarget, 180)
+        XCTAssertEqual(rdl.restTarget(using: .standard), 180)
     }
 
     /// The whole point of #174: a gym report that the two-value heuristic
@@ -247,14 +249,16 @@ final class RestTargetTests: XCTestCase {
             muscles: [.primary(.chest), .secondary(.frontDelts), .secondary(.triceps)],
             equipment: .dumbbell
         )
-        XCTAssertEqual(press.restTarget, 180, "unset, this is still the compound default")
+        XCTAssertEqual(press.restTarget(using: .standard), 180, "unset, this is still the compound default")
         press.restOverride = 240
-        XCTAssertEqual(press.restTarget, 240)
+        XCTAssertEqual(press.restTarget(using: .standard), 240)
     }
 
-    /// #174 was explicit that the defaults must not move — this is the
-    /// "done when" from the issue, checked directly against `nil`.
-    func testNoOverrideIsExactlyTheOldDefault() {
+    /// With no override a lift rests exactly as the defaults say. #174 asked
+    /// that the defaults not move when overrides arrived; #341 moved the
+    /// accessory one on purpose and made both settable, so this now checks the
+    /// lookup against `nil` rather than a frozen number.
+    func testNoOverrideIsExactlyTheDefault() {
         let press = exercise(
             muscles: [.primary(.chest), .secondary(.frontDelts), .secondary(.triceps)],
             equipment: .dumbbell
@@ -262,8 +266,8 @@ final class RestTargetTests: XCTestCase {
         let raise = exercise(muscles: [.primary(.sideDelts)], equipment: .dumbbell)
         XCTAssertNil(press.restOverride)
         XCTAssertNil(raise.restOverride)
-        XCTAssertEqual(press.restTarget, 180)
-        XCTAssertEqual(raise.restTarget, 90)
+        XCTAssertEqual(press.restTarget(using: .standard), 180)
+        XCTAssertEqual(raise.restTarget(using: .standard), 60)
     }
 
     /// Sanity-check the heuristic against the real library rather than only
@@ -272,14 +276,14 @@ final class RestTargetTests: XCTestCase {
         let byName = Dictionary(
             uniqueKeysWithValues: ExerciseLibrary.all.map { ($0.name, $0) }
         )
-        XCTAssertEqual(byName["Flat Bench"]?.restTarget, 180)
-        XCTAssertEqual(byName["Hack Squat"]?.restTarget, 180)
-        XCTAssertEqual(byName["Incline DB Press"]?.restTarget, 180)
-        XCTAssertEqual(byName["Chest-Supported T-Bar Row"]?.restTarget, 180)
-        XCTAssertEqual(byName["Lateral Raise"]?.restTarget, 90)
-        XCTAssertEqual(byName["Leg Extension"]?.restTarget, 90)
-        XCTAssertEqual(byName["Tricep Pressdown"]?.restTarget, 90)
-        XCTAssertEqual(byName["Hammer Curls"]?.restTarget, 90)
+        XCTAssertEqual(byName["Flat Bench"]?.restTarget(using: .standard), 180)
+        XCTAssertEqual(byName["Hack Squat"]?.restTarget(using: .standard), 180)
+        XCTAssertEqual(byName["Incline DB Press"]?.restTarget(using: .standard), 180)
+        XCTAssertEqual(byName["Chest-Supported T-Bar Row"]?.restTarget(using: .standard), 180)
+        XCTAssertEqual(byName["Lateral Raise"]?.restTarget(using: .standard), 60)
+        XCTAssertEqual(byName["Leg Extension"]?.restTarget(using: .standard), 60)
+        XCTAssertEqual(byName["Tricep Pressdown"]?.restTarget(using: .standard), 60)
+        XCTAssertEqual(byName["Hammer Curls"]?.restTarget(using: .standard), 60)
     }
 }
 

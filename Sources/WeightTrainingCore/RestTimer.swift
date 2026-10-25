@@ -189,13 +189,54 @@ extension Exercise {
         muscles.count >= 3 || equipment.isPlateBuilt
     }
 
-    /// Rest between working sets: the lift's own override if the person set
-    /// one, otherwise 3 minutes on compounds / 90 seconds on isolation.
+    /// Which of the lifter's two default rests this lift follows: the compound
+    /// one for a compound lift, the accessory one for everything else (#341).
     ///
-    /// The gym report behind #174 was "keep defaults the same but let me
-    /// adjust" — not a request to change the heuristic, so it stays exactly
-    /// as it was, consulted only when `restOverride` is nil.
+    /// This is `isCompound` under another name, so lift settings can say which
+    /// default a lift follows, and the lookup below can't drift from it.
+    public var restDefaultKind: RestDefaults.Kind {
+        isCompound ? .compound : .accessory
+    }
+
+    /// What this lift rests for when it has no rest of its own: the lifter's
+    /// current default for its kind.
+    ///
+    /// Deliberately blind to `restOverride`. Lift settings need it even while
+    /// an override is set, to say what switching the override off would give
+    /// back ("otherwise defaults to ..."), and `restTarget(using:)` is the
+    /// one that decides between the two.
+    public func defaultRest(using defaults: RestDefaults) -> TimeInterval {
+        defaults.seconds(for: restDefaultKind)
+    }
+
+    /// Rest between working sets: the lift's own override if the person set
+    /// one, otherwise the lifter's default for compounds or accessories.
+    ///
+    /// The defaults come in as an argument (#341) rather than being read from
+    /// anywhere, so Core stays Foundation-only and the rule is testable. Call
+    /// it with the gym's current `GymConfig.restDefaults` at the moment a rest
+    /// starts: a lift with no override doesn't carry its rest around (see
+    /// `restOverride`), so a changed setting applies to the next rest and
+    /// leaves one already running alone.
+    ///
+    /// Which lifts are compound is still `isCompound`, which no setting
+    /// changes. #174's gym report was "keep defaults the same but let me
+    /// adjust"; #341 let the lifter adjust the defaults themselves, and
+    /// moved the accessory default from 90 to 60 seconds at the owner's
+    /// request.
+    public func restTarget(using defaults: RestDefaults) -> TimeInterval {
+        restOverride ?? defaultRest(using: defaults)
+    }
+
+    /// `restTarget(using: .standard)`: the rest when the lifter has never
+    /// changed a default.
+    ///
+    /// Transitional. It exists only so the Store and its tests keep compiling
+    /// until the App half of #341 moves every caller onto
+    /// `restTarget(using:)` with the gym's own defaults, and it will be
+    /// removed then. New code must not call it: it silently ignores the
+    /// lifter's setting, which is the bug #341 fixes.
     public var restTarget: TimeInterval {
-        restOverride ?? (isCompound ? 180 : 90)
+        restTarget(using: .standard)
     }
 }
