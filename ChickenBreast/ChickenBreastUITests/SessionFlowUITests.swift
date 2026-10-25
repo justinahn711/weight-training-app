@@ -221,7 +221,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
     /// is ~220pt tall and leaves the context a strip about 20pt high on an SE,
     /// so nothing in it is visible (#339). And with the rest gone, the
     /// header alone is most of what is left, and the stacked row is ~170pt
-    /// under it, where the banner was: Undo's lower edge starts 64pt under the
+    /// under it, where the banner was: Undo's lower edge starts 98pt under the
     /// dock on an iPhone 17 and 142pt under it on an SE, so it is one short
     /// scroll of the context away on both. The test makes that scroll and
     /// prints the frames before and after.
