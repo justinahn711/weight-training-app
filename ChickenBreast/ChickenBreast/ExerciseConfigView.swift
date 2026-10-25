@@ -161,24 +161,18 @@ struct ExerciseConfigView: View {
         hasSeeded = true
     }
 
-    /// What this lift would rest for absent any override — the compound/
-    /// isolation heuristic itself, not `exercise.restTarget`, since that
+    /// What this lift would rest for absent any override: the lifter's current
+    /// default for its kind (#341), not `restTarget(using:)`, since that
     /// already folds in whatever override is currently seeded. Kept
     /// separate so the footer can name the default even while a person is
     /// actively looking at a different, overridden number above it.
     private var defaultRestSeconds: TimeInterval {
-        exercise.isCompound ? 180 : 90
+        exercise.defaultRest(using: GymSettings.shared.config.restDefaults)
     }
 
-    /// Rest times worth offering: half-minute steps across the range the
-    /// library's own heuristic produces (90s and 180s), with a little room
-    /// on either side for a lift that genuinely needs more or less.
-    private static let restChoices: [Double] = [60, 90, 120, 150, 180, 210, 240, 300]
-
-    private func restLabel(_ seconds: Double) -> String {
-        let whole = Int(seconds.rounded())
-        return whole % 60 == 0 ? "\(whole / 60)m" : "\(whole / 60)m \(whole % 60)s"
-    }
+    /// Which of Settings' two defaults this lift follows, in the words
+    /// Settings uses for them.
+    private var defaultRestName: String { exercise.restDefaultKind.settingsCaption }
 
     /// Whether this lift still takes its plates from the gym.
     ///
@@ -370,9 +364,9 @@ struct ExerciseConfigView: View {
                     if overridesRest {
                         ChoiceRow(
                             caption: "Rest between sets",
-                            values: Self.restChoices,
+                            values: RestChoices.values,
                             isSelected: { $0 == restSeconds },
-                            label: restLabel,
+                            label: RestChoices.label,
                             onSelect: { restSeconds = $0 }
                         )
                     }
@@ -381,11 +375,11 @@ struct ExerciseConfigView: View {
                 } footer: {
                     // The gym report behind #174 was "keep the defaults,
                     // just let me change one" — so the footer always names
-                    // what this lift would otherwise get, whether or not
-                    // it's currently overridden.
+                    // which default this lift follows and what it is now
+                    // (#341), whether or not it's currently overridden.
                     Text(overridesRest
-                         ? "Otherwise defaults to \(restLabel(defaultRestSeconds)) for a lift like this."
-                         : "Defaults to \(restLabel(defaultRestSeconds)) — 3 minutes for compound lifts, 90 seconds for isolation work.")
+                         ? "Otherwise it would follow your \(defaultRestName) default, \(RestChoices.label(defaultRestSeconds))."
+                         : "Follows your \(defaultRestName) default, \(RestChoices.label(defaultRestSeconds)), set in Settings.")
                 }
             }
             .navigationTitle(exercise.name)
