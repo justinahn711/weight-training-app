@@ -271,6 +271,39 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         }
     }
 
+    /// The other kind a lifter actually meets on the row (#337): more reps
+    /// than ever at a weight already lifted, named with that weight.
+    /// Yesterday's 40 lb × 8 is the history; the same weight for one more rep
+    /// is not the heaviest ever, so the reps record is the headline. The load
+    /// is read off the row rather than assumed, so a different suggestion
+    /// fails here with the numbers in the message instead of silently
+    /// testing "heaviest ever" twice.
+    func testJustLoggedRepsRecordNamesItsLoadOnItsRow() throws {
+        let app = launch(arguments: ["-UITestSeedYesterday"])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        makeLogSetAvailable(app, logSet)
+        let morePlease = app.buttons["session.reps.increment"]
+        XCTAssertTrue(morePlease.waitForExistence(timeout: 5))
+        tapWhenSettled(morePlease)
+        tapWhenSettled(logSet)
+
+        let latest = app.buttons["session.set.latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "the logged set should have a row")
+        XCTAssertTrue(app.buttons["session.set.latest.undo"].waitForExistence(timeout: 5),
+                      "a record row still carries Undo")
+        XCTAssertTrue(wait(for: latest, toMatch: "label CONTAINS 'Personal record'", timeout: 5),
+                      "one more rep at yesterday's weight should be a record (label: \(latest.label))")
+        let numbers = try XCTUnwrap(Self.loadAndReps(in: latest.label),
+                                    "the newest row should read as load × reps (label: \(latest.label))")
+        let load = try XCTUnwrap(numbers.components(separatedBy: " × ").first)
+        XCTAssertTrue(latest.label.contains("Personal record · most reps at \(load)"),
+                      "the row should name the reps record and its load (label: \(latest.label))")
+        assertNoLoggedSetBanner(app)
+    }
+
     /// Undo lasts exactly as long as it did on the banner (#319): until the
     /// next set replaces it or the lifter moves to another lift. No timer, so
     /// nothing here waits for one.
