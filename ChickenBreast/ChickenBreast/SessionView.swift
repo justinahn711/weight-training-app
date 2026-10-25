@@ -86,10 +86,10 @@ struct SessionView: View {
                 guard new != nil, let name = model.current?.exercise.name else { return }
                 AccessibilityNotification.Announcement("Moved on to \(name)").post()
             }
-            // The spring behind every banner arriving or leaving, and the
-            // Undo that comes and goes on a Today row (task 3, #337). Keyed
-            // on the states that add or remove one, so a tick of the rest
-            // clock never re-runs it.
+            // The spring behind every banner arriving or leaving, the
+            // just-logged set's row among them (task 3, #337). Keyed on the
+            // states that add or remove one, so a tick of the rest clock
+            // never re-runs it.
             .animation(Theme.spring(reduceMotion: reduceMotion), value: model.rest?.startedAt)
             .animation(Theme.spring(reduceMotion: reduceMotion), value: model.recentlyLoggedSet?.id)
             .animation(Theme.spring(reduceMotion: reduceMotion), value: model.pendingAdvance?.id)
@@ -296,7 +296,7 @@ struct SessionView: View {
                 isShortScreen: height < 650
             )
             if !isCompact {
-                statusBanners
+                statusBanners(exercise, pinned: true)
             }
             if dynamicTypeSize.isAccessibilitySize {
                 // At accessibility text sizes the bar's controls outgrow the
@@ -399,7 +399,7 @@ struct SessionView: View {
                         ))
 
                 if includesStatus {
-                    statusBanners
+                    statusBanners(exercise, pinned: false)
                 }
 
                 if isFocusedOnPlates {
@@ -433,27 +433,9 @@ struct SessionView: View {
             .padding(.bottom, isCompact ? 12 : 24)
         }
         // Opening plates from further down the page would otherwise leave
-        // the lift's name scrolled away above the narrowed context. Closing
-        // them brings the just-logged row back into view: the context grew
-        // back under it, and its Undo is on that row (#337).
+        // the lift's name scrolled away above the narrowed context.
         .onChange(of: isFocusedOnPlates) { _, focused in
-            if focused {
-                proxy.scrollTo(exercise.id, anchor: .top)
-            } else if let logged = model.recentlyLoggedSet?.id {
-                proxy.scrollTo(logged)
-            }
-        }
-        // The row is the confirmation of a logged set and carries its Undo
-        // (#337), so it has to be on screen when the set lands. It used to
-        // be a banner pinned above the dock, always in view; the row is the
-        // last thing in a list that runs past the fold after a few sets
-        // (regular portrait), or sits under the plan card (compact). No
-        // anchor: scroll only as far as it takes to show the row, and not at
-        // all when it is already there, so logging a warmup rung from the
-        // ramp doesn't throw the ramp off the screen it was tapped on.
-        .onChange(of: model.recentlyLoggedSet?.id) { _, logged in
-            guard let logged else { return }
-            withAnimation(Theme.spring(reduceMotion: reduceMotion)) { proxy.scrollTo(logged) }
+            if focused { proxy.scrollTo(exercise.id, anchor: .top) }
         }
         }
     }
@@ -480,8 +462,11 @@ struct SessionView: View {
         }
     }
 
+    /// `pinned` is regular portrait, where these sit between the context and
+    /// the dock and need the context's own inset to line up with its rows;
+    /// everywhere else they are in the document, which insets them already.
     @ViewBuilder
-    private var statusBanners: some View {
+    private func statusBanners(_ exercise: SessionExercise, pinned: Bool) -> some View {
         // `heard` and `rest` are independent optionals on the model — a rest
         // can easily be running while a voice parse is awaiting confirmation.
         // These used to be `if / else if`, so the rest banner (and the
@@ -525,8 +510,39 @@ struct SessionView: View {
         // so it lives in the action bar's More menu beside Extra warmup
         // instead of spending a row on every set (critique, distill).
         //
-        // And no "Set logged" banner: the set's own Today row is the
-        // confirmation, and carries its Undo (#337).
+        // The set just logged, as the Today row it is, in the slot the
+        // "Set logged" banner held (#337). The row is the confirmation and
+        // carries its Undo, so nothing repeats its numbers; but it is not
+        // somewhere to scroll to. Pinned here it is on screen in every state
+        // the banner was — beside Next up, under the rest bar — without
+        // moving the lift's name or the cards above it, which a scroll to the
+        // end of the Today list did as soon as that list outgrew the screen.
+        if let set = slotSet(exercise) {
+            // In the document, under a card, the row sits 6pt closer than the
+            // document's 12: on an SE with Next up armed the full 12 left
+            // Undo's lower edge 4pt under the dock, and the card above cannot
+            // give the space back. Only the row moves; what is above it stays
+            // where it was.
+            let underCard = model.heard != nil || model.pendingAdvance != nil || model.autoAdvancedFrom != nil
+            setRow(exercise, number: exercise.loggedSets.count, set: set, isLatest: true)
+                .padding(.horizontal, pinned ? 20 : 0)
+                .padding(.vertical, pinned ? 8 : 0)
+                .padding(.top, pinned || !underCard ? 0 : -6)
+                .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
+        }
+    }
+
+    /// The set the status slot is showing, if any: the one the model still
+    /// offers to undo, when it is this lift's newest. Its row is drawn there
+    /// instead of in the Today list, and not at all while the plate row is
+    /// open (#216) — the narrowed context then shows it in the list, as its
+    /// one row, with Undo beside it.
+    private func slotSet(_ exercise: SessionExercise) -> SetRecord? {
+        guard !isFocusedOnPlates,
+              let recent = model.recentlyLoggedSet,
+              let newest = exercise.loggedSets.last,
+              newest.id == recent.id else { return nil }
+        return newest
     }
 
     // MARK: - Context above
@@ -1153,29 +1169,39 @@ struct SessionView: View {
 
     // MARK: - Set rows
 
+    /// The set in the status slot (`slotSet`) is left out: it is on screen
+    /// just below. When it is the only one, so is the whole section — neither
+    /// the caption nor "No sets yet", which would say there are none.
+    @ViewBuilder
     private func setRows(_ exercise: SessionExercise) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Today")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-
-            if exercise.loggedSets.isEmpty {
-                Text("No sets yet")
-                    .font(.body)
+        let slot = slotSet(exercise)
+        if slot == nil || exercise.loggedSets.count > 1 {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Today")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
-            } else {
-                ForEach(Array(exercise.loggedSets.enumerated()), id: \.element.id) { index, set in
-                    setRow(exercise, number: index + 1, set: set,
-                           isLatest: index == exercise.loggedSets.count - 1)
+                    .textCase(.uppercase)
+
+                if exercise.loggedSets.isEmpty {
+                    Text("No sets yet")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 6)
+                } else {
+                    ForEach(Array(exercise.loggedSets.enumerated()), id: \.element.id) { index, set in
+                        if set.id != slot?.id {
+                            setRow(exercise, number: index + 1, set: set,
+                                   isLatest: index == exercise.loggedSets.count - 1)
+                        }
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// One Today row, in either list.
+    /// One Today row — in either list, or in the status slot for the set just
+    /// logged.
     ///
     /// The newest row is where a just-logged set is confirmed, so it is the
     /// one that carries Undo and, for a record, which kind (#337). Undo's
@@ -1183,13 +1209,13 @@ struct SessionView: View {
     /// or a move to another lift, no timer (#319) — and only the newest row
     /// can offer it: `undoRecentlyLoggedSet` refuses anything else.
     ///
-    /// The plate row narrows the context to this one row (#216), whose height
-    /// was measured on an SE. Undo sits inside that height beside the set, so
-    /// it stays; the kind line is a second line and steps aside, leaving the
-    /// PR badge. At accessibility sizes Undo stacks under the set instead and
-    /// would cost the row height, so it steps aside there, as the banner did
-    /// whenever the plate row was open. The VoiceOver action costs no space
-    /// and stays in every case.
+    /// The plate row narrows the context to this one row (#216), in the list
+    /// rather than the slot, and its height was measured on an SE. Undo sits
+    /// inside that height beside the set, so it stays; the kind line is a
+    /// second line and steps aside, leaving the PR badge. At accessibility
+    /// sizes Undo stacks under the set instead and would cost the row height,
+    /// so it steps aside there, as the banner did whenever the plate row was
+    /// open. The VoiceOver action costs no space and stays in every case.
     private func setRow(_ exercise: SessionExercise, number: Int, set: SetRecord, isLatest: Bool) -> some View {
         let isOffered = isLatest && model.recentlyLoggedSet?.id == set.id
         return SetRow(
@@ -1205,27 +1231,41 @@ struct SessionView: View {
             showsUndoButton: !(isFocusedOnPlates && dynamicTypeSize.isAccessibilitySize),
             onEdit: { editingSet = ActiveSetEditTarget(record: set, exercise: exercise.exercise) }
         )
-        // The target for scrolling a freshly logged row into view.
-        .id(set.id)
     }
 
     /// The newest result is the one checked between sets. Earlier rows remain
     /// one disclosure away for correction, but no longer push it below the
     /// fold on the smallest screen.
+    ///
+    /// While the set just logged is in the status slot (`slotSet`) it is not
+    /// drawn here, and the "Latest set" caption goes with it; the disclosure
+    /// still holds the sets before it. If it is the only set, nothing is
+    /// drawn at all.
+    @ViewBuilder
     private func compactSetRows(_ exercise: SessionExercise) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // The caption goes while the plate row is open (#216): on an SE
-            // its line was the difference between the row clearing the
-            // action bar and being clipped by it.
-            if !isFocusedOnPlates {
-                Text("Latest set")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-            }
+        let slot = slotSet(exercise)
+        if slot == nil || exercise.loggedSets.count > 1 {
+            VStack(alignment: .leading, spacing: 8) {
+                if slot == nil {
+                    // The caption goes while the plate row is open (#216): on an SE
+                    // its line was the difference between the row clearing the
+                    // action bar and being clipped by it.
+                    if !isFocusedOnPlates {
+                        Text("Latest set")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                    }
 
-            if let latest = exercise.loggedSets.last {
-                setRow(exercise, number: exercise.loggedSets.count, set: latest, isLatest: true)
+                    if let latest = exercise.loggedSets.last {
+                        setRow(exercise, number: exercise.loggedSets.count, set: latest, isLatest: true)
+                    } else {
+                        Text("No sets yet")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 6)
+                    }
+                }
 
                 if exercise.loggedSets.count > 1 {
                     DisclosureGroup("Earlier sets (\(exercise.loggedSets.count - 1))") {
@@ -1241,14 +1281,9 @@ struct SessionView: View {
                     }
                     .font(.subheadline)
                 }
-            } else {
-                Text("No sets yet")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
