@@ -87,11 +87,14 @@ final class AppStore {
 ///   Target / Last time card — and no UI test can reach it by tapping,
 ///   because a set logged today shows as today's work instead. Isolated
 ///   store only, like the reset.
+/// - `-UITestFixture <name>` and `-UITestRoute <where>` open a screen in a
+///   known state. They're in `UITestLaunchRoutes.swift`, which the widget
+///   extension doesn't compile, because a route names the app's tabs.
 ///
 /// Debug-only. The file header of `UITestSupport.swift` used to argue against
 /// any test-only branch in startup because it would outlive the test; a
-/// release build does not contain this code at all, and nothing but a
-/// launch argument (which only Xcode and XCUITest pass) reaches it.
+/// release build does not contain this code at all, and only a launch
+/// argument reaches it (passed by Xcode, XCUITest or `simctl launch`).
 enum UITestLaunchState {
     static let isolatedStoreArgument = "-UITestIsolatedStore"
     static let resetArgument = "-UITestResetState"

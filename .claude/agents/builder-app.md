@@ -37,7 +37,8 @@ believed and acted on; absence does not.
 ## Rung 4 is yours, rung 5 is not
 
 You are the only builder whose changes can break the app build, so the
-simulator build is not optional for you.
+simulator build is not optional for you. Neither is looking at the screen you
+changed: see "Looking at a UI change" in `CLAUDE.md`.
 
 The simulator has no haptics, no APNs and no Health data, so it cannot settle
 anything about feel, push-driven sync or recovery. CloudKit export does work
