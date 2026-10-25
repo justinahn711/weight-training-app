@@ -40,10 +40,227 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         makeLogSetAvailable(app, logSet)
         logSet.tap()
 
-        let undo = app.buttons["Undo"]
+        // The set is confirmed by its own row, and Undo is on that row — not
+        // on a banner repeating it (#337).
+        let latest = app.buttons["session.set.latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "the logged set should be the newest row under Today")
+        let undo = app.buttons["session.set.latest.undo"]
         XCTAssertTrue(undo.waitForExistence(timeout: 5),
                       "Undo must be announced, not only drawn — it is the only correction path")
+        XCTAssertEqual(undo.label, "Undo")
+        assertUndo(undo, sitsBeside: latest)
+        assertNoLoggedSetBanner(app)
         undo.tap()
+        XCTAssertTrue(wait(for: latest, toMatch: "exists == false", timeout: 5),
+                      "Undo should take back the set whose row it sits on")
+        XCTAssertFalse(undo.exists, "with the set gone there is nothing left to undo")
+    }
+
+    /// Owner's gym test (#337): the stack read "1  20 lb × 20", then "Set
+    /// logged 20 lb × 20 · Undo", then "Log 20 lb × 20" — the same numbers
+    /// three times in ~200pt. The row and the dock's next-set button are the
+    /// two that belong; nothing else above the dock may repeat the numbers.
+    ///
+    /// Read off the row's own label rather than hard-coded, since a cold
+    /// lift's first weight is whatever one increment makes it.
+    func testLoggedSetNumbersAppearOnceAboveTheDock() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        makeLogSetAvailable(app, logSet)
+        logSet.tap()
+
+        let latest = app.buttons["session.set.latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "the logged set should have a row")
+        let numbers = try XCTUnwrap(Self.loadAndReps(in: latest.label),
+                                    "the newest row should read as load × reps (label: \(latest.label))")
+        // The rest bar springs in and the context scrolls the new row into
+        // view; frames are read after both.
+        XCTAssertTrue(app.buttons["session.set.latest.undo"].waitForExistence(timeout: 5))
+        Thread.sleep(forTimeInterval: 1)
+        attachScreenshot("337-logged-once")
+
+        assertNoLoggedSetBanner(app)
+        let barTop = app.otherElements["session.actionBar"].frame.minY
+        let repeats = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", numbers))
+            .allElementsBoundByIndex
+            .filter { !$0.frame.isEmpty && $0.frame.maxY <= barTop + 0.5 }
+        // The row and its own text sit inside the row's frame; a second
+        // copy elsewhere above the dock is the banner this issue removed.
+        let row = latest.frame.insetBy(dx: -1, dy: -1)
+        for element in repeats {
+            XCTAssertTrue(row.contains(element.frame),
+                          "\(numbers) is repeated outside the newest row above the dock: "
+                          + "\(element.elementType) id=\"\(element.identifier)\" label=\"\(element.label)\" frame=\(element.frame)")
+        }
+        XCTAssertFalse(repeats.isEmpty, "the newest row should show \(numbers) above the dock")
+    }
+
+    /// Undo has to be there when the hand reaches for it, on the smallest
+    /// supported screen, five working sets in. The banner was pinned and
+    /// always in view; the row is the last thing in a scrolling list, so
+    /// logging has to bring it into view (#337). Run on the SE and on an
+    /// iPhone 17: the regular layout scrolls the Today list, the compact one
+    /// shows only the newest set, and both must keep Undo on screen.
+    func testUndoIsOnScreenWithFiveWorkingSetsLogged() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        makeLogSetAvailable(app, logSet)
+
+        let latest = app.buttons["session.set.latest"]
+        for count in 1...5 {
+            tapWhenSettled(logSet)
+            XCTAssertTrue(wait(for: latest, toMatch: "label BEGINSWITH '\(count),'", timeout: 10),
+                          "set \(count) should be the newest row (label: \(latest.label))")
+        }
+
+        let undo = app.buttons["session.set.latest.undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "the newest row should carry Undo")
+        // Settled: the rest bar springs in and the row scrolls into view.
+        Thread.sleep(forTimeInterval: 1)
+        attachScreenshot("337-five-sets")
+        let window = app.windows.firstMatch.frame
+        let barTop = app.otherElements["session.actionBar"].frame.minY
+        let navBottom = app.navigationBars.firstMatch.frame.maxY
+        print("#337 five sets: window=\(window) latest=\(latest.frame) undo=\(undo.frame) "
+              + "navBar.maxY=\(navBottom) actionBar.minY=\(barTop)")
+        XCTAssertTrue(undo.isHittable, "Undo should be tappable without scrolling")
+        XCTAssertTrue(window.contains(undo.frame), "Undo should be wholly on screen (\(undo.frame) in \(window))")
+        XCTAssertLessThanOrEqual(undo.frame.maxY, barTop + 0.5, "Undo should sit wholly above the dock")
+        XCTAssertGreaterThanOrEqual(undo.frame.minY, navBottom - 0.5, "Undo should sit wholly below the navigation bar")
+        XCTAssertLessThanOrEqual(latest.frame.maxY, barTop + 0.5, "the newest row should sit wholly above the dock")
+        assertUndo(undo, sitsBeside: latest)
+
+        // One tap, and it took back the fifth set — not an older one.
+        undo.tap()
+        XCTAssertTrue(wait(for: latest, toMatch: "label BEGINSWITH '4,'", timeout: 5),
+                      "Undo should remove the fifth set and leave the fourth as the newest")
+    }
+
+    /// Warmup rungs get the same treatment as working sets (#337): the rung
+    /// tapped in the ramp becomes the newest Today row, and that row carries
+    /// Undo. Flat Bench with yesterday's 135 lb is the lift whose ramp exists
+    /// (a barbell, with a target); the session opens on a dumbbell press, and
+    /// a ramp is collapsed anywhere but the day's first lift.
+    func testLoggedWarmupRungGetsTheSameUndoOnItsRow() throws {
+        let app = launch(arguments: ["-UITestSeedYesterdayBench"])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let choose = app.buttons["session.exercise.choose"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 20))
+        tapWhenSettled(choose)
+        XCTAssertTrue(app.navigationBars["Workout exercises"].waitForExistence(timeout: 10))
+        let flatBench = app.buttons["Flat Bench"].firstMatch
+        XCTAssertTrue(flatBench.waitForExistence(timeout: 5))
+        tapWhenSettled(flatBench)
+
+        let disclosure = app.buttons["session.warmup.disclosure"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 10), "Flat Bench with a target should offer a warmup ramp")
+        revealInContext(app, disclosure)
+        if (disclosure.value as? String)?.hasPrefix("Collapsed") == true { tapWhenSettled(disclosure) }
+        let rung = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'session.warmup.log.'")).firstMatch
+        XCTAssertTrue(rung.waitForExistence(timeout: 5), "the expanded ramp should list its rungs")
+        revealInContext(app, rung)
+        tapWhenSettled(rung)
+
+        let latest = app.buttons["session.set.latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "the logged rung should be the newest row under Today")
+        XCTAssertTrue(latest.label.contains("Warmup"), "the row should be tagged as a warmup (label: \(latest.label))")
+        let undo = app.buttons["session.set.latest.undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "a warmup row carries Undo like any other")
+        assertUndo(undo, sitsBeside: latest)
+        assertNoLoggedSetBanner(app)
+        Thread.sleep(forTimeInterval: 1)
+        attachScreenshot("337-warmup-row")
+        XCTAssertTrue(undo.isHittable, "Undo should be tappable without scrolling after a warmup rung")
+
+        undo.tap()
+        XCTAssertTrue(wait(for: latest, toMatch: "exists == false", timeout: 5),
+                      "Undo should take back the warmup whose row it sits on")
+    }
+
+    /// A set that sets a record says which kind on its own row, where the
+    /// banner used to (#337). Yesterday's 40 lb on the first lift is the
+    /// history to beat; one increment up from the suggestion is heavier than
+    /// anything done before, so the headline is "heaviest ever".
+    func testJustLoggedRecordSaysWhichKindOnItsRow() throws {
+        let app = launch(arguments: ["-UITestSeedYesterday"])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        let heavier = app.buttons["session.weight.increment"]
+        XCTAssertTrue(heavier.waitForExistence(timeout: 5))
+        heavier.tap()
+        makeLogSetAvailable(app, logSet)
+        tapWhenSettled(logSet)
+
+        let kind = "Personal record · heaviest ever"
+        let latest = app.buttons["session.set.latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "the logged set should have a row")
+        XCTAssertTrue(app.buttons["session.set.latest.undo"].waitForExistence(timeout: 5),
+                      "a record row still carries Undo")
+        Thread.sleep(forTimeInterval: 1)
+        attachScreenshot("337-record-row")
+        XCTAssertTrue(latest.label.contains(kind),
+                      "the row should say which record it set (label: \(latest.label))")
+        assertNoLoggedSetBanner(app)
+        // Said once. A banner's copy would sit outside the row's frame.
+        let row = latest.frame.insetBy(dx: -1, dy: -1)
+        let saysKind = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", kind))
+            .allElementsBoundByIndex
+            .filter { !$0.frame.isEmpty }
+        XCTAssertFalse(saysKind.isEmpty)
+        for element in saysKind {
+            XCTAssertTrue(row.contains(element.frame),
+                          "the record kind is said outside the newest row: \(element.elementType) label=\"\(element.label)\" frame=\(element.frame)")
+        }
+    }
+
+    /// Undo lasts exactly as long as it did on the banner (#319): until the
+    /// next set replaces it or the lifter moves to another lift. No timer, so
+    /// nothing here waits for one.
+    func testUndoMovesToTheNextSetAndEndsWhenTheLiftChanges() throws {
+        let app = launch()
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        makeLogSetAvailable(app, logSet)
+
+        let latest = app.buttons["session.set.latest"]
+        let undo = app.buttons["session.set.latest.undo"]
+        tapWhenSettled(logSet)
+        XCTAssertTrue(wait(for: latest, toMatch: "label BEGINSWITH '1,'", timeout: 10))
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "the first set should carry Undo")
+
+        // The next set takes the offer with it: one Undo, on the newest row.
+        tapWhenSettled(logSet)
+        XCTAssertTrue(wait(for: latest, toMatch: "label BEGINSWITH '2,'", timeout: 10))
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "the second set should carry Undo")
+        XCTAssertEqual(
+            app.buttons.matching(identifier: "session.set.latest.undo").count, 1,
+            "only the newest row offers Undo"
+        )
+
+        // Moving to another lift ends it, and coming back does not revive it.
+        let next = app.buttons["session.exercise.next"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        tapWhenSettled(next)
+        let back = app.buttons["session.exercise.previous"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        tapWhenSettled(back)
+        XCTAssertTrue(wait(for: latest, toMatch: "label BEGINSWITH '2,'", timeout: 10),
+                      "both sets are still logged after leaving and returning")
+        XCTAssertFalse(undo.exists, "leaving the lift ends the offer; the sets themselves stay")
     }
 
     /// Back and Next exercise used to sit on separate rows — Back muted,
@@ -491,7 +708,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         XCTAssertTrue(logSet.waitForExistence(timeout: 5))
         makeLogSetAvailable(app, logSet)
         logSet.tap()
-        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5), "the set should have been logged")
+        XCTAssertTrue(app.buttons["session.set.latest.undo"].waitForExistence(timeout: 5), "the set should have been logged")
         // If that set finished the lift, the app offers the next one without
         // moving; staying is the lifter's choice, and the one this test needs.
         // Given a moment to appear rather than read once (#285).
@@ -507,8 +724,9 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         // can sit scrolled past the weight readout; bring it back first.
         if !plates.isHittable { logSet.swipeDown() }
         XCTAssertTrue(plates.isHittable, "Adjust plates should be tappable [\(sizeName)]")
-        // Settled first: right after a logged set, the rest bar and the
-        // "Set logged" banner are still springing in above it (#314).
+        // Settled first: right after a logged set, the rest bar is still
+        // springing in above it and the context is scrolling the new row
+        // into view (#314, #337).
         tapWhenSettled(plates)
         let plateRow = app.otherElements["session.plates.row"]
         XCTAssertTrue(plateRow.waitForExistence(timeout: 5), "tapping Adjust plates should open the plate row")
@@ -571,6 +789,49 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         }
     }
 
+    /// "1, 5 lb × 8" -> "5 lb × 8": the numbers a logged row shows, read from
+    /// its own label.
+    private static func loadAndReps(in label: String) -> String? {
+        label.range(of: #"[0-9][0-9.,]* [A-Za-z]+ × [0-9]+"#, options: .regularExpression)
+            .map { String(label[$0]) }
+    }
+
+    /// Undo sits on the newest row's own line, beside the edit button rather
+    /// than inside it (a button in another button's label never gets its own
+    /// taps), and does not overlap it.
+    private func assertUndo(_ undo: XCUIElement, sitsBeside row: XCUIElement,
+                            file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertLessThanOrEqual(abs(undo.frame.midY - row.frame.midY), row.frame.height / 2,
+                                 "Undo should be on the newest row's line (undo \(undo.frame), row \(row.frame))",
+                                 file: file, line: line)
+        XCTAssertGreaterThanOrEqual(undo.frame.minX, row.frame.maxX - 1,
+                                    "Undo should sit beside the row's edit button, not on top of it",
+                                    file: file, line: line)
+    }
+
+    /// The "Set logged" / "Warmup logged" banner is gone (#337): the row is
+    /// the confirmation. Matched on the banner's wording, which no row uses.
+    private func assertNoLoggedSetBanner(_ app: XCUIApplication,
+                                         file: StaticString = #filePath, line: UInt = #line) {
+        let banner = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH 'Set logged' OR label BEGINSWITH 'Warmup logged'"))
+            .firstMatch
+        XCTAssertFalse(banner.exists,
+                       "no banner should repeat the logged set (found \"\(banner.label)\")",
+                       file: file, line: line)
+    }
+
+    /// Scrolls the session's context until `element` can be tapped. The ramp
+    /// sits below the header and the plan card, so on a short screen it
+    /// starts under the dock.
+    private func revealInContext(_ app: XCUIApplication, _ element: XCUIElement) {
+        var swipes = 0
+        while !element.isHittable, swipes < 4 {
+            app.scrollViews.firstMatch.swipeUp()
+            swipes += 1
+        }
+    }
+
     /// Kept on a green run too: the screenshot is the evidence #216 asked for.
     private func attachScreenshot(_ name: String) {
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -610,7 +871,7 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         XCTAssertTrue(logSet.waitForExistence(timeout: 20))
         makeLogSetAvailable(app, logSet)
         logSet.tap()
-        XCTAssertTrue(app.buttons["Undo"].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.buttons["session.set.latest.undo"].waitForExistence(timeout: 5),
                       "the set should have been logged")
 
         // Relaunching is how this test gets out of the session and back to
