@@ -459,9 +459,12 @@ public final class StoredGymConfig {
                 trainingBlock: trainingBlockData.isEmpty
                     ? nil
                     : try decoded(TrainingBlockConfig?.self, from: trainingBlockData),
-                restDefaults: restDefaultsData.isEmpty
-                    ? .standard
-                    : try decoded(RestDefaults.self, from: restDefaultsData)
+                // Unlike the columns above, unreadable data here reads as the
+                // standard rests rather than failing the row: this is the least
+                // important setting on it, and a corrupt blob must not make a
+                // kilogram gym render as pounds (`GymSettings.refresh` falls
+                // back to `.standard` for the whole row on a throw).
+                restDefaults: (try? decoded(RestDefaults.self, from: restDefaultsData)) ?? .standard
             )
         } catch {
             throw StoreError.corruptRecord(entity: "GymConfig", id: id, underlying: error)

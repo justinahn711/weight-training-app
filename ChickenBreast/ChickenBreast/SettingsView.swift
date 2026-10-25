@@ -179,7 +179,7 @@ struct SettingsView: View {
             }
 
             if let store {
-                BackupSection(onRestored: onRestored, store: store)
+                BackupSection(onRestored: restored, store: store)
 
                 // Inside the same guard as backup, because the only thing that
                 // ever refreshes it needs the store. Shown without one it sits
@@ -429,8 +429,20 @@ struct SettingsView: View {
         } header: {
             Text("Rest")
         } footer: {
-            Text("What a lift rests for unless it has its own rest time, which it keeps. A change applies from your next rest.")
+            Text("Any lift without its own rest time uses these. A change applies from your next rest.")
         }
+    }
+
+    /// A restore writes the gym straight to the store, behind both caches.
+    /// `GymSettings` is what the session screen reads its rests from, and the
+    /// next `setRest` builds from it, so a stale one would rest at the old
+    /// numbers and then overwrite the restored ones. Done here, beside the
+    /// restore, rather than in `ContentView.refresh()`, which runs after every
+    /// session.
+    private func restored() {
+        if let store { GymSettings.shared.refresh(from: store) }
+        gym = GymSettings.shared.config
+        onRestored()
     }
 
     private func setRest(_ seconds: TimeInterval, for kind: RestDefaults.Kind) {

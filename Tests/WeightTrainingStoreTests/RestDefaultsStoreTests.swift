@@ -97,6 +97,28 @@ final class RestDefaultsStoreTests: XCTestCase {
         XCTAssertEqual(rests.accessory, 45)
     }
 
+    /// Rest data that can't be read must not hide the gym. `toDomain()` throwing
+    /// makes `GymSettings.refresh` fall back to the standard pound gym for the
+    /// whole row, so a kilogram lifter would suddenly see pounds over a setting
+    /// as minor as how long to rest.
+    func testUnreadableRestDataDoesNotHideTheRestOfTheGym() throws {
+        let rack = [25.0, 20, 10, 2.5]
+        let bar = Load(15, .kilograms)
+        for blob in ["not json at all", "[1, 2, 3]", #""three minutes""#, #"{"compound": "long"}"#] {
+            try store.saveGymConfig(GymConfig(
+                unit: .kilograms, availablePlates: rack, barWeight: bar, restDefaults: mine))
+            let row = try XCTUnwrap(try store.storedGymConfig())
+            row.restDefaultsData = Data(blob.utf8)
+            try store.saveChanges()
+
+            let gym = try store.gymConfig()
+            XCTAssertEqual(gym.restDefaults, .standard, "\(blob): unreadable rests read as the standard ones")
+            XCTAssertEqual(gym.unit, .kilograms, "\(blob): the unit is intact")
+            XCTAssertEqual(gym.availablePlates, rack, "\(blob): the rack is intact")
+            XCTAssertEqual(gym.barWeight, bar, "\(blob): the bar is intact")
+        }
+    }
+
     /// Two devices that each chose rests while offline collapse to the row
     /// written last, whole, like every other field on the gym.
     func testTwoDevicesDescribingRestsCollapseToTheLaterOne() throws {

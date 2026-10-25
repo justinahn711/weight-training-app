@@ -66,7 +66,7 @@ struct ExerciseConfigView: View {
     /// `overridesRest` is true; seeded from the override when there is one,
     /// or from today's default when there isn't, so turning the toggle on
     /// starts from a sane value rather than zero.
-    @State private var restSeconds: Double = 90
+    @State private var restSeconds: Double = RestDefaults.standard.accessory
 
     /// The empty weight as it is being typed, in `unit` (#99).
     ///
@@ -378,8 +378,8 @@ struct ExerciseConfigView: View {
                     // which default this lift follows and what it is now
                     // (#341), whether or not it's currently overridden.
                     Text(overridesRest
-                         ? "Otherwise it would follow your \(defaultRestName) default, \(RestChoices.label(defaultRestSeconds))."
-                         : "Follows your \(defaultRestName) default, \(RestChoices.label(defaultRestSeconds)), set in Settings.")
+                         ? "Without its own rest time, this lift would use the \(defaultRestName) rest from Settings: \(RestChoices.label(defaultRestSeconds))."
+                         : "Uses the \(defaultRestName) rest from Settings: \(RestChoices.label(defaultRestSeconds)).")
                 }
             }
             .navigationTitle(exercise.name)
