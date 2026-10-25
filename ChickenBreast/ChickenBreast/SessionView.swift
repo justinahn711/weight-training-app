@@ -73,7 +73,7 @@ struct SessionView: View {
             // did the thing" pattern, distinct from the rest-over buzz.
             .sensoryFeedback(.success, trigger: model.recentRecord?.set.id) { _, new in new != nil }
             // The haptic reaches a phone on the floor; neither it nor the
-            // gold banner reaches VoiceOver. Both moments that change what
+            // gold row reaches VoiceOver. Both moments that change what
             // the lifter should believe — a record, and the screen moving to
             // a different lift on its own — are announced, not just drawn.
             .onChange(of: model.recentRecord?.set.id) { _, new in
@@ -86,9 +86,10 @@ struct SessionView: View {
                 guard new != nil, let name = model.current?.exercise.name else { return }
                 AccessibilityNotification.Announcement("Moved on to \(name)").post()
             }
-            // The spring behind every banner arriving or leaving (task 3).
-            // Keyed on the states that add or remove one, so a tick of the
-            // rest clock never re-runs it.
+            // The spring behind every banner arriving or leaving, and the
+            // Undo that comes and goes on a Today row (task 3, #337). Keyed
+            // on the states that add or remove one, so a tick of the rest
+            // clock never re-runs it.
             .animation(Theme.spring(reduceMotion: reduceMotion), value: model.rest?.startedAt)
             .animation(Theme.spring(reduceMotion: reduceMotion), value: model.recentlyLoggedSet?.id)
             .animation(Theme.spring(reduceMotion: reduceMotion), value: model.pendingAdvance?.id)
@@ -432,9 +433,27 @@ struct SessionView: View {
             .padding(.bottom, isCompact ? 12 : 24)
         }
         // Opening plates from further down the page would otherwise leave
-        // the lift's name scrolled away above the narrowed context.
+        // the lift's name scrolled away above the narrowed context. Closing
+        // them brings the just-logged row back into view: the context grew
+        // back under it, and its Undo is on that row (#337).
         .onChange(of: isFocusedOnPlates) { _, focused in
-            if focused { proxy.scrollTo(exercise.id, anchor: .top) }
+            if focused {
+                proxy.scrollTo(exercise.id, anchor: .top)
+            } else if let logged = model.recentlyLoggedSet?.id {
+                proxy.scrollTo(logged)
+            }
+        }
+        // The row is the confirmation of a logged set and carries its Undo
+        // (#337), so it has to be on screen when the set lands. It used to
+        // be a banner pinned above the dock, always in view; the row is the
+        // last thing in a list that runs past the fold after a few sets
+        // (regular portrait), or sits under the plan card (compact). No
+        // anchor: scroll only as far as it takes to show the row, and not at
+        // all when it is already there, so logging a warmup rung from the
+        // ramp doesn't throw the ramp off the screen it was tapped on.
+        .onChange(of: model.recentlyLoggedSet?.id) { _, logged in
+            guard let logged else { return }
+            withAnimation(Theme.spring(reduceMotion: reduceMotion)) { proxy.scrollTo(logged) }
         }
         }
     }
@@ -470,8 +489,7 @@ struct SessionView: View {
         // long as the heard banner was up, and did not return if the rest
         // ended while it was hidden. That read as "the rest timer vanished"
         // (#173, first half) even though the timer itself was never touched.
-        // Independent `if`s let both stack, the same way the logged-set
-        // banner already stacks below either of them.
+        // Independent `if`s let both stack.
         if let heard = model.heard {
             HeardBanner(
                 heard: heard,
@@ -506,18 +524,9 @@ struct SessionView: View {
         // control, relocated): a manual rest is a once-a-session correction,
         // so it lives in the action bar's More menu beside Extra warmup
         // instead of spending a row on every set (critique, distill).
-        // Hidden, not dismissed, while the plate row is open: it repeats the
-        // latest set row the narrowed context already shows, and its Undo is
-        // back the moment the row closes.
-        if let record = model.recentlyLoggedSet, !isFocusedOnPlates {
-            LoggedSetBanner(
-                record: record,
-                personalRecord: model.recentRecord?.set.id == record.id ? model.recentRecord : nil,
-                unit: gym.unit,
-                onUndo: { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoRecentlyLoggedSet(id: record.id) } }
-            )
-            .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
-        }
+        //
+        // And no "Set logged" banner: the set's own Today row is the
+        // confirmation, and carries its Undo (#337).
     }
 
     // MARK: - Context above
@@ -1158,25 +1167,46 @@ struct SessionView: View {
                     .padding(.vertical, 6)
             } else {
                 ForEach(Array(exercise.loggedSets.enumerated()), id: \.element.id) { index, set in
-                    Button {
-                        editingSet = ActiveSetEditTarget(
-                            record: set,
-                            exercise: exercise.exercise
-                        )
-                    } label: {
-                        SetRow(number: index + 1, set: set, isRecord: model.recordSetIDs.contains(set.id))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Edits this logged set")
-                    // Only the newest row is named: it's the one #216 says
-                    // has to stay in view while the plate row is open.
-                    .accessibilityIdentifier(
-                        index == exercise.loggedSets.count - 1 ? "session.set.latest" : ""
-                    )
+                    setRow(exercise, number: index + 1, set: set,
+                           isLatest: index == exercise.loggedSets.count - 1)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One Today row, in either list.
+    ///
+    /// The newest row is where a just-logged set is confirmed, so it is the
+    /// one that carries Undo and, for a record, which kind (#337). Undo's
+    /// lifetime is still the model's `recentlyLoggedSet` — until the next set
+    /// or a move to another lift, no timer (#319) — and only the newest row
+    /// can offer it: `undoRecentlyLoggedSet` refuses anything else.
+    ///
+    /// The plate row narrows the context to this one row (#216), whose height
+    /// was measured on an SE. Undo sits inside that height beside the set, so
+    /// it stays; the kind line is a second line and steps aside, leaving the
+    /// PR badge. At accessibility sizes Undo stacks under the set instead and
+    /// would cost the row height, so it steps aside there, as the banner did
+    /// whenever the plate row was open. The VoiceOver action costs no space
+    /// and stays in every case.
+    private func setRow(_ exercise: SessionExercise, number: Int, set: SetRecord, isLatest: Bool) -> some View {
+        let isOffered = isLatest && model.recentlyLoggedSet?.id == set.id
+        return SetRow(
+            number: number,
+            set: set,
+            isRecord: model.recordSetIDs.contains(set.id),
+            isLatest: isLatest,
+            justSetRecord: isOffered && !isFocusedOnPlates && model.recentRecord?.set.id == set.id
+                ? model.recentRecord : nil,
+            onUndo: isOffered
+                ? { withAnimation(Theme.spring(reduceMotion: reduceMotion)) { model.undoRecentlyLoggedSet(id: set.id) } }
+                : nil,
+            showsUndoButton: !(isFocusedOnPlates && dynamicTypeSize.isAccessibilitySize),
+            onEdit: { editingSet = ActiveSetEditTarget(record: set, exercise: exercise.exercise) }
+        )
+        // The target for scrolling a freshly logged row into view.
+        .id(set.id)
     }
 
     /// The newest result is the one checked between sets. Earlier rows remain
@@ -1195,15 +1225,7 @@ struct SessionView: View {
             }
 
             if let latest = exercise.loggedSets.last {
-                Button {
-                    editingSet = ActiveSetEditTarget(record: latest, exercise: exercise.exercise)
-                } label: {
-                    SetRow(number: exercise.loggedSets.count, set: latest,
-                           isRecord: model.recordSetIDs.contains(latest.id))
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Edits this logged set")
-                .accessibilityIdentifier("session.set.latest")
+                setRow(exercise, number: exercise.loggedSets.count, set: latest, isLatest: true)
 
                 if exercise.loggedSets.count > 1 {
                     DisclosureGroup("Earlier sets (\(exercise.loggedSets.count - 1))") {
@@ -1212,17 +1234,7 @@ struct SessionView: View {
                                 Array(exercise.loggedSets.dropLast().enumerated()),
                                 id: \.element.id
                             ) { index, set in
-                                Button {
-                                    editingSet = ActiveSetEditTarget(
-                                        record: set,
-                                        exercise: exercise.exercise
-                                    )
-                                } label: {
-                                    SetRow(number: index + 1, set: set,
-                                           isRecord: model.recordSetIDs.contains(set.id))
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityHint("Edits this logged set")
+                                setRow(exercise, number: index + 1, set: set, isLatest: false)
                             }
                         }
                         .padding(.top, 8)
@@ -1795,69 +1807,6 @@ private struct PartialFinishSheet: View {
     }
 }
 
-/// A short, scoped recovery action for the set that was just written (#8).
-///
-/// Naming the exact set answers "what will this remove?" before the tap. It
-/// stays until the next set replaces it or the lift changes; older
-/// corrections have a safer, explicit home in Today.
-private struct LoggedSetBanner: View {
-    let record: SetRecord
-    /// Set when this set set one (task 2): the banner turns gold, says
-    /// which record, and the phone buzzes once (see `sensoryFeedback` on
-    /// the session body).
-    var personalRecord: PersonalRecord? = nil
-    let unit: MassUnit
-    let onUndo: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: personalRecord == nil ? "checkmark.circle.fill" : "trophy.fill")
-                .foregroundStyle(personalRecord == nil ? Theme.done : Theme.record)
-                .contentTransition(.symbolEffect(.replace))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(personalRecord == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Theme.record))
-                Text("\(record.load.formatted(in: unit)) × \(record.reps)")
-                    .font(.body.weight(.semibold))
-            }
-
-            Spacer(minLength: 8)
-
-            Button("Undo", action: onUndo)
-                .font(.body.weight(.semibold))
-                .buttonStyle(.bordered)
-                .tint(Theme.quietTint)
-                .controlSize(.large)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        // `.fill.tertiary` rather than `.bar`: on `.bar` an ordinary logged
-        // set was indistinguishable from the action bar beneath it.
-        .background(personalRecord == nil ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(Theme.record.opacity(0.16)))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "\(title), "
-            + "\(record.load.formatted(in: unit)), \(record.reps) reps"
-        )
-        .accessibilityAction(named: "Undo logged set", onUndo)
-        // No expiry timer. It used to vanish after 8 seconds — shorter than
-        // the walk back from the rack, and too short to reach through
-        // VoiceOver's actions menu (WCAG 2.2.1). It now stays until the next
-        // set replaces it or the lift changes, both handled by the model.
-    }
-
-    private var title: String {
-        guard let personalRecord else { return record.isWarmup ? "Warmup logged" : "Set logged" }
-        switch personalRecord.kind {
-        case .heaviest: return "Personal record · heaviest ever"
-        case .reps(_, let load): return "Personal record · most reps at \(load.formatted(in: unit))"
-        case .estimatedMax: return "Personal record · best estimated max"
-        }
-    }
-}
-
 /// The move the session is about to make on its own (task 4): shown for the
 /// whole rest after the set that matched last time's count, so it is never a
 /// surprise. `Stay` is the big target — it is the one that has to be easy to
@@ -2182,31 +2131,108 @@ private struct WeightEntryTarget: Identifiable {
 
 /// One logged set. Warmups are visually demoted — they're kept in the same list
 /// so the day reads in document order, but they never count.
+///
+/// The row owns its edit button so that the newest one can sit beside an
+/// Undo (#337). They are siblings, not one inside the other's label: a button
+/// in another button's label never gets its own taps (see `WarmupBlock`). The
+/// card is drawn around both, so the pair reads as one row.
+///
+/// Undo is a short-lived acknowledgement of the action that just happened
+/// (#8): naming the exact set answers "what will this remove?" before the
+/// tap, because it is on that set's row. The model decides how long it lasts —
+/// until the next set replaces it or the lift changes, never a timer (#319).
 private struct SetRow: View {
     private var gym: GymSettings { .shared }
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let number: Int
     let set: SetRecord
     var isRecord = false
+    /// The newest row, which the UI tests and the plate row (#216) find by name.
+    var isLatest = false
+    /// Set when this set just set a record (task 2): the row turns gold and
+    /// says which, and the phone buzzes once (see `sensoryFeedback` on the
+    /// session body). Older rows keep the generic PR badge.
+    var justSetRecord: PersonalRecord? = nil
+    /// Present while the model still offers to undo this set.
+    var onUndo: (() -> Void)? = nil
+    /// False while the plate row narrows the context to this row at a size
+    /// where the button would not fit inside its height.
+    var showsUndoButton = true
+    let onEdit: () -> Void
 
     var body: some View {
+        // Stacked at accessibility sizes, where the set's own text already
+        // wraps and a button beside it would squeeze it further.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+            : AnyLayout(HStackLayout(spacing: 0))
+        layout {
+            Button(action: onEdit) { content }
+                .buttonStyle(.plain)
+                .accessibilityHint("Edits this logged set")
+                // Only the newest row is named: it's the one #216 says
+                // has to stay in view while the plate row is open.
+                .accessibilityIdentifier(isLatest ? "session.set.latest" : "")
+                // Named, so VoiceOver reads "Undo logged set" on the row it
+                // would remove, whether or not the button is drawn.
+                .accessibilityActions {
+                    if let onUndo { Button("Undo logged set", action: onUndo) }
+                }
+
+            if showsUndoButton, let onUndo {
+                Button("Undo", action: onUndo)
+                    .font(.body.weight(.semibold))
+                    .buttonStyle(QuietCapsuleButtonStyle(minHeight: 44))
+                    .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 12 : 8)
+                    .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
+                    .accessibilityHint("Takes back the set you just logged")
+                    .accessibilityIdentifier("session.set.latest.undo")
+            }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(justSetRecord == nil
+                      ? AnyShapeStyle(.fill.quinary)
+                      : AnyShapeStyle(Theme.record.opacity(0.16)))
+                .opacity(set.isWarmup ? 0.6 : 1)
+        }
+    }
+
+    private var content: some View {
         HStack(spacing: 12) {
             Text("\(number)")
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 22, alignment: .trailing)
 
-            Text("\(set.load.formatted(in: gym.unit)) × \(set.reps)")
-                .font(.title3.weight(.medium).monospacedDigit())
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 12) {
+                    Text("\(set.load.formatted(in: gym.unit)) × \(set.reps)")
+                        .font(.title3.weight(.medium).monospacedDigit())
 
-            if isRecord {
-                Text("PR")
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(Theme.recordText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Theme.record, in: Capsule())
-                    .accessibilityLabel("Personal record")
+                    // The kind line says it better, so the badge steps aside.
+                    if isRecord, justSetRecord == nil {
+                        Text("PR")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(Theme.recordText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Theme.record, in: Capsule())
+                            .accessibilityLabel("Personal record")
+                    }
+                }
+
+                if let justSetRecord {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trophy.fill")
+                            .accessibilityHidden(true)
+                        Text(title(for: justSetRecord))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.record)
+                }
             }
 
             Spacer()
@@ -2223,8 +2249,19 @@ private struct SetRow: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 12)
-        .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        // The set's own text is demoted for a warmup; Undo, outside this,
+        // is not — it has to stay as legible as any other control.
         .opacity(set.isWarmup ? 0.6 : 1)
+    }
+
+    private func title(for record: PersonalRecord) -> String {
+        switch record.kind {
+        case .heaviest: return "Personal record · heaviest ever"
+        case .reps(_, let load): return "Personal record · most reps at \(load.formatted(in: gym.unit))"
+        case .estimatedMax: return "Personal record · best estimated max"
+        }
     }
 }
 
@@ -3531,6 +3568,11 @@ private struct WeightEntrySheet: View {
 /// `Theme.quietTint` gives, drawn here because the system contrast audit
 /// failed the bordered version of Skip on the SE simulator (#276).
 private struct QuietCapsuleButtonStyle: ButtonStyle {
+    /// A tap target taller than the capsule drawn in it (#337). Undo sits in
+    /// a row 44pt tall, so the target fills it while the capsule keeps the
+    /// size Skip's has. Zero leaves the capsule as the whole target.
+    var minHeight: CGFloat = 0
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(.primary)
@@ -3539,6 +3581,7 @@ private struct QuietCapsuleButtonStyle: ButtonStyle {
             // Opaque, the grey `.bordered` rendered on the rest card. An
             // 18% white overlay of the same colour still failed the SE audit.
             .background(Color(white: configuration.isPressed ? 0.36 : 0.27), in: Capsule())
-            .contentShape(Capsule())
+            .frame(minHeight: minHeight > 0 ? minHeight : nil)
+            .contentShape(minHeight > 0 ? AnyShape(Rectangle()) : AnyShape(Capsule()))
     }
 }

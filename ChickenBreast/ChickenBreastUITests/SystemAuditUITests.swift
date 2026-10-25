@@ -132,12 +132,12 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
                       "matching yesterday's one set should offer the next lift")
         // Everything but contrast, here only. With a set plan the card is
         // tall enough that the rest of the session sits under the Next up
-        // card, the Set logged banner and the action bar, and the contrast
-        // audit samples it through their glass: it reported "No sets yet"
-        // (held as content under chrome, #276) and then the same issue with
-        // no element at all, which nothing can hold. The lift library's audit
-        // splits the same way for the same reason. These controls' contrast
-        // is audited by the three session audits above.
+        // card and the action bar, and the contrast audit samples it through
+        // their glass: it reported "No sets yet" (held as content under
+        // chrome, #276) and then the same issue with no element at all,
+        // which nothing can hold. The lift library's audit splits the same
+        // way for the same reason. These controls' contrast is audited by
+        // the three session audits above.
         var contrastless = XCUIAccessibilityAuditType.all
         contrastless.remove(.contrast)
         var issues = try audit(app, only: contrastless)
@@ -152,6 +152,35 @@ final class SystemAuditUITests: ChickenBreastUITestCase {
                       "after a working set the card should show the collapsed line or the plan's next set")
         issues += try audit(app, only: contrastless)
         if !issues.isEmpty { print("Session screen (history, after a set) a11y backlog:\n" + issues.joined(separator: "\n")) }
+    }
+
+    /// The newest row after a set that set a record (#337): gold, two lines,
+    /// with the kind spelled out and Undo beside it. The row is the only
+    /// place a just-logged set is shown now, so the one state where it is
+    /// taller and tinted is audited too — hit regions, clipping and Dynamic
+    /// Type, and contrast on the gold line against its tint. Yesterday's
+    /// 40 lb is the history to beat; one increment up is "heaviest ever".
+    func testSessionScreenWithARecordRowPassesSystemAudit() throws {
+        let app = launch(arguments: ["-UITestSeedYesterday"])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        let heavier = app.buttons["session.weight.increment"]
+        XCTAssertTrue(heavier.waitForExistence(timeout: 5))
+        heavier.tap()
+        makeLogSetAvailable(app, logSet)
+        tapWhenSettled(logSet)
+        // Matching yesterday's one set offers the next lift; Stay clears it
+        // so the audit sees the row, not a card over it.
+        let stay = app.buttons["session.nextUp.stay"]
+        if wait(for: stay, toMatch: "hittable == true", timeout: 10) { stay.tap() }
+        let row = app.buttons["session.set.latest"]
+        XCTAssertTrue(wait(for: row, toMatch: "label CONTAINS 'Personal record'", timeout: 10),
+                      "the logged set should say which record it set (label: \(row.label))")
+        XCTAssertTrue(app.buttons["session.set.latest.undo"].waitForExistence(timeout: 5))
+        let issues = try audit(app)
+        if !issues.isEmpty { print("Session screen (record row) a11y backlog:\n" + issues.joined(separator: "\n")) }
     }
 
     /// The lift library is the second door into `ExerciseConfigView` (#178)

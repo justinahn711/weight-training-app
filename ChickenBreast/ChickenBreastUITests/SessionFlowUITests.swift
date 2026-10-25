@@ -144,6 +144,52 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
                       "Undo should remove the fifth set and leave the fourth as the newest")
     }
 
+    /// At the largest text size the set row stacks Undo under the set rather
+    /// than beside it. Undo is then on screen and tappable, and still takes
+    /// the set back (#337).
+    ///
+    /// With the rest skipped first, on purpose: at this size a running rest
+    /// card is ~220pt tall and leaves the context a strip about 20pt high on
+    /// an SE, so nothing in it is visible, whether it is the Undo on a row or
+    /// the banner that used to hold it. That squeeze belongs to the rest card
+    /// (#339), not to this row; the named VoiceOver action is not affected.
+    func testUndoIsReachableAtAccessibilityTextOnceTheRestIsOutOfTheWay() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(arguments: [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ])
+        try openPushDay(app)
+        startSessionIfPreviewed(app)
+        let logSet = app.buttons["session.log-set"]
+        XCTAssertTrue(logSet.waitForExistence(timeout: 20), "the session screen should be up")
+        makeLogSetAvailable(app, logSet)
+        tapWhenSettled(logSet)
+
+        let latest = app.buttons["session.set.latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5), "the logged set should have a row")
+        let skip = app.buttons["Skip"]
+        XCTAssertTrue(skip.waitForExistence(timeout: 5), "a working set should start a rest")
+        tapWhenSettled(skip)
+        XCTAssertTrue(wait(for: skip, toMatch: "exists == false", timeout: 5), "Skip should end the rest")
+        let undo = app.buttons["session.set.latest.undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "the newest row should carry Undo")
+        Thread.sleep(forTimeInterval: 1)
+        attachScreenshot("337-undo-AccessibilityXXXL")
+        let window = app.windows.firstMatch.frame
+        let barTop = app.otherElements["session.actionBar"].frame.minY
+        let navBottom = app.navigationBars.firstMatch.frame.maxY
+        print("#337 AccessibilityXXXL: window=\(window) latest=\(latest.frame) undo=\(undo.frame) "
+              + "navBar.maxY=\(navBottom) actionBar.minY=\(barTop) logSet=\(logSet.frame)")
+        XCTAssertTrue(undo.isHittable, "Undo should be tappable without scrolling at AccessibilityXXXL")
+        XCTAssertTrue(window.contains(undo.frame), "Undo should be wholly on screen (\(undo.frame) in \(window))")
+        XCTAssertGreaterThanOrEqual(undo.frame.minY, navBottom - 0.5, "Undo should sit below the navigation bar")
+        XCTAssertLessThanOrEqual(undo.frame.maxY, barTop + 0.5, "Undo should sit above the action bar")
+        undo.tap()
+        XCTAssertTrue(wait(for: latest, toMatch: "exists == false", timeout: 5),
+                      "Undo should take back the set whose row it sits on")
+    }
+
     /// Warmup rungs get the same treatment as working sets (#337): the rung
     /// tapped in the ramp becomes the newest Today row, and that row carries
     /// Undo. Flat Bench with yesterday's 135 lb is the lift whose ramp exists
