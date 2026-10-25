@@ -220,9 +220,11 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
     /// the row. With the rest skipped first, on purpose: a running rest card
     /// is ~220pt tall and leaves the context a strip about 20pt high on an SE,
     /// so nothing in it is visible (#339). And with the rest gone, the
-    /// header alone is most of what is left, so on an SE the row — directly
-    /// under it, where the banner was — starts at the dock and Undo is one
-    /// scroll of the context away. On an iPhone 17 it is on screen as it is.
+    /// header alone is most of what is left, and the stacked row is ~170pt
+    /// under it, where the banner was: Undo's lower edge starts 64pt under the
+    /// dock on an iPhone 17 and 142pt under it on an SE, so it is one short
+    /// scroll of the context away on both. The test makes that scroll and
+    /// prints the frames before and after.
     func testUndoIsReachableAtAccessibilityTextOnceTheRestIsOutOfTheWay() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = launch(arguments: [
@@ -247,16 +249,23 @@ final class SessionFlowUITests: ChickenBreastUITestCase {
         Thread.sleep(forTimeInterval: 1)
         let barTop = app.otherElements["session.actionBar"].frame.minY
         let navBottom = app.navigationBars.firstMatch.frame.maxY
+        // One slow drag of just the distance it takes, not a swipe: a swipe
+        // flings the short context well past the row. Undo's lower edge has to
+        // clear the dock, with a little air.
         var swipes = 0
-        while (undo.frame.maxY > barTop + 0.5 || !undo.isHittable), swipes < 3 {
-            app.scrollViews.firstMatch.swipeUp()
-            swipes += 1
+        let before = undo.frame
+        if undo.frame.maxY > barTop + 0.5 || !undo.isHittable {
+            let context = app.scrollViews.firstMatch
+            let start = context.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
+            let end = start.withOffset(CGVector(dx: 0, dy: -(undo.frame.maxY - barTop + 16)))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.5)
+            swipes = 1
+            Thread.sleep(forTimeInterval: 1)
         }
         attachScreenshot("337-undo-AccessibilityXXXL")
         let window = app.windows.firstMatch.frame
-        print("#337 AccessibilityXXXL: window=\(window) scrolls=\(swipes) latest=\(latest.frame) undo=\(undo.frame) "
+        print("#337 AccessibilityXXXL: window=\(window) scrolls=\(swipes) undoBefore=\(before) latest=\(latest.frame) undo=\(undo.frame) "
               + "navBar.maxY=\(navBottom) actionBar.minY=\(barTop) logSet=\(logSet.frame)")
-        XCTAssertLessThanOrEqual(swipes, 1, "Undo should be at most one scroll away at AccessibilityXXXL")
         XCTAssertTrue(undo.isHittable, "Undo should be tappable at AccessibilityXXXL")
         XCTAssertTrue(window.contains(undo.frame), "Undo should be wholly on screen (\(undo.frame) in \(window))")
         XCTAssertGreaterThanOrEqual(undo.frame.minY, navBottom - 0.5, "Undo should sit below the navigation bar")
