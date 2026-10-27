@@ -259,19 +259,20 @@ extension TrainingStore {
 
     /// The gym the file was written in, merged into the one row here.
     ///
-    /// The row holds three things the lifter chooses separately — the rack
-    /// (unit, plates, bar), the split, and the weekly target — so each is
-    /// settled on its own: **the phone's wins, unless it is still what a fresh
-    /// install starts with.** That exception is the stock-seed one again. A
-    /// fresh install forces a split pick before restore is reachable, and that
-    /// writes a row carrying the standard pound rack nobody chose; keeping it
-    /// would let `reconcileGym()` re-rack a kilogram lifter's restored lifts to
-    /// pounds at the next launch (#67, #73). The split they just picked is a
-    /// choice, and stays.
+    /// The row holds several things the lifter chooses separately — the rack
+    /// (unit, plates, bar), the split, the weekly target, and since #341 the
+    /// default rests — so each is settled on its own: **the phone's wins,
+    /// unless it is still what a fresh install starts with.** That exception
+    /// is the stock-seed one again. A fresh install forces a split pick before
+    /// restore is reachable, and that writes a row carrying the standard pound
+    /// rack nobody chose; keeping it would let `reconcileGym()` re-rack a
+    /// kilogram lifter's restored lifts to pounds at the next launch (#67,
+    /// #73). The split they just picked is a choice, and stays.
     ///
     /// Known edge: a lifter who switched *to* exactly the standard pound rack
-    /// (or back to a target of three) after the export gets the file's value
-    /// back for that group. Nothing on the row tells that apart from a default.
+    /// (or back to a target of three, or to 3:00 and 1:00 rests) after the
+    /// export gets the file's value back for that group. Nothing on the row
+    /// tells that apart from a default.
     ///
     /// Written straight to the row rather than through `saveGymConfig`, which
     /// re-racks every lift that follows the gym — exactly what must not happen
@@ -311,6 +312,13 @@ extension TrainingStore {
             merged.volumeBudgets = theirs.volumeBudgets
         }
         if mine.trainingBlock == nil { merged.trainingBlock = theirs.trainingBlock }
+        // Rest defaults (#341), on the same rule again: a phone still at the
+        // 3:00 / 1:00 a fresh install starts with has not chosen them, and the
+        // file's rests should win over that, never over ones set on this phone.
+        // Without this line a restore would silently drop the setting.
+        if mine.restDefaults == fresh.restDefaults {
+            merged.restDefaults = theirs.restDefaults
+        }
 
         guard merged != mine else { return false }
         // The row now holds this phone's choices too, some made after the

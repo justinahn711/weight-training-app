@@ -107,6 +107,16 @@ struct LogTargetSetIntent: LiveActivityIntent {
             startedAt: draft.startedAt
         )
 
+        // The lifter's default rests come from the store, not from
+        // `GymSettings`: this runs in a process that may not have refreshed
+        // that cache since Settings last changed them, and a rest that
+        // disagrees with the one the session screen would have started is
+        // exactly what this has to avoid (#341).
+        let defaults = (try? store.gymConfig())?.restDefaults ?? .standard
+        // A lift that can't be read has no kind to follow; the compound
+        // default is the longer of the two, so the guess errs towards resting.
+        let rest = (try? store.exercise(id: id))?.restTarget(using: defaults) ?? defaults.compound
+
         // The lock screen has to reflect the tap immediately: rest restarts and
         // the set count and per-set target move. Nothing else is watching — the
         // session screen isn't on screen, or the phone wouldn't be locked.
@@ -115,9 +125,7 @@ struct LogTargetSetIntent: LiveActivityIntent {
             setID: setID,
             nextTarget: nextTarget,
             restStartedAt: saved.record.performedAt,
-            restEndsAt: saved.record.performedAt.addingTimeInterval(
-                (try? store.exercise(id: id))?.restTarget ?? 180
-            )
+            restEndsAt: saved.record.performedAt.addingTimeInterval(rest)
         )
         return .result()
     }

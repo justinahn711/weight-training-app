@@ -68,6 +68,7 @@ struct SettingsView: View {
                 gymSection
                 plateSection
                 liftLibrarySection
+                restSection
             }
 
             Section {
@@ -178,7 +179,7 @@ struct SettingsView: View {
             }
 
             if let store {
-                BackupSection(onRestored: onRestored, store: store)
+                BackupSection(onRestored: restored, store: store)
 
                 // Inside the same guard as backup, because the only thing that
                 // ever refreshes it needs the store. Shown without one it sits
@@ -399,6 +400,71 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Default rests (#341)
+
+    /// How long to rest when a lift has no rest time of its own: one choice for
+    /// compound lifts, one for accessories.
+    ///
+    /// The same choices, chips and wording as a lift's own rest in its settings
+    /// (`RestChoices`, `ChoiceRow`), so the two screens read alike. Saved
+    /// through the gym but deliberately not through `commit(_:)`, whose
+    /// `reracked` count drives the plate section's "Re-racked N lifts" footer:
+    /// a rest time is not a rack, and changing one must not make that footer
+    /// speak.
+    private var restSection: some View {
+        Section {
+            ForEach(RestDefaults.Kind.allCases, id: \.self) { kind in
+                ChoiceRow(
+                    caption: kind.settingsCaption,
+                    values: RestChoices.values,
+                    isSelected: { $0 == gym.restDefaults.seconds(for: kind) },
+                    label: RestChoices.label,
+                    onSelect: { setRest($0, for: kind) }
+                )
+                // `.contain` keeps each chip's own identifier and gives the
+                // row one of its own, rather than stamping the row's over them.
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("settings.rest.\(kind.settingsIdentifier)")
+            }
+        } header: {
+            Text("Rest")
+        } footer: {
+            Text("Any lift without its own rest time uses these. A change applies from your next rest.")
+        }
+    }
+
+    /// A restore writes the gym straight to the store, behind both caches.
+    /// `GymSettings` is what the session screen reads its rests from, and the
+    /// next `setRest` builds from it, so a stale one would rest at the old
+    /// numbers and then overwrite the restored ones. Done here, beside the
+    /// restore, rather than in `ContentView.refresh()`, which runs after every
+    /// session.
+    private func restored() {
+        if let store { GymSettings.shared.refresh(from: store) }
+        gym = GymSettings.shared.config
+        onRestored()
+    }
+
+    private func setRest(_ seconds: TimeInterval, for kind: RestDefaults.Kind) {
+        guard let store else { return }
+        // Built from the shared config, not from the `gym` copy, for the same
+        // reason every other edit here is: a sync that landed while this
+        // screen was open must not be overwritten by a stale snapshot.
+        var updated = GymSettings.shared.config
+        switch kind {
+        case .compound: updated.restDefaults.compound = seconds
+        case .accessory: updated.restDefaults.accessory = seconds
+        }
+        do {
+            try GymSettings.shared.save(updated, to: store)
+        } catch {
+            // Not saved, so the chips go back to what is. Showing the new
+            // value over an unchanged setting would be the app saying a rest
+            // it will not use.
+        }
+        gym = GymSettings.shared.config
+    }
+
     /// Says that exceptions exist, and how many.
     ///
     /// The old text ended "unless it's been given a rack of its own", which is
@@ -459,7 +525,11 @@ struct SettingsView: View {
                     trainingSplit: gym.trainingSplit,
                     weeklySessionTarget: gym.weeklySessionTarget,
                     volumeBudgets: gym.volumeBudgets,
-                    trainingBlock: gym.trainingBlock
+                    trainingBlock: gym.trainingBlock,
+                    // A rest time is not part of the rack. Left out, this would
+                    // put the lifter's rests back to 3:00 and 1:00 every time
+                    // they switched units (#341).
+                    restDefaults: GymSettings.shared.config.restDefaults
                 ))
             }
         )
@@ -507,6 +577,25 @@ struct SettingsView: View {
         // follower, so no gym save can change which lifts are exceptions — the
         // recount was provably a no-op, and it cost a second full fetch and
         // decode of the library on the main actor for every plate toggle.
+    }
+}
+
+/// The words Settings uses for the two default rests. `RestDefaults.Kind`
+/// carries no copy of its own; lift settings names the default a lift follows
+/// with the same words.
+extension RestDefaults.Kind {
+    var settingsCaption: String {
+        switch self {
+        case .compound: "Compound lifts"
+        case .accessory: "Accessories"
+        }
+    }
+
+    var settingsIdentifier: String {
+        switch self {
+        case .compound: "compound"
+        case .accessory: "accessory"
+        }
     }
 }
 

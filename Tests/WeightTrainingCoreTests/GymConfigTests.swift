@@ -377,6 +377,54 @@ final class GymConfigTests: XCTestCase {
         XCTAssertEqual(gym.effectiveTrainingSplit.kind, .pushPullLegs)
     }
 
+    // MARK: - Default rests (#341)
+
+    /// A gym nobody has touched rests the way the owner asked for: three
+    /// minutes on compounds, one on accessories.
+    func testANewGymUsesTheStandardRestDefaults() {
+        XCTAssertEqual(GymConfig.standard.restDefaults, .standard)
+        XCTAssertEqual(GymConfig().restDefaults, RestDefaults(compound: 180, accessory: 60))
+        XCTAssertEqual(GymConfig(unit: .kilograms).restDefaults, .standard,
+                       "the rest is a fact about the lifter, not the unit")
+    }
+
+    /// "A backup round-trips the new setting" (#341). The archive carries
+    /// `GymConfig` as plain `Codable`, so this is the Core half of that claim.
+    func testRestDefaultsSurviveARoundTrip() throws {
+        let gym = GymConfig(restDefaults: RestDefaults(compound: 150, accessory: 45))
+        let data = try JSONEncoder().encode(gym)
+        let decoded = try JSONDecoder().decode(GymConfig.self, from: data)
+        XCTAssertEqual(decoded, gym)
+        XCTAssertEqual(decoded.restDefaults, RestDefaults(compound: 150, accessory: 45))
+    }
+
+    /// A row or backup written before #341 has no rest key. It must decode to
+    /// the standard defaults rather than fail, or the whole gym (rack, split
+    /// and budgets with it) is lost to an update that only added a setting.
+    func testAGymWrittenBeforeRestDefaultsDecodesToTheStandardOnes() throws {
+        let json = """
+        {"unit":"kilograms","availablePlates":[25,20,10],
+         "barWeight":{"pounds":33.0693},"weeklySessionTarget":4}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(GymConfig.self, from: json)
+        XCTAssertEqual(decoded.restDefaults, .standard)
+        XCTAssertEqual(decoded.weeklySessionTarget, 4, "the rest of the row still reads")
+        XCTAssertEqual(decoded.unit, .kilograms)
+    }
+
+    /// Changing a rest setting must not disturb any other gym setting, and
+    /// the other way round: they share one synced row.
+    func testRestDefaultsAreIndependentOfTheRestOfTheGym() throws {
+        var gym = GymConfig(unit: .kilograms, weeklySessionTarget: 5)
+        gym.restDefaults = RestDefaults(compound: 120, accessory: 30)
+        let decoded = try JSONDecoder().decode(GymConfig.self, from: JSONEncoder().encode(gym))
+        XCTAssertEqual(decoded.unit, .kilograms)
+        XCTAssertEqual(decoded.weeklySessionTarget, 5)
+        XCTAssertEqual(decoded.restDefaults.compound, 120)
+        XCTAssertNotEqual(decoded, GymConfig(unit: .kilograms, weeklySessionTarget: 5),
+                          "a changed rest is a changed gym, so a sync notices")
+    }
+
     func testAChosenSplitSurvivesARoundTrip() throws {
         var gym = GymConfig.standard
         gym.trainingSplit = DayTemplateLibrary.split(
