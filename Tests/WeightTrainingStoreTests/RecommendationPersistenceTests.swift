@@ -333,7 +333,7 @@ final class RecommendationPersistenceTests: XCTestCase {
         let nextWorkout = UUID()
         let proposed = ExercisePlan(
             exercise: exercise, sets: recommendation.sets,
-            restSeconds: Int(exercise.restTarget), isDeload: true
+            restSeconds: Int(exercise.restTarget(using: config.restDefaults)), isDeload: true
         )
         let saved = try store.acceptExercisePlan(
             proposed, workoutID: nextWorkout, startedAt: nextDate, now: nextDate
