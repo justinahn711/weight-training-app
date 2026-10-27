@@ -89,13 +89,14 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
     /// concrete value at init time. Those two replace a *guess about the
     /// apparatus* with a *fact about the apparatus* the moment one is known,
     /// and there is nothing to go back to once that happens. Rest is
-    /// different: `restTarget`'s heuristic (`isCompound ? 180 : 90`) is the
-    /// right default for every lift nobody has touched, forever, so freezing
-    /// it into every `Exercise` the day this shipped would mean a future
-    /// change to that heuristic silently stops applying to lifts that were
-    /// only ever using the default by omission. Absence has to keep meaning
-    /// "use today's rule", not "use whatever the rule happened to say once."
-    /// See `restTarget` in `RestTimer.swift` for the fallback itself.
+    /// different: the fallback is the lifter's own compound or accessory
+    /// default (`GymConfig.restDefaults`, #341), which they can change at any
+    /// time, so freezing it into every `Exercise` the day this shipped would
+    /// mean a changed setting silently stops applying to lifts that were only
+    /// ever using the default by omission. Absence has to keep meaning
+    /// "follow the lifter's setting", not "use whatever the setting happened
+    /// to say once." See `restTarget(using:)` in `RestTimer.swift` for the
+    /// fallback itself.
     public var restOverride: TimeInterval?
 
     public init(

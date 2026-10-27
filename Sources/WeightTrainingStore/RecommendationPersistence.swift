@@ -81,9 +81,18 @@ extension TrainingStore {
         guard let exercise = try exercise(id: displayedRecommendation.exerciseID),
               exercise.supportsPlannedProgression else { throw PlanStoreError.exerciseChanged }
         let previous = try latestExercisePlan(for: exercise.id, excluding: workoutID)
+        // Rest comes from the lifter's settings every time, never from the last
+        // plan (#341). The plan sheet doesn't let the lifter edit rest, so a
+        // previous plan's `restSeconds` is only ever an old default; inheriting
+        // it would keep an accessory plan saying 90 seconds long after the
+        // lifter set 60 and is resting 60. Unchanged settings reproduce the
+        // previous value, so ordinary weeks still compare with each other; a
+        // changed one makes this plan a different demand from the last, which
+        // `TrainingBlock` correctly refuses to read hotter effort across.
+        let rest = Int(exercise.restTarget(using: try gymConfig().restDefaults))
         let proposed = ExercisePlan(
             exercise: exercise, sets: displayedRecommendation.sets,
-            restSeconds: previous == nil ? Int(exercise.restTarget) : previous?.restSeconds,
+            restSeconds: rest,
             techniqueRevision: previous?.techniqueRevision,
             isDeload: displayedRecommendation.action == .deload
         )

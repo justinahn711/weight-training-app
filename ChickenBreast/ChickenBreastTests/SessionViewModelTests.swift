@@ -1581,7 +1581,7 @@ private extension Exercise {
 // `UUID()` — is covered at the `WeightTrainingCore` level in
 // `RestTimerTests`, which is where that logic actually lives. Only the wiring
 // (does tapping the button call `startRest`, does `startRest` reach for
-// `Exercise.restTarget`) is left to the simulator, same as `logSet` above.
+// `Exercise.restTarget(using:)`) is left to the simulator, same as `logSet` above.
 //
 // #261/#263 narrowed the notification half of that: `SessionViewModel`
 // now reaches the centre only through an injected `RestAlertScheduling`, so

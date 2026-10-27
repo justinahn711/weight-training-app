@@ -553,13 +553,13 @@ final class ArchiveTests: XCTestCase {
         XCTAssertNil(lift.restOverride,
                     "no stored key reads as 'never set', not as zero seconds")
         XCTAssertTrue(lift.isCompound, "three muscles tagged, so this is a compound")
-        XCTAssertEqual(lift.restTarget, 180,
+        XCTAssertEqual(lift.restTarget(using: .standard), 180,
                        "an old file's lift keeps resting exactly as it did before #174")
 
         let fresh = try TrainingStore.inMemory()
         let report = try fresh.restore(from: archive)
         XCTAssertEqual(report.exercises, 1)
-        XCTAssertEqual(try fresh.exercise(id: lift.id)?.restTarget, 180)
+        XCTAssertEqual(try fresh.exercise(id: lift.id)?.restTarget(using: .standard), 180)
     }
 
     // MARK: - Restore keeps what is already here (#271)
