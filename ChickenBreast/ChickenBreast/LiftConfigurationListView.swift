@@ -165,21 +165,16 @@ struct LiftConfigurationListView: View {
         }
 
         if let override = exercise.restOverride {
-            parts.append("\(restLabel(override)) rest")
+            parts.append("\(RestChoices.label(override)) rest")
         } else {
-            // Mirrors `ExerciseConfigView.defaultRestSeconds` — the
-            // compound/isolation heuristic itself, not `restTarget`, so this
-            // reads the same whether or not `restTarget` later grows more
-            // inputs than just the override.
-            parts.append("\(restLabel(exercise.isCompound ? 180 : 90)) rest (default)")
+            // Mirrors `ExerciseConfigView.defaultRestSeconds` — the lifter's
+            // current default for this lift's kind (#341), not `restTarget`,
+            // so this reads the same whether or not `restTarget` later grows
+            // more inputs than just the override.
+            parts.append("\(RestChoices.label(exercise.defaultRest(using: gym.restDefaults))) rest (default)")
         }
 
         return parts.joined(separator: " · ")
-    }
-
-    private func restLabel(_ seconds: TimeInterval) -> String {
-        let whole = Int(seconds.rounded())
-        return whole % 60 == 0 ? "\(whole / 60)m" : "\(whole / 60)m \(whole % 60)s"
     }
 
     /// Writes exactly what `ExerciseConfigView` computed, through the same

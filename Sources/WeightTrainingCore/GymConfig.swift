@@ -75,11 +75,22 @@ public struct GymConfig: Hashable, Codable, Sendable {
     /// women's 35 lb bar sitting next to the 45.
     public var barWeight: Load
 
+    /// How long a lift rests when it has no rest time of its own: one default
+    /// for compound lifts, one for accessories (#341).
+    ///
+    /// Here rather than in `UserDefaults` for the same reason as the rest of
+    /// this row: a second device would otherwise disagree about how long to
+    /// rest. A lift's own override (#174) still wins over both; see
+    /// `Exercise.restTarget(using:)`.
+    public var restDefaults: RestDefaults
+
     /// - Parameters:
     ///   - unit: what the gym is marked in.
     ///   - availablePlates: defaults to the standard rack for `unit` — chosen
     ///     for that world, never converted from the other one.
     ///   - barWeight: defaults to the standard bar for `unit`.
+    ///   - restDefaults: defaults to 3:00 for compounds and 1:00 for
+    ///     accessories, independent of `unit`.
     public init(
         unit: MassUnit = .pounds,
         availablePlates: [Double]? = nil,
@@ -87,7 +98,8 @@ public struct GymConfig: Hashable, Codable, Sendable {
         trainingSplit: TrainingSplit? = nil,
         weeklySessionTarget: Int = 3,
         volumeBudgets: [MuscleSetBudget]? = nil,
-        trainingBlock: TrainingBlockConfig? = nil
+        trainingBlock: TrainingBlockConfig? = nil,
+        restDefaults: RestDefaults = .standard
     ) {
         self.unit = unit
         self.availablePlates = availablePlates ?? unit.standardPlates
@@ -96,6 +108,7 @@ public struct GymConfig: Hashable, Codable, Sendable {
         self.weeklySessionTarget = min(max(weeklySessionTarget, 1), 7)
         self.volumeBudgets = Self.normalizedBudgets(volumeBudgets ?? MuscleSetBudget.defaults)
         self.trainingBlock = trainingBlock
+        self.restDefaults = restDefaults
     }
 
     /// Rows written before this landed describe a pound gym, because that is
@@ -104,6 +117,10 @@ public struct GymConfig: Hashable, Codable, Sendable {
     /// hasn't happened" state a genuinely fresh install is in, so an existing
     /// install updating into this feature is asked the same question a new
     /// one is, rather than being silently defaulted onto push/pull/legs.
+    ///
+    /// Rows and backups written before #341 have no rest defaults, which
+    /// decode to the standard ones: the app's out-of-the-box rests, not a
+    /// failure that would take the rack and split down with them.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let unit = try container.decodeIfPresent(MassUnit.self, forKey: .unit) ?? .pounds
@@ -124,6 +141,8 @@ public struct GymConfig: Hashable, Codable, Sendable {
                 ?? MuscleSetBudget.defaults
         )
         self.trainingBlock = try container.decodeIfPresent(TrainingBlockConfig.self, forKey: .trainingBlock)
+        self.restDefaults =
+            try container.decodeIfPresent(RestDefaults.self, forKey: .restDefaults) ?? .standard
     }
 
     public func volumeTarget(for muscle: Muscle) -> ClosedRange<Int> {

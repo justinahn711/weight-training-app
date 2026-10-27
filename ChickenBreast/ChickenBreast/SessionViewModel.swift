@@ -319,7 +319,7 @@ final class SessionViewModel {
                 // `beginRest` already publishes the activity; calling it again
                 // below would just be a second, identical push.
                 beginRest(
-                    duration: current.exercise.restTarget,
+                    duration: restTarget(for: current.exercise),
                     setID: record.id,
                     at: record.performedAt
                 )
@@ -329,6 +329,29 @@ final class SessionViewModel {
         } catch {
             failure = "Couldn't save that set: \(error.localizedDescription)"
         }
+    }
+
+    /// The lifter's default rests as Settings has them right now (#341).
+    ///
+    /// Read when a rest *starts* or a plan is *proposed*, never held: a rest
+    /// already running keeps the duration `RestTimer` stored at its start, and
+    /// the next one picks up whatever Settings says by then. Every rest and plan
+    /// below goes through `restTarget(for:)` or `planRestSeconds(for:)`, so
+    /// touch, voice and a proposed plan cannot disagree about it. (The lock
+    /// screen's Log Set runs in `SessionIntents` and reads the store itself.)
+    private var restDefaults: RestDefaults { GymSettings.shared.config.restDefaults }
+
+    /// How long to rest after a set on this lift: its own rest time if it has
+    /// one, otherwise the lifter's default for its kind.
+    private func restTarget(for exercise: Exercise) -> TimeInterval {
+        exercise.restTarget(using: restDefaults)
+    }
+
+    /// The same rest, whole seconds, as a plan records it. A default from
+    /// `RestDefaults` is always finite and within 1...3600, so it can neither
+    /// trap here nor round down to the zero a plan rejects.
+    private func planRestSeconds(for exercise: Exercise) -> Int {
+        Int(restTarget(for: exercise))
     }
 
     /// The one place every rest begins, whatever triggered it: logging a set,
@@ -363,13 +386,14 @@ final class SessionViewModel {
     /// noise that defeats voice.
     ///
     /// Goes through `beginRest` like every other rest, so the duration comes
-    /// from `Exercise.restTarget` (#174) rather than a hardcoded number, and
+    /// from `Exercise.restTarget(using:)` (#174, #341) rather than a hardcoded
+    /// number, and
     /// this rest gets the same completion alert any other one does — silently
     /// dropping that would be the same class of omission as #172, just for a
     /// rest nobody logged a set to start.
     func startRest() {
         guard let current else { return }
-        beginRest(duration: current.exercise.restTarget, setID: nil, at: Date())
+        beginRest(duration: restTarget(for: current.exercise), setID: nil, at: Date())
     }
 
     /// Dismisses the rest clock without touching the logged set.
@@ -1599,7 +1623,7 @@ final class SessionViewModel {
         if let active = current.acceptedPlan { return active }
         if let suggestion = current.recommendation, !suggestion.sets.isEmpty {
             return ExercisePlan(exercise: current.exercise, sets: suggestion.sets,
-                                restSeconds: Int(current.exercise.restTarget),
+                                restSeconds: planRestSeconds(for: current.exercise),
                                 isDeload: suggestion.action == .deload)
         }
         let count = max(1, min(8, current.lastPerformance?.sets.count ?? 3))
@@ -1620,7 +1644,7 @@ final class SessionViewModel {
         }
         return ExercisePlan(exercise: current.exercise,
             sets: Array(repeating: PlannedWorkingSet(load: load, reps: reps, rpe: current.prescription.rpe), count: count),
-            restSeconds: Int(current.exercise.restTarget))
+            restSeconds: planRestSeconds(for: current.exercise))
     }
 
     @discardableResult
@@ -1655,7 +1679,7 @@ final class SessionViewModel {
         let plan = ExercisePlan(
             exercise: current.exercise,
             sets: recommendation.sets,
-            restSeconds: Int(current.exercise.restTarget),
+            restSeconds: planRestSeconds(for: current.exercise),
             isDeload: true
         )
         do {
