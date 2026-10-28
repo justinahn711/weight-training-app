@@ -525,9 +525,9 @@ struct SessionView: View {
             // where it was.
             let underCard = model.heard != nil || model.pendingAdvance != nil || model.autoAdvancedFrom != nil
             setRow(exercise, number: exercise.loggedSets.count, set: set, isLatest: true)
-                .padding(.horizontal, pinned ? 20 : 0)
-                .padding(.vertical, pinned ? 8 : 0)
-                .padding(.top, pinned || !underCard ? 0 : -6)
+                .padding(.horizontal, pinned ? Theme.Space.edge : 0)
+                .padding(.vertical, pinned ? Theme.Space.sm : 0)
+                .padding(.top, pinned || !underCard ? 0 : -6) // off-scale: the 12pt gap less 6, so Undo clears the dock on an SE (#337)
                 .transition(Theme.edgeTransition(reduceMotion: reduceMotion))
         }
     }
@@ -1176,7 +1176,7 @@ struct SessionView: View {
     private func setRows(_ exercise: SessionExercise) -> some View {
         let slot = slotSet(exercise)
         if slot == nil || exercise.loggedSets.count > 1 {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 Text("Today")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -1186,7 +1186,7 @@ struct SessionView: View {
                     Text("No sets yet")
                         .font(.body)
                         .foregroundStyle(.secondary)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 6) // off-scale: since #3, older than the scale; unchanged so nothing moves
                 } else {
                     ForEach(Array(exercise.loggedSets.enumerated()), id: \.element.id) { index, set in
                         if set.id != slot?.id {
@@ -1245,7 +1245,7 @@ struct SessionView: View {
     private func compactSetRows(_ exercise: SessionExercise) -> some View {
         let slot = slotSet(exercise)
         if slot == nil || exercise.loggedSets.count > 1 {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 if slot == nil {
                     // The caption goes while the plate row is open (#216): on an SE
                     // its line was the difference between the row clearing the
@@ -1263,7 +1263,7 @@ struct SessionView: View {
                         Text("No sets yet")
                             .font(.body)
                             .foregroundStyle(.secondary)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 6) // off-scale: since #3, older than the scale; unchanged so nothing moves
                     }
                 }
 
@@ -2219,14 +2219,14 @@ private struct SetRow: View {
                 Button("Undo", action: onUndo)
                     .font(.body.weight(.semibold))
                     .buttonStyle(QuietCapsuleButtonStyle(minHeight: 44))
-                    .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 12 : 8)
-                    .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
+                    .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? Theme.Space.md : Theme.Space.sm)
+                    .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? Theme.Space.sm : 0)
                     .accessibilityHint("Takes back the set you just logged")
                     .accessibilityIdentifier("session.set.latest.undo")
             }
         }
         .background {
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 10) // off-scale: the set row's radius since #3, older than the scale; unchanged so nothing moves
                 .fill(justSetRecord == nil
                       ? AnyShapeStyle(.fill.quinary)
                       : AnyShapeStyle(Theme.record.opacity(0.16)))
@@ -2241,8 +2241,8 @@ private struct SetRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 22, alignment: .trailing)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) { // off-scale: the set and its record kind read as one label (#337)
+                HStack(spacing: Theme.Space.md) {
                     Text("\(set.load.formatted(in: gym.unit)) × \(set.reps)")
                         .font(.title3.weight(.medium).monospacedDigit())
 
@@ -2251,15 +2251,15 @@ private struct SetRow: View {
                         Text("PR")
                             .font(.caption.weight(.heavy))
                             .foregroundStyle(Theme.recordText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, 6) // off-scale: the PR badge's inset, older than the scale; unchanged so nothing moves
+                            .padding(.vertical, 2) // off-scale: the PR badge's inset, older than the scale; unchanged so nothing moves
                             .background(Theme.record, in: Capsule())
                             .accessibilityLabel("Personal record")
                     }
                 }
 
                 if let justSetRecord {
-                    HStack(spacing: 4) {
+                    HStack(spacing: Theme.Space.xs) {
                         Image(systemName: "trophy.fill")
                             .accessibilityHidden(true)
                         Text(title(for: justSetRecord))
