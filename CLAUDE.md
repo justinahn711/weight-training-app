@@ -144,6 +144,50 @@ Do not quote a test count in a brief or a doc. It was `517` in three files
 while the suite was 469 on `main` and 533 on `feat/67-units`. Report the number
 the runner just printed.
 
+## Looking at a UI change
+
+A build that compiles says nothing about what is on screen. Before calling a
+change to a view done, open the screen it changed in a known state and look
+at it:
+
+```sh
+SIM=<udid> sh Tools/sim-open.sh history progress
+xcrun simctl io <udid> screenshot <scratch>/progress.png   # then Read the PNG
+```
+
+The first argument is a fixture: `fresh` (setup answered, nothing logged) or
+`history` (twelve weeks of push/pull/legs). The second is a route: `train`,
+`history`, `progress`, `settings`, `preview:<day>` or `session:<day>`. Both
+are defined in `UITestLaunchRoutes.swift`, and both work only on the isolated
+store, so neither touches the simulator's own data or iCloud.
+
+- **Name the simulator** (`SIM=<udid>`) when more than one is booted. A UI
+  test run boots `ChickenBreast-SE`, and "booted" can resolve to it, in which
+  case the script's terminate kills the app in the middle of someone's test.
+  The script refuses to guess.
+- **Right after `simctl install`, a launch can come up without its
+  arguments** (#321), on the real store. The script checks the process's
+  command line and relaunches once. A bare `simctl launch` doesn't check.
+- **Look at an accessibility text size too**, because the Grow-Only Rule
+  (DESIGN.md) is where layouts break:
+  `xcrun simctl ui <udid> content_size accessibility-extra-extra-extra-large`,
+  then `large` to put it back.
+- An "Apple Account Verification" alert over the app is the simulator's own
+  iCloud sign-in. Dismiss it with Not Now before reading the screenshot.
+
+In the PR, name the screens and states you looked at. A screen you didn't
+open counts as `NOT RUN`, like a rung that didn't run.
+
+## Spacing, radii and type come from `Theme`
+
+`DESIGN.md` is the design system and `Theme` is its code. New view code uses
+`Theme.Space`, `Theme.Radius`, `Theme.Typography` and the named `Theme`
+colours, not literals. `hooks/check-design-tokens.sh` (run by pre-push)
+fails on any literal a branch adds. The literals already on main switch to
+tokens when their line is edited for another reason, never in a sweep, which
+would collide with every open UI branch. A value that really is off the scale
+carries `// off-scale: <why>` on its line.
+
 ## Working in a worktree
 
 Never `git checkout` in the main tree — someone else is probably working there.
@@ -216,6 +260,8 @@ xcodebuild -project ChickenBreast/ChickenBreast.xcodeproj \
 
 xcrun simctl install booted <path>/ChickenBreast.app
 xcrun devicectl device install app --device <UDID> <path>/ChickenBreast.app
+
+SIM=<udid> sh Tools/sim-open.sh history session:push   # see "Looking at a UI change"
 ```
 
 Issues carry the reasoning. When something looks odd, `git log` and the issue

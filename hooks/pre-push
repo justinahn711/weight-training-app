@@ -5,8 +5,8 @@
 # returns 403 on /protection and /rulesets. So the thing that stops a broken
 # push is local, and it has to be fast enough that nobody is tempted to skip
 # it. The domain suite runs in about a second and a half precisely because Core
-# imports Foundation only, so both checks below are cheap and the second one is
-# what keeps the first one cheap.
+# imports Foundation only, so the checks below are cheap, and the purity check
+# is what keeps the suite cheap.
 #
 # Wire it up ONCE PER CLONE, not per worktree:
 #
@@ -70,6 +70,14 @@ printf '\npre-push: Core imports Foundation only... '
 if ! purity=$(sh "$root/hooks/check-core-purity.sh" 2>&1); then
     printf 'FAIL\n\n'
     printf '%s\n\n' "$purity"
+    exit 1
+fi
+printf 'ok\n'
+
+printf 'pre-push: no new raw layout literals... '
+if ! tokens=$(sh "$root/hooks/check-design-tokens.sh" 2>&1); then
+    printf 'FAIL\n\n'
+    printf '%s\n\n' "$tokens"
     exit 1
 fi
 printf 'ok\n'

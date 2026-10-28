@@ -141,4 +141,57 @@ enum Theme {
     static func edgeTransition(reduceMotion: Bool) -> AnyTransition {
         reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
+
+    // MARK: - Layout and type
+
+    /// The spacing rhythm DESIGN.md names: 4 / 8 / 12 / 16 / 20.
+    ///
+    /// DESIGN.md had this scale before `Theme` did, and the views drifted
+    /// anyway: on 2026-10-25 the app's stacks used spacings of 1, 2, 3, 5, 6,
+    /// 10 and 14 alongside the five on the scale. A named value gets reused;
+    /// a literal gets guessed again. New layout code uses these, and
+    /// `hooks/check-design-tokens.sh` flags any literal a branch adds. The
+    /// literals already on main switch to tokens when their line is edited for
+    /// another reason. A sweep would collide with every open UI branch.
+    enum Space {
+        static let xs: CGFloat = 4
+        static let sm: CGFloat = 8
+        static let md: CGFloat = 12
+        /// Card padding, and the screen edge in compact.
+        static let gutter: CGFloat = 16
+        /// The screen edge.
+        static let edge: CGFloat = 20
+    }
+
+    /// Corner radii, from DESIGN.md's Shapes section.
+    enum Radius {
+        static let sm: CGFloat = 8
+        /// Controls and steppers.
+        static let md: CGFloat = 12
+        /// Context cards.
+        static let card: CGFloat = 14
+        /// The hero and larger cards.
+        static let lg: CGFloat = 16
+        /// The floating rest card, drawn `.continuous`.
+        static let panel: CGFloat = 24
+    }
+
+    /// Text roles, from DESIGN.md's Typography section.
+    ///
+    /// All of them are system text styles, so every role follows the lifter's
+    /// Dynamic Type setting. The weight readout is not here: its size is
+    /// computed from `.largeTitle` where it is drawn (#297), so it can't be a
+    /// fixed `Font`.
+    enum Typography {
+        static let largeTitle = Font.largeTitle.bold()
+        /// Log Set's title and the rest clock.
+        static let headline = Font.title2.bold()
+        /// Stepper values and logged set rows. Tabular, so they hold still.
+        static let title = Font.title3.weight(.semibold).monospacedDigit()
+        static let body = Font.body
+        /// Secondary actions and Log Set's summary line.
+        static let label = Font.subheadline.weight(.semibold)
+        /// TARGET, LAST TIME, RESTING. Never `.caption2` (#289).
+        static let caption = Font.caption.weight(.semibold)
+    }
 }
