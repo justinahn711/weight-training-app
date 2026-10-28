@@ -254,7 +254,9 @@ public enum TrainingBlockEngine {
         guard let first, let second, !first.isDeload, !second.isDeload else { return false }
         // Plan identity alone is not enough: execution and every demand
         // variable must match before harder effort can imply deterioration.
-        return first.exercise == second.exercise && first.sets == second.sets
+        // Not whole-lift equality: a rename or a warmup-ramp change is not
+        // different work (#346). Rest is compared below through `restSeconds`.
+        return first.exercise.isPlanCompatible(with: second.exercise) && first.sets == second.sets
             && first.restSeconds == second.restSeconds
             && first.techniqueRevision == second.techniqueRevision
     }
