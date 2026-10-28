@@ -7,6 +7,12 @@ import SwiftUI
 import WeightTrainingCore
 import WeightTrainingStore
 
+/// The three top-level destinations (#112). Named so a Debug launch route can
+/// open on one (`UITestLaunchState.Route`); the raw value is the route's word.
+enum HomeTab: String, Hashable {
+    case train, history, progress
+}
+
 /// What to train next.
 ///
 /// The cycle is push → pull → legs and never a weekday. The app leads with the
@@ -22,6 +28,7 @@ struct ContentView: View {
     /// which staging the launch made two different things for the first time.
     @State private var insightsLoaded = false
     @State private var startupFailure: String?
+    @State private var tab: HomeTab = .train
     @State private var route: DayKind?
     /// The model belongs to the route, not to one rendering of its destination.
     /// Keeping it here preserves the in-memory session while its route exists.
@@ -73,13 +80,16 @@ struct ContentView: View {
         // Volume and the digest are not destinations. They are findings about
         // the training in front of you, so they stay on the Train dashboard
         // where they are read, and open from there.
-        TabView {
+        TabView(selection: $tab) {
             trainTab
                 .tabItem { Label("Train", systemImage: "figure.strengthtraining.traditional") }
+                .tag(HomeTab.train)
             historyTab
                 .tabItem { Label("History", systemImage: "calendar") }
+                .tag(HomeTab.history)
             progressTab
                 .tabItem { Label("Progress", systemImage: "chart.xyaxis.line") }
+                .tag(HomeTab.progress)
         }
         .background(Theme.background.ignoresSafeArea())
         .task { await openStore() }
@@ -891,6 +901,7 @@ struct ContentView: View {
             try opened.seedTemplatesIfNeeded()
             #if DEBUG
             try UITestLaunchState.seedYesterdayIfAsked(opened)
+            try UITestLaunchState.applyFixtureIfAsked(opened)
             #endif
             // After the seeds, so a freshly seeded library lands on the gym's
             // rack rather than the pound default (#73). Also the only thing
@@ -913,6 +924,11 @@ struct ContentView: View {
             // screen underneath it to ask over (#136).
             needsSplitSetup = gym.trainingSplit == nil
             store = opened
+            #if DEBUG
+            if let launchRoute = UITestLaunchState.route {
+                open(launchRoute, from: opened)
+            }
+            #endif
 
             // Recovery arrives after the screen does. It's context, never a
             // reason to keep someone waiting on a Health query before they can
@@ -933,6 +949,25 @@ struct ContentView: View {
             startupFailure = String(describing: error)
         }
     }
+
+    #if DEBUG
+    /// Opens a Debug launch route (`-UITestRoute`), by the same paths a tap
+    /// takes: a day goes through the preview, and a session is then started
+    /// from it, so the screen an agent looks at is the one the lifter gets.
+    private func open(_ launchRoute: UITestLaunchState.Route, from store: TrainingStore) {
+        switch launchRoute {
+        case .tab(let destination):
+            tab = destination
+        case .settings:
+            showingSettings = true
+        case .preview(let kind):
+            previewSession(kind, from: store)
+        case .session(let kind):
+            previewSession(kind, from: store)
+            startPlannedSession()
+        }
+    }
+    #endif
 }
 
 /// The deliberate pause between choosing a day and beginning it (#137).
