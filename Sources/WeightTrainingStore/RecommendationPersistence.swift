@@ -109,8 +109,9 @@ extension TrainingStore {
         // the plan it opened on. Whole-value `==` rejected both after a rename
         // (#349). What a stale proposal must still be refused for is what
         // `isPlanCompatible` compares: the apparatus and the rule it was
-        // written for. The plan saved below carries the lift as it is now,
-        // never this copy.
+        // written for. The proposal's copy is only checked, never saved: a new
+        // plan below is built from the stored lift, and a reused one is the
+        // previous plan exactly as stored, with the copy it was written for.
         guard let exercise = try exercise(id: proposed.exercise.id),
               exercise.isPlanCompatible(with: proposed.exercise) else {
             throw PlanStoreError.exerciseChanged
@@ -153,8 +154,9 @@ extension TrainingStore {
         // refreshed copy under the old id would make every earlier workout
         // read as a different plan and restart the count anyway. Nothing reads
         // a name or a muscle from a plan's copy; the plan sheet reads only what
-        // `isPlanCompatible` compares, and anything it saves is rebuilt from
-        // the stored lift above.
+        // `isPlanCompatible` compares. A plan the sheet saves with a change is a
+        // new plan, built from the stored lift above; one saved unchanged is
+        // the previous plan, as it was.
         if let previous, previous.exercise.isPlanCompatible(with: exercise) {
             let comparable = ExercisePlan(
                 id: previous.id, exercise: previous.exercise, sets: accepted.sets,

@@ -368,7 +368,8 @@ final class LiftEditPlanTests: XCTestCase {
 
     /// The activated plan outlives the rename here: it is the previous plan,
     /// kept whole with its copy of the lift. Saving an edit to it must work,
-    /// and must save the lift as it is, never the copy it was opened on.
+    /// and the edited plan must carry the lift as it is, never the copy it was
+    /// opened on.
     func testEditSetPlanSavesOnAPlanKeptAcrossARename() throws {
         let first = try firstWorkout(in: store, lift: bench())
         var current = try XCTUnwrap(store.exercise(id: first.exercise.id))
@@ -516,7 +517,7 @@ final class LiftEditPlanTests: XCTestCase {
         // Its target is the plan's sets, which a kept copy cannot change.
         XCTAssertEqual(loaded.prescription.reps, 10)
 
-        // Saved back from the sheet, then dismissed, and the lift is as edited.
+        // Saved back from the sheet with a set changed, and the lift in the library is still as it was edited.
         let opened = try XCTUnwrap(loaded.acceptedPlan)
         _ = try store.acceptExercisePlan(
             sheetSave(opened, sets: sets(10, 10, 10)), workoutID: workout, startedAt: midday(1), now: midday(1))
@@ -550,5 +551,61 @@ final class LiftEditPlanTests: XCTestCase {
             displayedRecommendation: suggestion, now: midday(1)))
         let report = try store.recommendationFeedbackReport(now: midday(2))
         XCTAssertEqual(report.automaticActivations, 1)
+    }
+
+    // MARK: - Identity still compares the rest of the plan
+
+    /// A renamed lift whose plan from workout 0 is repeated by workout 1: the
+    /// plan kept across the rename, which workout 2's proposal is compared
+    /// with. Repeating it is the control for both tests below, so they cannot
+    /// pass by the plan never being reusable in the first place.
+    private func renamedLiftWithAKeptPlan() throws -> (lift: Exercise, first: ExercisePlan) {
+        let first = try firstWorkout(in: store, lift: bench())
+        var current = try XCTUnwrap(store.exercise(id: first.exercise.id))
+        current.name = renamed
+        try store.upsert(current)
+        let repeated = try store.acceptExercisePlan(
+            ExercisePlan(exercise: current, sets: first.sets, restSeconds: first.restSeconds),
+            workoutID: UUID(), startedAt: midday(1), now: midday(1))
+        XCTAssertEqual(repeated.id, first.id, "control: the same plan on the renamed lift is the plan kept")
+        return (current, first)
+    }
+
+    /// Adjust on a recovery proposal, with the sets put back to the normal
+    /// ones, is a deload with exactly the normal plan's sets. It is still a
+    /// deload, and the plan it is compared with is not.
+    func testADeloadWithThePlansExactSetsIsNotThePlanAfterARename() throws {
+        let (current, first) = try renamedLiftWithAKeptPlan()
+
+        let workout = UUID()
+        let deload = try store.acceptExercisePlan(
+            ExercisePlan(exercise: current, sets: first.sets, restSeconds: first.restSeconds, isDeload: true),
+            workoutID: workout, startedAt: midday(2), now: midday(2))
+
+        XCTAssertTrue(deload.isDeload)
+        XCTAssertNotEqual(deload.id, first.id, "a deload is not the normal plan, whatever its sets")
+        XCTAssertEqual(deload.sets, first.sets)
+        XCTAssertEqual(deload.exercise, current, "a new plan carries the lift as it is now")
+        XCTAssertEqual(try store.exerciseSession(workoutID: workout, exerciseID: current.id)?.plan, deload)
+        XCTAssertEqual(try store.latestNonDeloadExercisePlan(for: current.id, excluding: workout)?.id, first.id,
+                       "and the normal plan it came from is still the one to resume")
+    }
+
+    /// A plan under another technique is a different comparison, so the
+    /// evidence of the old one must not count toward it.
+    func testAChangedTechniqueRevisionIsNotThePlanAfterARename() throws {
+        let (current, first) = try renamedLiftWithAKeptPlan()
+
+        let workout = UUID()
+        let revised = try store.acceptExercisePlan(
+            ExercisePlan(exercise: current, sets: first.sets, restSeconds: first.restSeconds,
+                         techniqueRevision: "paused reps"),
+            workoutID: workout, startedAt: midday(2), now: midday(2))
+
+        XCTAssertEqual(revised.techniqueRevision, "paused reps")
+        XCTAssertNotEqual(revised.id, first.id, "a changed technique is not the plan kept, whatever its sets")
+        XCTAssertEqual(revised.sets, first.sets)
+        XCTAssertEqual(revised.exercise, current, "a new plan carries the lift as it is now")
+        XCTAssertEqual(try store.exerciseSession(workoutID: workout, exerciseID: current.id)?.plan, revised)
     }
 }
