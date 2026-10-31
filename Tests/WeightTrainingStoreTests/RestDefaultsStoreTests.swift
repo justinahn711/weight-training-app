@@ -8,7 +8,9 @@ import WeightTrainingCore
 /// two numbers survive a relaunch, a sync collision and a backup, that a row or
 /// file from before the setting reads as the standard rests rather than failing,
 /// and that a new plan takes its rest from the setting instead of from the last
-/// plan, which would otherwise keep an old default alive indefinitely.
+/// plan, which would otherwise keep an old default alive indefinitely. That
+/// holds for every route that saves a plan, not just activation (#349):
+/// `LiftEditPlanTests` covers Dismiss on a deload and Edit set plan.
 ///
 /// Dates are anchored to a fixed midday (#79).
 @MainActor

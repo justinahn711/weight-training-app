@@ -14,9 +14,10 @@ import XCTest
 /// The harness plays the app and nothing more. Each session's plan carries the
 /// engine's own recommended sets and the rest `restTarget(using:)` gives under
 /// that day's defaults, and keeps the previous plan's identity when nothing in
-/// it changed, which is the shape `TrainingStore.activateExerciseRecommendation`
-/// persists. That Store path is pinned by `RestDefaultsStoreTests`; this target
-/// depends on Core only and cannot reach it.
+/// it changed, which is the shape the Store persists: every plan it saves,
+/// whether activated, used, edited or restored by Dismiss, takes the lift's
+/// current rest (#349). That Store path is pinned by `RestDefaultsStoreTests`
+/// and `LiftEditPlanTests`; this target depends on Core only and cannot reach it.
 ///
 /// `assertInvariants` is the hard part: a breach means the engine proposed
 /// something it must never propose. Everything else in each test is an

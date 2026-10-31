@@ -13,8 +13,10 @@ final class RecommendationEvals: XCTestCase {
     /// is given the session about to be planned and the lift as it stood, and
     /// returns the lift as it now is. A plan keeps the copy it was activated
     /// with, as the app's do, so an old plan goes on describing the old lift.
-    /// Unlike the Store, the loop below keeps a repeated plan's identity across
-    /// an edit; until #349, the app starts a new plan after one.
+    /// Like the Store (#349), the loop below keeps a repeated plan's identity,
+    /// and its old copy of the lift, across an edit. It carries no rest, so it
+    /// cannot stand in for the app when a lift's rest changes: the Store starts
+    /// a new plan then (#341), which `LiftEditPlanTests` covers.
     private func run(
         sessions: Int,
         edit: (Int, Exercise) -> Exercise = { $1 },
@@ -80,15 +82,21 @@ final class RecommendationEvals: XCTestCase {
         }
     }
 
-    /// Tidying a lift up mid-season (#346): a rename, a muscles correction, a
-    /// warmup ramp switched on and a rest time of its own, each at a different
-    /// point. None of it changes what the rack can make or how the lift
-    /// progresses, so the engine's season has to come out decision for
-    /// decision as it does for a lift nobody touched. Before, the first session
-    /// after any of them came back "Equipment changed" with no target, and the
-    /// lifter lost the weight they had earned. This holds plan identity across
-    /// each edit, which the Store doesn't yet: in the app a rename or ramp
-    /// switch still costs one session of evidence (#349).
+    /// Tidying a lift up mid-season (#346): a rename, a muscles correction and
+    /// a warmup ramp switched on, each at a different point. None of it changes
+    /// what the rack can make or how the lift progresses, so the engine's
+    /// season has to come out decision for decision as it does for a lift
+    /// nobody touched. Before, the first session after any of them came back
+    /// "Equipment changed" with no target, and the lifter lost the weight they
+    /// had earned. This holds plan identity across each edit, and the Store
+    /// does the same for all three (#349), so the season is the app's as well
+    /// as the engine's; the Store side is `LiftEditPlanTests`.
+    ///
+    /// A rest time of its own is left out on purpose. It is a different demand
+    /// (#341), so in the app that edit starts a new plan and costs one session
+    /// of evidence, and a season that held identity across it would not
+    /// describe the app. That the engine does not read it as new equipment is
+    /// `RecommendationEngineTests.testSettingOwnRestKeepsItsSuggestion`.
     func testTidyingALiftMidSeasonDoesNotInterruptItsProgression() {
         let untouched = run(sessions: 44) { _, target in (target.reps, .seven) }
         let tidied = run(sessions: 44, edit: { index, lift in
@@ -97,7 +105,6 @@ final class RecommendationEvals: XCTestCase {
             case 5: lift.name = "Flat Bench Press"
             case 12: lift.muscles = [.primary(.chest), .secondary(.triceps), .secondary(.frontDelts)]
             case 20: lift.needsWarmupRamp = true
-            case 31: lift.restOverride = 150
             default: break
             }
             return lift
