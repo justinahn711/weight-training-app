@@ -391,16 +391,21 @@ extension TrainingStore {
         } else { modelContext.insert(StoredExerciseSession(intent)) }
     }
 
-    /// The lift's rest as a plan records it: whole seconds, from its own rest
-    /// time or else the lifter's default for its kind. A default is always
-    /// usable (`RestDefaults`), but a lift's own rest is stored as it was
-    /// written, and one that is not finite, rounds down to the zero a plan
-    /// rejects, or is past what the clock will count would trap or save a plan
-    /// the engine refuses. That is an invalid plan, not a rest.
+    /// The lift's rest as a plan records it: whole seconds, truncated, from its
+    /// own rest time or else the lifter's default for its kind.
+    ///
+    /// This PR puts the conversion on the Dismiss and Edit set plan routes as
+    /// well as activation, and a lift's own rest is stored as it was written.
+    /// `Int(_:)` traps on a value that is not finite or is too large for `Int`,
+    /// and a value below one second truncates to a rest a plan rejects, so
+    /// those are refused as an invalid plan. Nothing else is: a long rest
+    /// saves as it always did.
     private func currentRestSeconds(for exercise: Exercise) throws -> Int {
         let rest = exercise.restTarget(using: try gymConfig().restDefaults)
-        guard RestDefaults.usableRange.contains(rest) else { throw PlanStoreError.invalidPlan }
-        return Int(rest)
+        guard let seconds = Int(exactly: rest.rounded(.towardZero)), seconds >= 1 else {
+            throw PlanStoreError.invalidPlan
+        }
+        return seconds
     }
 
     /// Ignores only generation time: the snapshot may have been reviewed for
