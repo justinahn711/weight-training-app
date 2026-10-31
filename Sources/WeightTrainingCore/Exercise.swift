@@ -121,6 +121,34 @@ public struct Exercise: Identifiable, Hashable, Codable, Sendable {
         self.restOverride = restOverride
     }
 
+    /// Whether a plan written for `other` still describes this lift: the same
+    /// lift, built from the same apparatus, progressing by the same rule.
+    ///
+    /// A plan keeps the copy of the lift it was activated with, so the lift as
+    /// edited since will almost never equal it field for field. `==` would
+    /// call a renamed lift, a muscles correction, a warmup-ramp toggle or a
+    /// rest time of its own a different apparatus, and the next suggestion
+    /// would be "Equipment changed — find your new working weight" with no
+    /// target (#346). None of those change what weights the lift can make or
+    /// when it earns more, which is all a plan's sets are evidence of.
+    ///
+    /// Compared, because each decides what a planned load means or whether
+    /// success at it carries over: `id`, `equipment`, `increment`, `loading`
+    /// (plates and bar) and `progressionRule`. Everything else is left out on
+    /// purpose. A rest change that matters is still seen, through the plan's
+    /// own `restSeconds`.
+    ///
+    /// `==` is untouched: whole-value equality is what the rest of the app
+    /// means by it. Anything new that decides what a lift can build or how it
+    /// progresses belongs in this list, or edits to it will be ignored.
+    public func isPlanCompatible(with other: Exercise) -> Bool {
+        id == other.id
+            && equipment == other.equipment
+            && increment == other.increment
+            && loading == other.loading
+            && progressionRule == other.progressionRule
+    }
+
     public var primaryMuscles: [Muscle] {
         muscles.filter { $0.role == .primary }.map(\.muscle)
     }
