@@ -191,6 +191,116 @@ final class RecommendationEngineTests: XCTestCase {
         XCTAssertTrue(result.sets.isEmpty)
     }
 
+    // MARK: - Editing a lift keeps its suggestion (#346)
+
+    /// The lift as the plan was activated, two easy workouts at the rep ceiling
+    /// behind it, and what the engine says to do next. Asserting the baseline
+    /// is a real target (`addedLoad`) is what stops "no change" passing
+    /// vacuously: a lift that already had nothing to suggest would also be
+    /// unchanged by an edit.
+    private func editedLiftSuggestion(
+        _ edit: (inout Exercise) -> Void, file: StaticString = #filePath, line: UInt = #line
+    ) -> (before: ExerciseRecommendation, after: ExerciseRecommendation) {
+        let lift = exercise()
+        let target = plan(lift, reps: [12, 12, 12])
+        let history = [exposure(target, daysAgo: 4), exposure(target, daysAgo: 2)]
+        let before = recommend(target, history)
+        XCTAssertEqual(before.reason, .addedLoad, file: file, line: line)
+        XCTAssertEqual(before.sets.map(\.load), [105, 105, 105], file: file, line: line)
+
+        // The plan keeps the copy of the lift it was activated with; only the
+        // lift the caller passes in has been edited.
+        var edited = lift
+        edit(&edited)
+        XCTAssertNotEqual(edited, lift, "the edit must actually change the lift", file: file, line: line)
+        let after = RecommendationEngine.recommend(
+            exercise: edited, plan: target, history: history, now: now)
+        return (before, after)
+    }
+
+    /// Renaming a lift made the next suggestion "Equipment changed — find your
+    /// new working weight" with no target, because the plan's copy of the lift
+    /// no longer matched field for field. A name says nothing about what the
+    /// rack can make.
+    func testRenamingALiftKeepsItsSuggestion() {
+        let (before, after) = editedLiftSuggestion { $0.name = "Flat Bench Press" }
+        XCTAssertEqual(after, before)
+    }
+
+    /// Correcting which muscles a lift trains is a labelling fix. It must not
+    /// throw away a working weight the lifter earned.
+    func testEditingMusclesKeepsItsSuggestion() {
+        let (before, after) = editedLiftSuggestion {
+            $0.muscles = [.primary(.chest), .secondary(.triceps), .secondary(.frontDelts)]
+        }
+        XCTAssertEqual(after, before)
+    }
+
+    /// Whether a lift gets a generated warmup ramp has no bearing on its
+    /// working sets, which is all a plan holds.
+    func testTogglingWarmupRampKeepsItsSuggestion() {
+        let (before, after) = editedLiftSuggestion { $0.needsWarmupRamp.toggle() }
+        XCTAssertEqual(after, before)
+    }
+
+    /// Setting a rest time for one lift, the first thing #343 let a lifter do
+    /// per lift, reset that lift's suggestion. The evaluator caught it.
+    func testSettingOwnRestKeepsItsSuggestion() {
+        let (before, after) = editedLiftSuggestion { $0.restOverride = 150 }
+        XCTAssertEqual(after, before)
+    }
+
+    func testSeveralHarmlessEditsAtOnceKeepTheSuggestion() {
+        let (before, after) = editedLiftSuggestion {
+            $0.name = "Flat Bench Press"
+            $0.muscles = [.primary(.chest), .secondary(.triceps), .secondary(.frontDelts)]
+            $0.needsWarmupRamp.toggle()
+            $0.restOverride = 150
+        }
+        XCTAssertEqual(after, before)
+    }
+
+    /// The other direction, for each field that does decide what weights the
+    /// lift can make or how it progresses. In every case below the planned
+    /// 100 lb is still buildable on the edited lift, so none of the later
+    /// guards would catch it; only the comparison with the plan's copy does.
+    private func assertEditResetsSuggestion(
+        _ edit: (inout Exercise) -> Void, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let (_, after) = editedLiftSuggestion(edit, file: file, line: line)
+        XCTAssertEqual(after.action, .establish, file: file, line: line)
+        XCTAssertEqual(after.reason, .equipmentChanged, file: file, line: line)
+        XCTAssertTrue(after.sets.isEmpty, "a reset carries no target", file: file, line: line)
+    }
+
+    func testChangingEquipmentTypeStillResetsTheSuggestion() {
+        assertEditResetsSuggestion { $0.equipment = .machineStack }
+    }
+
+    func testChangingIncrementStillResetsTheSuggestion() {
+        assertEditResetsSuggestion { $0.increment = LoadIncrement(pounds: 2.5) }
+    }
+
+    func testChangingPlatesStillResetsTheSuggestion() {
+        assertEditResetsSuggestion { $0.loading?.availablePlates = [45, 25, 10, 5, 2.5] }
+    }
+
+    func testChangingTheBarStillResetsTheSuggestion() {
+        assertEditResetsSuggestion { $0.loading?.baseWeight = 35 }
+    }
+
+    func testChangingProgressionRuleStillResetsTheSuggestion() {
+        assertEditResetsSuggestion { $0.progressionRule = .doubleProgression(range: RepRange(6, 10)) }
+    }
+
+    /// A harmless edit must not hide a real one made at the same time.
+    func testRenameAlongsideAnIncrementChangeStillResets() {
+        assertEditResetsSuggestion {
+            $0.name = "Flat Bench Press"
+            $0.increment = LoadIncrement(pounds: 2.5)
+        }
+    }
+
     func testMixedPerformedLoadsCannotQualifyAsStraightSets() {
         let target = plan(exercise())
         var latest = exposure(target, daysAgo: 2)

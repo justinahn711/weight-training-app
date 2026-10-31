@@ -14,6 +14,58 @@ final class ModelTests: XCTestCase {
 
     // MARK: - Exercise
 
+    /// A plan's copy of a lift only needs to agree on what builds a weight and
+    /// how it progresses (#346). Whole-value `==` must keep telling every edit
+    /// apart, because the rest of the app relies on it.
+    func testPlanCompatibilityIgnoresEditsThatDoNotChangeWhatTheLiftCanBuild() {
+        let original = makeInclineDBPress()
+        let harmless: [(inout Exercise) -> Void] = [
+            { $0.name = "Incline Dumbbell Press" },
+            { $0.muscles = [.primary(.chest)] },
+            { $0.needsWarmupRamp.toggle() },
+            { $0.restOverride = 150 },
+        ]
+        for edit in harmless {
+            var edited = original
+            edit(&edited)
+            XCTAssertNotEqual(edited, original)
+            XCTAssertTrue(edited.isPlanCompatible(with: original))
+            XCTAssertTrue(original.isPlanCompatible(with: edited))
+        }
+    }
+
+    func testPlanCompatibilityNoticesEditsToWhatTheLiftCanBuildOrHowItProgresses() {
+        var barbell = makeInclineDBPress()
+        barbell.equipment = .barbell
+        barbell.loading = .olympicBarbell
+        let original = barbell
+        let breaking: [(inout Exercise) -> Void] = [
+            { $0.equipment = .plateLoaded },
+            { $0.increment = LoadIncrement(pounds: 2.5) },
+            { $0.loading = nil },
+            { $0.loading?.availablePlates = [45, 25, 10, 5, 2.5] },
+            { $0.loading?.baseWeight = 35 },
+            { $0.progressionRule = .doubleProgression(range: RepRange(8, 12)) },
+        ]
+        for edit in breaking {
+            var edited = original
+            edit(&edited)
+            XCTAssertNotEqual(edited, original)
+            XCTAssertFalse(edited.isPlanCompatible(with: original))
+            XCTAssertFalse(original.isPlanCompatible(with: edited))
+        }
+    }
+
+    /// Two lifts that happen to be built alike are still two lifts.
+    func testPlanCompatibilityNeedsTheSameLift() {
+        let original = makeInclineDBPress()
+        let lookalike = Exercise(
+            name: original.name, muscles: original.muscles, equipment: original.equipment,
+            progressionRule: original.progressionRule
+        )
+        XCTAssertFalse(lookalike.isPlanCompatible(with: original))
+    }
+
     func testExerciseInheritsIncrementFromEquipment() {
         XCTAssertEqual(makeInclineDBPress().increment, .dumbbell)
     }

@@ -39,8 +39,14 @@ public enum RecommendationEngine {
         guard validEquipment(exercise) else { return result(.establish, .invalidInput) }
         guard !(exercise.equipment.isPlateBuilt && exercise.loading?.isMeasured != true)
         else { return result(.establish, .unsupportedEquipment) }
-        guard plan.exercise == exercise else { return result(.establish, .equipmentChanged) }
-        guard validPlan(plan, policy: policy) else { return result(.establish, .invalidInput) }
+        // Only what decides the weights the lift can make, and how it
+        // progresses. The plan's copy of the lift is as old as the plan, so a
+        // rename or a rest setting made since must not read as new equipment
+        // (#346). From here on the current `exercise` supplies every load.
+        guard exercise.isPlanCompatible(with: plan.exercise) else {
+            return result(.establish, .equipmentChanged)
+        }
+        guard validPlan(plan, for: exercise, policy: policy) else { return result(.establish, .invalidInput) }
 
         // Bodyweight records freeze total load, including the lifter's weight.
         // It need not fit a rack increment and cannot be changed automatically.
@@ -245,12 +251,14 @@ public enum RecommendationEngine {
         return true
     }
 
-    private static func validPlan(_ plan: ExercisePlan, policy: RecommendationPolicy) -> Bool {
+    private static func validPlan(
+        _ plan: ExercisePlan, for exercise: Exercise, policy: RecommendationPolicy
+    ) -> Bool {
         guard (1...20).contains(plan.sets.count),
               plan.restSeconds.map({ $0 > 0 }) ?? true,
               let first = plan.sets.first else { return false }
         return plan.sets.allSatisfy {
-            validLoad($0.load) && (plan.exercise.isBodyweight || $0.load >= plan.exercise.lightestUsableLoad)
+            validLoad($0.load) && (exercise.isBodyweight || $0.load >= exercise.lightestUsableLoad)
                 && sameLoad($0.load, first.load)
                 && policy.repRange.contains($0.reps) && RPE.allowedValues.contains($0.rpe.value)
         }

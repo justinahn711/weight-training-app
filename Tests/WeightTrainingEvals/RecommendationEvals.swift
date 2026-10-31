@@ -9,11 +9,18 @@ final class RecommendationEvals: XCTestCase {
         let recommendation: ExerciseRecommendation
     }
 
+    /// `edit` is the lifter changing the lift's settings between sessions: it
+    /// is given the session about to be planned and the lift as it stood, and
+    /// returns the lift as it now is. A plan keeps the copy it was activated
+    /// with, as the app's do, so an old plan goes on describing the old lift.
+    /// Unlike the Store, the loop below keeps a repeated plan's identity across
+    /// an edit; until #349, the app starts a new plan after one.
     private func run(
         sessions: Int,
+        edit: (Int, Exercise) -> Exercise = { $1 },
         perform: (Int, PlannedWorkingSet) -> (Int, RPE?)
     ) -> [Step] {
-        let lift = Exercise(name: "Bench", muscles: [.primary(.chest)], equipment: .barbell,
+        var lift = Exercise(name: "Bench", muscles: [.primary(.chest)], equipment: .barbell,
                             progressionRule: .doubleProgression(range: RepRange(8, 12)))
         var plan = ExercisePlan(exercise: lift, sets: [10, 10, 9].map {
             PlannedWorkingSet(load: 100, reps: $0)
@@ -22,6 +29,7 @@ final class RecommendationEvals: XCTestCase {
         var steps: [Step] = []
         let epoch = Date(timeIntervalSince1970: 1_760_011_200)
         for index in 0..<sessions {
+            lift = edit(index, lift)
             let date = epoch.addingTimeInterval(Double(index) * 2 * 86_400)
             let sets = plan.sets.enumerated().map { setIndex, target in
                 let (reps, effort) = perform(index, target)
@@ -70,6 +78,37 @@ final class RecommendationEvals: XCTestCase {
                 XCTAssertEqual(next.recommendation.action, .hold, "Every accepted increase needs fresh confirmation")
             }
         }
+    }
+
+    /// Tidying a lift up mid-season (#346): a rename, a muscles correction, a
+    /// warmup ramp switched on and a rest time of its own, each at a different
+    /// point. None of it changes what the rack can make or how the lift
+    /// progresses, so the engine's season has to come out decision for
+    /// decision as it does for a lift nobody touched. Before, the first session
+    /// after any of them came back "Equipment changed" with no target, and the
+    /// lifter lost the weight they had earned. This holds plan identity across
+    /// each edit, which the Store doesn't yet: in the app a rename or ramp
+    /// switch still costs one session of evidence (#349).
+    func testTidyingALiftMidSeasonDoesNotInterruptItsProgression() {
+        let untouched = run(sessions: 44) { _, target in (target.reps, .seven) }
+        let tidied = run(sessions: 44, edit: { index, lift in
+            var lift = lift
+            switch index {
+            case 5: lift.name = "Flat Bench Press"
+            case 12: lift.muscles = [.primary(.chest), .secondary(.triceps), .secondary(.frontDelts)]
+            case 20: lift.needsWarmupRamp = true
+            case 31: lift.restOverride = 150
+            default: break
+            }
+            return lift
+        }) { _, target in (target.reps, .seven) }
+
+        XCTAssertTrue(untouched.contains { $0.recommendation.action == .addLoad },
+                      "Scenario must actually exercise load progression")
+        XCTAssertEqual(tidied.map(\.recommendation.action), untouched.map(\.recommendation.action))
+        XCTAssertEqual(tidied.map(\.recommendation.reason), untouched.map(\.recommendation.reason))
+        XCTAssertEqual(tidied.map(\.recommendation.sets), untouched.map(\.recommendation.sets))
+        XCTAssertFalse(tidied.contains { $0.recommendation.reason == .equipmentChanged })
     }
 
     func testEffortCeilingPreventsRunawayLoadOverManyWorkouts() {

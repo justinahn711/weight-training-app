@@ -184,6 +184,57 @@ final class TrainingBlockTests: XCTestCase {
         }
     }
 
+    /// Two fatigued exposures on each of two lifts, the later exposure of the
+    /// second lift edited as given. True when the program still reads as
+    /// fatigued, which needs both lifts' last two exposures to be comparable.
+    private func fatigueStillDetected(afterEditing edit: (inout ExerciseExposure) -> Void) -> Bool {
+        let exercises = [lift(), lift("Row", muscle: .lats)]
+        var history = exercises.flatMap { exercise in
+            [date(14), date(18)].map { exposure(exercise, on: $0, rpe: .nine) }
+        }
+        XCTAssertTrue(TrainingBlockEngine.adaptiveDeloadNeeded(history: history, now: date(21)))
+        edit(&history[3])
+        return TrainingBlockEngine.adaptiveDeloadNeeded(history: history, now: date(21))
+    }
+
+    /// Renaming a lift between two sessions made the pair look like different
+    /// work, because the plan's copy of the lift was compared field for field.
+    /// A program-wide deload then went undetected on exactly the lifts whose
+    /// owner had been tidying them up.
+    func testRenamedLiftStaysComparableForFatigue() {
+        XCTAssertTrue(fatigueStillDetected { $0.plan?.exercise.name = "Incline Press" })
+    }
+
+    func testWarmupRampChangeStaysComparableForFatigue() {
+        XCTAssertTrue(fatigueStillDetected { $0.plan?.exercise.needsWarmupRamp = true })
+    }
+
+    func testMusclesAndOwnRestSettingStayComparableForFatigue() {
+        XCTAssertTrue(fatigueStillDetected {
+            $0.plan?.exercise.muscles = [.primary(.lats), .secondary(.biceps), .secondary(.rearDelts)]
+        })
+        XCTAssertTrue(fatigueStillDetected { $0.plan?.exercise.restOverride = 150 })
+    }
+
+    /// What the lift rests for is compared through the plan's own
+    /// `restSeconds`, not through the lift, so a real change of rest between
+    /// the two sessions still breaks the comparison.
+    func testRestChangeBetweenSessionsStillBreaksComparabilityForFatigue() {
+        XCTAssertFalse(fatigueStillDetected { $0.plan?.restSeconds = 60 })
+    }
+
+    /// A different apparatus or rule is different work, as before.
+    func testApparatusAndRuleChangesStillBreakComparabilityForFatigue() {
+        XCTAssertFalse(fatigueStillDetected { $0.plan?.exercise.equipment = .cable })
+        XCTAssertFalse(fatigueStillDetected { $0.plan?.exercise.increment = LoadIncrement(pounds: 2.5) })
+        XCTAssertFalse(fatigueStillDetected {
+            $0.plan?.exercise.progressionRule = .doubleProgression(range: RepRange(6, 10))
+        })
+        XCTAssertFalse(fatigueStillDetected {
+            $0.plan?.exercise.loading = LoadingStyle(baseWeight: 35, sleeves: 2)
+        })
+    }
+
     func testFatigueStopsStillRequireComparableWorkAndTechnique() {
         let exercises = [lift(), lift("Row", muscle: .lats)]
         let history = exercises.flatMap { exercise in
