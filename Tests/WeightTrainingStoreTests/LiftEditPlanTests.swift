@@ -250,13 +250,18 @@ final class LiftEditPlanTests: XCTestCase {
     }
 
     /// Everything a stale sheet might still hold: workout 0's plan, as it was
-    /// saved, with the lift as it was then.
-    private func firstWorkout(in store: TrainingStore, lift: Exercise) throws -> ExercisePlan {
+    /// saved, with the lift as it was then. `rest` is the lift's real target:
+    /// a plan's rest is the lift's rest at the time it is saved.
+    private func firstWorkout(
+        in store: TrainingStore, lift: Exercise, planned: [PlannedWorkingSet]? = nil, rest: Int = 180
+    ) throws -> ExercisePlan {
         try store.upsert(lift)
         let workout = UUID()
+        let stored = try XCTUnwrap(store.exercise(id: lift.id))
+        XCTAssertEqual(Int(stored.restTarget(using: try store.gymConfig().restDefaults)), rest,
+                       "fixture: the first plan's rest has to be the lift's own")
         let plan = try store.acceptExercisePlan(
-            ExercisePlan(exercise: try XCTUnwrap(store.exercise(id: lift.id)), sets: sets(10, 10, 9),
-                         restSeconds: 180),
+            ExercisePlan(exercise: stored, sets: planned ?? sets(10, 10, 9), restSeconds: rest),
             workoutID: workout, startedAt: midday(0), now: midday(0))
         try perform(store, plan, workout: workout, at: midday(0))
         return plan
@@ -353,7 +358,8 @@ final class LiftEditPlanTests: XCTestCase {
     // MARK: - Edit set plan
 
     /// What the plan sheet saves: the plan it was opened on, with the sets
-    /// the lifter set. It keeps the opened plan's copy of the lift.
+    /// the lifter set. It keeps the opened plan's copy of the lift and its
+    /// rest, though the Store takes neither the rest nor the copy from it.
     private func sheetSave(_ opened: ExercisePlan, sets: [PlannedWorkingSet]) -> ExercisePlan {
         ExercisePlan(id: opened.id, exercise: opened.exercise, sets: sets, restSeconds: opened.restSeconds,
                      techniqueRevision: opened.techniqueRevision, isDeload: opened.isDeload)
@@ -361,8 +367,10 @@ final class LiftEditPlanTests: XCTestCase {
 
     /// The plan the sheet opens on, the way `SessionViewModel.planProposal`
     /// finds it: the session's accepted plan.
-    private func openedPlan(_ lift: Exercise, workout: UUID, at start: Date) throws -> ExercisePlan {
-        try XCTUnwrap(store.sessionExercise(
+    private func openedPlan(
+        _ lift: Exercise, workout: UUID, at start: Date, in other: TrainingStore? = nil
+    ) throws -> ExercisePlan {
+        try XCTUnwrap((other ?? store).sessionExercise(
             for: lift, slot: nil, startedAt: start, workoutID: workout).acceptedPlan)
     }
 
@@ -425,33 +433,100 @@ final class LiftEditPlanTests: XCTestCase {
             displayedRecommendation: suggestion, now: midday(1))
         XCTAssertEqual(saved.sets, edited)
         XCTAssertEqual(saved.exercise, current, "the plan carries the lift as it is now")
+        XCTAssertEqual(saved.restSeconds, 120, "and the rest it now has, not the one the sheet opened on")
+        XCTAssertNotEqual(saved.restSeconds, opened.restSeconds)
         XCTAssertEqual(try store.exercise(id: current.id), current)
     }
 
     // MARK: - Dismiss on a deload proposal
 
     private struct Dismissal {
+        let store: TrainingStore
+        let lift: Exercise
         let first: ExercisePlan
         let proposal: ExerciseRecommendation
         let restored: ExercisePlan
         let workout: UUID
     }
 
-    /// Workout 0 is an accepted plan, easy; then the lift is tidied; then the
-    /// scheduled week-4 deload is proposed and the lifter taps Dismiss, which
-    /// hands `acceptExercisePlan` the plan `latestNonDeloadExercisePlan`
-    /// returns, along with the proposal, as `dismissRecoveryProposal` does.
-    private func dismissDeload(afterEditing edit: (inout Exercise) -> Void) throws -> Dismissal {
+    /// A change to how long the lift rests. Each of the three kinds changes
+    /// the rest the lift's own settings give it, so a plan saved afterwards is
+    /// saved at a different rest from the plan before it (#341).
+    private struct RestChange {
+        let label: String
+        let lift: Exercise
+        let planned: [PlannedWorkingSet]
+        let oldRest: Int
+        let newRest: Int
+        var changeGym: ((inout GymConfig) -> Void)?
+        var edit: ((inout Exercise) -> Void)?
+    }
+
+    /// A compound by `isCompound`'s rule: three muscles on a dumbbell.
+    private func dumbbellPress() -> Exercise {
+        Exercise(name: "Dumbbell Press",
+                 muscles: [.primary(.chest), .secondary(.triceps), .secondary(.frontDelts)],
+                 equipment: .dumbbell, progressionRule: .doubleProgression(range: RepRange(8, 12)))
+    }
+
+    private func restChanges() -> [RestChange] {
+        [
+            RestChange(label: "own rest", lift: bench(), planned: sets(10, 10, 9), oldRest: 180, newRest: 150,
+                       edit: { $0.restOverride = 150 }),
+            RestChange(label: "default rest", lift: bench(), planned: sets(10, 10, 9), oldRest: 180, newRest: 150,
+                       changeGym: { $0.restDefaults.compound = 150 }),
+            RestChange(label: "accessory becomes compound", lift: lateralRaise(),
+                       planned: sets(10, 10, 9, load: 20), oldRest: 60, newRest: 180,
+                       edit: { $0.muscles = [.primary(.sideDelts), .secondary(.frontDelts), .secondary(.rearDelts)] }),
+            RestChange(label: "compound becomes accessory", lift: dumbbellPress(),
+                       planned: sets(10, 10, 9, load: 20), oldRest: 180, newRest: 60,
+                       edit: { $0.muscles = [.primary(.chest)] }),
+        ]
+    }
+
+    /// Makes the change in `store`, the way settings would, and returns the
+    /// lift as stored afterwards.
+    @discardableResult
+    private func apply(_ change: RestChange, in store: TrainingStore) throws -> Exercise {
+        if let changeGym = change.changeGym {
+            var gym = try store.gymConfig()
+            changeGym(&gym)
+            try store.saveGymConfig(gym)
+        }
+        var current = try XCTUnwrap(store.exercise(id: change.lift.id))
+        if let edit = change.edit {
+            edit(&current)
+            try store.upsert(current)
+        }
+        let stored = try XCTUnwrap(store.exercise(id: change.lift.id))
+        XCTAssertEqual(Int(stored.restTarget(using: try store.gymConfig().restDefaults)), change.newRest,
+                       "\(change.label): the change has to move the lift's rest")
+        return stored
+    }
+
+    /// Workout 0 is an accepted plan, easy; then the lift is tidied or its
+    /// rest changed; then the scheduled week-4 deload is proposed and the
+    /// lifter taps Dismiss, which hands `acceptExercisePlan` the plan
+    /// `latestNonDeloadExercisePlan` returns, along with the proposal, as
+    /// `dismissRecoveryProposal` does.
+    private func dismissDeload(
+        lift: Exercise? = nil, planned: [PlannedWorkingSet]? = nil, rest: Int = 180,
+        changeGym: ((inout GymConfig) -> Void)? = nil,
+        afterEditing edit: ((inout Exercise) -> Void)? = nil
+    ) throws -> Dismissal {
         let store = try TrainingStore.inMemory()
-        let first = try firstWorkout(in: store, lift: bench())
+        let first = try firstWorkout(in: store, lift: lift ?? bench(), planned: planned, rest: rest)
         var config = try store.gymConfig()
         config.trainingBlock = TrainingBlockConfig(
             startedAt: midday(0).addingTimeInterval(-21 * 86_400), accumulationWeeks: 3)
+        if let changeGym { changeGym(&config) }
         try store.saveGymConfig(config)
 
         var current = try XCTUnwrap(store.exercise(id: first.exercise.id))
-        edit(&current)
-        try store.upsert(current)
+        if let edit {
+            edit(&current)
+            try store.upsert(current)
+        }
 
         let workout = UUID()
         let proposal = try store.recommendation(for: current, excluding: workout, now: midday(1))
@@ -462,14 +537,32 @@ final class LiftEditPlanTests: XCTestCase {
             fallback, workoutID: workout, startedAt: midday(1),
             displayedRecommendation: proposal, now: midday(1))
         XCTAssertEqual(try store.exerciseSession(workoutID: workout, exerciseID: current.id)?.plan, restored)
-        return Dismissal(first: first, proposal: proposal, restored: restored, workout: workout)
+        return Dismissal(store: store, lift: current, first: first, proposal: proposal,
+                         restored: restored, workout: workout)
+    }
+
+    /// Does workout 1 under the restored plan as suggested, ends the block so
+    /// the deload week stops being the story, and reads what workout 2 is told.
+    private func suggestionAfter(_ dismissal: Dismissal) throws -> ExerciseRecommendation {
+        let store = dismissal.store
+        try perform(store, dismissal.restored, workout: dismissal.workout, at: midday(1))
+        var config = try store.gymConfig()
+        config.trainingBlock = nil
+        try store.saveGymConfig(config)
+        let current = try XCTUnwrap(store.exercise(id: dismissal.lift.id))
+        return try store.recommendation(for: current, excluding: UUID(), now: midday(2))
     }
 
     func testDismissingADeloadWithNoEditRestoresThePreviousPlan() throws {
-        let dismissal = try dismissDeload(afterEditing: { _ in })
+        let dismissal = try dismissDeload()
         XCTAssertEqual(dismissal.restored.id, dismissal.first.id)
         XCTAssertEqual(dismissal.restored.sets, sets(10, 10, 9))
         XCTAssertFalse(dismissal.restored.isDeload)
+
+        // Workout 1 was the plan's second easy workout, so workout 2 adds a rep.
+        let next = try suggestionAfter(dismissal)
+        XCTAssertEqual(next.action, .addReps)
+        XCTAssertEqual(next.reason, .addedRep(set: 3))
     }
 
     func testDismissingADeloadAfterAHarmlessEditRestoresThePreviousPlan() throws {
@@ -477,16 +570,154 @@ final class LiftEditPlanTests: XCTestCase {
             ("rename", { $0.name = self.renamed }),
             ("warmup ramp", { $0.needsWarmupRamp.toggle() }),
             ("muscles", { $0.muscles = [.primary(.chest), .secondary(.triceps), .secondary(.frontDelts)] }),
-            ("own rest", { $0.restOverride = 150 }),
         ]
         for (label, edit) in edits {
             let dismissal = try dismissDeload(afterEditing: edit)
             XCTAssertEqual(dismissal.restored.id, dismissal.first.id, label)
             XCTAssertEqual(dismissal.restored.sets, sets(10, 10, 9), label)
             XCTAssertEqual(dismissal.restored.restSeconds, 180,
-                           "\(label): Dismiss restores the plan that was, rest and all")
+                           "\(label): nothing about the rest changed, so Dismiss restores the plan that was")
             XCTAssertFalse(dismissal.restored.isDeload, label)
+            let next = try suggestionAfter(dismissal)
+            XCTAssertEqual(next.reason, .addedRep(set: 3), "\(label): and its count carries on")
         }
+    }
+
+    // MARK: - A rest change meets Dismiss and Edit set plan
+
+    /// The owner's rule: a plan is always saved at the lift's current rest. The
+    /// plan Dismiss hands back is the one saved before the change, at its old
+    /// rest, so restoring it as it was would rest the lifter at one time and
+    /// count the workout as evidence at another.
+    func testDismissingADeloadAfterARestChangeSavesTheNewRestAsANewPlan() throws {
+        let confirm = ExerciseRecommendation.Reason.confirmEasyWorkouts(completed: 1, required: 2)
+        for change in restChanges() {
+            let dismissal = try dismissDeload(
+                lift: change.lift, planned: change.planned, rest: change.oldRest,
+                changeGym: change.changeGym, afterEditing: change.edit)
+            XCTAssertEqual(dismissal.first.restSeconds, change.oldRest, change.label)
+
+            XCTAssertEqual(dismissal.restored.sets, change.planned, "\(change.label): the fallback's sets")
+            XCTAssertEqual(dismissal.restored.restSeconds, change.newRest, "\(change.label): at the new rest")
+            XCTAssertNotEqual(dismissal.restored.id, dismissal.first.id, "\(change.label): a new plan")
+            XCTAssertFalse(dismissal.restored.isDeload, change.label)
+            XCTAssertEqual(dismissal.restored.exercise, dismissal.lift,
+                           "\(change.label): a new plan carries the lift as it is now")
+
+            // The same shape as `assertRestChangeStartsANewPlan`: the new plan's
+            // first workout is its one easy session, not the old plan's second.
+            let next = try suggestionAfter(dismissal)
+            XCTAssertEqual(next.reason, confirm, "\(change.label): the count starts again")
+            XCTAssertEqual(next.sets, change.planned, change.label)
+            XCTAssertEqual(next.basedOnPlanID, dismissal.restored.id, change.label)
+        }
+    }
+
+    /// Edit set plan, saved with a change or with nothing changed, lands at
+    /// the lift's current rest as a new plan. The sheet opened on the plan
+    /// saved before the change, so its rest is the old one; the Store does not
+    /// take the rest from it. Which of "after the sheet opens" and "after
+    /// activation" the change came in makes no difference: the sheet holds
+    /// the workout's plan either way.
+    func testEditSetPlanAfterARestChangeSavesTheNewRestAsANewPlan() throws {
+        for change in restChanges() {
+            for edited in [true, false] {
+                let label = "\(change.label), \(edited ? "edited sets" : "unchanged sets")"
+                let store = try TrainingStore.inMemory()
+                let first = try firstWorkout(
+                    in: store, lift: change.lift, planned: change.planned, rest: change.oldRest)
+
+                let workout = UUID()
+                let before = try XCTUnwrap(store.exercise(id: change.lift.id))
+                let suggestion = try store.recommendation(for: before, excluding: workout, now: midday(1))
+                let activated = try XCTUnwrap(try store.activateExerciseRecommendation(
+                    suggestion, workoutID: workout, startedAt: midday(1), now: midday(1)))
+                XCTAssertEqual(activated.id, first.id, "control: \(label)")
+                let opened = try openedPlan(before, workout: workout, at: midday(1), in: store)
+                XCTAssertEqual(opened.restSeconds, change.oldRest, "control: \(label)")
+
+                let current = try apply(change, in: store)
+
+                var planned = opened.sets
+                if edited { planned[planned.count - 1].reps += 1 }
+                let saved = try store.acceptExercisePlan(
+                    sheetSave(opened, sets: planned), workoutID: workout, startedAt: midday(1),
+                    displayedRecommendation: suggestion, now: midday(1))
+
+                XCTAssertEqual(saved.restSeconds, change.newRest, label)
+                XCTAssertNotEqual(saved.id, opened.id, "\(label): a different rest is a different plan")
+                XCTAssertEqual(saved.sets, planned, label)
+                XCTAssertEqual(saved.exercise, current, label)
+                XCTAssertEqual(try store.exerciseSession(workoutID: workout, exerciseID: current.id)?.plan,
+                               saved, label)
+            }
+        }
+    }
+
+    /// A rest change made after activation and before any working set does not
+    /// touch the workout's plan: an active prescription is the intent it was
+    /// activated with, and a retry returns it without refreshing it. The change
+    /// takes hold when a plan is next saved, which is Edit set plan above or
+    /// the next workout.
+    func testARestChangeAfterActivationLeavesTheActivePlanAndTakesHoldNextWorkout() throws {
+        for change in restChanges() {
+            let store = try TrainingStore.inMemory()
+            let first = try firstWorkout(
+                in: store, lift: change.lift, planned: change.planned, rest: change.oldRest)
+
+            let workout = UUID()
+            let before = try XCTUnwrap(store.exercise(id: change.lift.id))
+            let suggestion = try store.recommendation(for: before, excluding: workout, now: midday(1))
+            let activated = try XCTUnwrap(try store.activateExerciseRecommendation(
+                suggestion, workoutID: workout, startedAt: midday(1), now: midday(1)))
+
+            let current = try apply(change, in: store)
+            let retried = try XCTUnwrap(try store.activateExerciseRecommendation(
+                suggestion, workoutID: workout, startedAt: midday(1), now: midday(1)))
+            XCTAssertEqual(retried, activated, "\(change.label): the active plan is not refreshed")
+            XCTAssertEqual(retried.restSeconds, change.oldRest, change.label)
+            XCTAssertEqual(retried.id, first.id, change.label)
+
+            try perform(store, retried, workout: workout, at: midday(1))
+            let next = UUID()
+            let suggestion2 = try store.recommendation(for: current, excluding: next, now: midday(2))
+            let plan2 = try XCTUnwrap(try store.activateExerciseRecommendation(
+                suggestion2, workoutID: next, startedAt: midday(2), now: midday(2)))
+            XCTAssertEqual(plan2.restSeconds, change.newRest, "\(change.label): the next plan is at the new rest")
+            XCTAssertNotEqual(plan2.id, first.id, change.label)
+        }
+    }
+
+    /// The proposal's rest is never what is saved. The sheet cannot edit it, so
+    /// it is only ever a copy of a rest the lift had when the proposal was
+    /// made: stale, or absent.
+    func testAProposalsOwnRestIsNeverUsed() throws {
+        let first = try firstWorkout(in: store, lift: bench())
+        let current = try XCTUnwrap(store.exercise(id: first.exercise.id))
+        for (index, proposed) in [Int?.none, 45, 999, 0, -5].enumerated() {
+            let saved = try store.acceptExercisePlan(
+                ExercisePlan(exercise: current, sets: first.sets, restSeconds: proposed),
+                workoutID: UUID(), startedAt: midday(index + 1), now: midday(index + 1))
+            XCTAssertEqual(saved.restSeconds, 180, "proposed \(String(describing: proposed))")
+            XCTAssertEqual(saved.id, first.id, "and the same plan, since its rest is the lift's")
+        }
+    }
+
+    /// A rest that is not a rest cannot be saved into a plan, and does not trap
+    /// turning it into whole seconds.
+    func testARestTheLiftCannotHaveCannotBeSavedIntoAPlan() throws {
+        let first = try firstWorkout(in: store, lift: bench())
+        for override in [0.4, .nan, .infinity, 100_000] as [TimeInterval] {
+            var current = try XCTUnwrap(store.exercise(id: first.exercise.id))
+            current.restOverride = override
+            try store.upsert(current)
+            XCTAssertThrowsError(try store.acceptExercisePlan(
+                ExercisePlan(exercise: current, sets: first.sets, restSeconds: 180),
+                workoutID: UUID(), startedAt: midday(1), now: midday(1)), "\(override)") {
+                XCTAssertEqual($0 as? PlanStoreError, .invalidPlan, "\(override)")
+            }
+        }
+        XCTAssertEqual(try store.exerciseSessions().count, 1, "nothing was saved")
     }
 
     // MARK: - What the kept copy of the lift can reach
