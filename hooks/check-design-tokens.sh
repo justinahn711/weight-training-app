@@ -14,8 +14,9 @@
 #   Color(red:  Color(white:  Color(hue:            a colour Theme doesn't name
 #   .caption2   .system(size: 13                     DESIGN.md's type Don'ts
 #
-# `spacing: 0` passes, because 0 is not a design value. A deliberate off-scale
-# value, like an optical nudge or a ring's stroke inset, passes when the same
+# A bare 0 passes (`spacing: 0`, `pinned ? Theme.Space.edge : 0`), because 0
+# is not a design value. A deliberate off-scale value, like an optical nudge
+# or a ring's stroke inset, passes when the same
 # line carries `// off-scale: <why>`. The reason is required: a bare marker
 # still fails.
 #
@@ -41,7 +42,7 @@ added=$(git diff -U0 "$merge_base" -- \
 ')
 
 offenders=$(printf '%s\n' "$added" \
-    | grep -E '\.padding\([^)]*[0-9]|spacing: *([1-9]|0\.)|cornerRadius(: *|\( *)[0-9]|Color\((red|white|hue):|\.caption2|\.system\(size: *[0-9]' \
+    | grep -E '\.padding\([^)]*[1-9]|spacing: *([1-9]|0\.)|cornerRadius(: *|\( *)[1-9]|Color\((red|white|hue):|\.caption2|\.system\(size: *[0-9]' \
     | grep -vE '// off-scale: *[^ ]' \
     || true)
 
