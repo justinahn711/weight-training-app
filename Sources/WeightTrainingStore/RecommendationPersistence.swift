@@ -394,8 +394,8 @@ extension TrainingStore {
     /// The lift's rest as a plan records it: whole seconds, truncated, from its
     /// own rest time or else the lifter's default for its kind.
     ///
-    /// This PR puts the conversion on the Dismiss and Edit set plan routes as
-    /// well as activation, and a lift's own rest is stored as it was written.
+    /// Every saved plan comes through here (activation, Use, Dismiss, Edit set
+    /// plan), and a lift's own rest is stored as it was written.
     /// `Int(_:)` traps on a value that is not finite or is too large for `Int`,
     /// and a value below one second truncates to a rest a plan rejects, so
     /// those are refused as an invalid plan. Nothing else is: a long rest
