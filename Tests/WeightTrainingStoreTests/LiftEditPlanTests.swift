@@ -583,6 +583,43 @@ final class LiftEditPlanTests: XCTestCase {
         }
     }
 
+    /// Not a rest change, and not new: Use on one workout's deload proposal,
+    /// then Dismiss on the next workout's, restores the old sets as a new plan.
+    /// The plan before it is the deload, so the normal plan is not "the
+    /// previous plan" to reuse. The same on main before #349.
+    func testUseThenDismissAcrossWorkoutsGivesANewPlanWithTheSameSets() throws {
+        let first = try firstWorkout(in: store, lift: bench())
+        var config = try store.gymConfig()
+        config.trainingBlock = TrainingBlockConfig(
+            startedAt: midday(0).addingTimeInterval(-21 * 86_400), accumulationWeeks: 3)
+        try store.saveGymConfig(config)
+        let current = try XCTUnwrap(store.exercise(id: first.exercise.id))
+
+        let usedWorkout = UUID()
+        let proposed = try store.recommendation(for: current, excluding: usedWorkout, now: midday(1))
+        XCTAssertEqual(proposed.action, .deload)
+        let used = try store.acceptExercisePlan(
+            ExercisePlan(exercise: current, sets: proposed.sets, isDeload: true),
+            workoutID: usedWorkout, startedAt: midday(1), displayedRecommendation: proposed, now: midday(1))
+        XCTAssertTrue(used.isDeload)
+        try perform(store, used, workout: usedWorkout, at: midday(1))
+
+        let workout = UUID()
+        let proposal = try store.recommendation(for: current, excluding: workout, now: midday(2))
+        XCTAssertEqual(proposal.action, .deload)
+        let fallback = try XCTUnwrap(try store.latestNonDeloadExercisePlan(for: current.id, excluding: workout))
+        XCTAssertEqual(fallback.id, first.id)
+        let restored = try store.acceptExercisePlan(
+            fallback, workoutID: workout, startedAt: midday(2),
+            displayedRecommendation: proposal, now: midday(2))
+
+        XCTAssertEqual(restored.sets, first.sets)
+        XCTAssertFalse(restored.isDeload)
+        XCTAssertNotEqual(restored.id, first.id)
+        XCTAssertNotEqual(restored.id, used.id)
+        XCTAssertEqual(restored.restSeconds, 180)
+    }
+
     // MARK: - A rest change meets Dismiss and Edit set plan
 
     /// The owner's rule: a plan is always saved at the lift's current rest. The
@@ -707,7 +744,8 @@ final class LiftEditPlanTests: XCTestCase {
     /// turning it into whole seconds.
     func testARestTheLiftCannotHaveCannotBeSavedIntoAPlan() throws {
         let first = try firstWorkout(in: store, lift: bench())
-        for override in [0.4, .nan, .infinity, 100_000] as [TimeInterval] {
+        // Not NaN: the store keeps a NaN as NULL, so it reads back as no rest of its own.
+        for override in [0.4, .infinity, 100_000] as [TimeInterval] {
             var current = try XCTUnwrap(store.exercise(id: first.exercise.id))
             current.restOverride = override
             try store.upsert(current)

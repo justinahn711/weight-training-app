@@ -55,6 +55,8 @@ extension TrainingStore {
 
     /// Accept before the first working set. Repeating an unchanged prescription
     /// preserves its revision ID; any accepted edit creates a fresh segment.
+    /// The plan is saved at the lift's current rest, whatever rest `proposed`
+    /// carries, so a changed rest is a fresh segment too.
     @discardableResult
     public func acceptExercisePlan(
         _ proposed: ExercisePlan, workoutID: UUID, startedAt: Date,
@@ -81,18 +83,10 @@ extension TrainingStore {
         guard let exercise = try exercise(id: displayedRecommendation.exerciseID),
               exercise.supportsPlannedProgression else { throw PlanStoreError.exerciseChanged }
         let previous = try latestExercisePlan(for: exercise.id, excluding: workoutID)
-        // Rest comes from the lifter's settings every time, never from the last
-        // plan (#341). The plan sheet doesn't let the lifter edit rest, so a
-        // previous plan's `restSeconds` is only ever an old default; inheriting
-        // it would keep an accessory plan saying 90 seconds long after the
-        // lifter set 60 and is resting 60. Unchanged settings reproduce the
-        // previous value, so ordinary weeks still compare with each other; a
-        // changed one makes this plan a different demand from the last, which
-        // `TrainingBlock` correctly refuses to read hotter effort across.
-        let rest = Int(exercise.restTarget(using: try gymConfig().restDefaults))
+        // No rest here: `persistExercisePlan` gives every plan the lift's
+        // current rest, whichever route it came by.
         let proposed = ExercisePlan(
             exercise: exercise, sets: displayedRecommendation.sets,
-            restSeconds: rest,
             techniqueRevision: previous?.techniqueRevision,
             isDeload: displayedRecommendation.action == .deload
         )
@@ -125,8 +119,24 @@ extension TrainingStore {
         guard try sets(forExercise: exercise.id).allSatisfy({
             $0.isWarmup || !($0.workoutID == workoutID || ($0.workoutID == nil && $0.performedAt >= startedAt))
         }) else { throw PlanStoreError.workingSetsAlreadyLogged }
+        // Every plan is saved at the lift's rest as it stands now, whichever
+        // route it came by, and the proposal's own `restSeconds` is
+        // deliberately not used (#349, #341). The plan sheet doesn't let the
+        // lifter edit rest, so a proposal's is only ever a copy of what the
+        // lift's rest was when the proposal was made: Dismiss on a deload
+        // hands back the plan stored before a rest change, and the sheet saves
+        // the plan it opened on. Saving that would rest the lifter at one time
+        // and count the workout as evidence at another, and would keep an
+        // accessory plan saying 90 seconds long after the lifter set 60.
+        // Unchanged settings reproduce the previous value, so ordinary weeks
+        // still compare with each other; a changed one makes this plan a
+        // different demand from the last, which `TrainingBlock` correctly
+        // refuses to read hotter effort across.
+        let rest = try currentRestSeconds(for: exercise)
+        var candidate = proposed
+        candidate.restSeconds = rest
         let checked = RecommendationEngine.recommend(
-            exercise: exercise, plan: proposed, history: [], policy: exercise.recommendationPolicy, now: now)
+            exercise: exercise, plan: candidate, history: [], policy: exercise.recommendationPolicy, now: now)
         guard !checked.sets.isEmpty, checked.sets == proposed.sets,
               checked.reason == .newPrescription || checked.reason == .acceptedDeload else {
             throw PlanStoreError.invalidPlan
@@ -137,16 +147,15 @@ extension TrainingStore {
         } else {
             previous = try latestExercisePlan(for: exercise.id, excluding: workoutID)
         }
-        var accepted = ExercisePlan(exercise: exercise, sets: proposed.sets,
-                                   restSeconds: proposed.restSeconds,
+        var accepted = ExercisePlan(exercise: exercise, sets: proposed.sets, restSeconds: rest,
                                    techniqueRevision: proposed.techniqueRevision, isDeload: proposed.isDeload)
         // Repeating a plan keeps its identity, so the engine can count its
         // workouts together. The plan's own copy of the lift is left out of
         // the comparison as long as the lift is the same apparatus on the same
         // rule: a rename, a muscles correction or a warmup ramp is not a new
         // plan (#349). Everything else about the plan is still compared whole,
-        // `restSeconds` included, so a different rest is a different plan
-        // (#341).
+        // `restSeconds` included, and that is the lift's current rest above,
+        // so a rest change is a different plan (#341) on every route.
         //
         // The previous plan is kept exactly as it was, with the copy of the
         // lift it was written for, and not given a fresh copy. Plans are
@@ -155,8 +164,8 @@ extension TrainingStore {
         // read as a different plan and restart the count anyway. Nothing reads
         // a name or a muscle from a plan's copy; the plan sheet reads only what
         // `isPlanCompatible` compares. A plan the sheet saves with a change is a
-        // new plan, built from the stored lift above; one saved unchanged is
-        // the previous plan, as it was.
+        // new plan, built from the stored lift above; one saved unchanged, at
+        // the same rest, is the previous plan, as it was.
         if let previous, previous.exercise.isPlanCompatible(with: exercise) {
             let comparable = ExercisePlan(
                 id: previous.id, exercise: previous.exercise, sets: accepted.sets,
@@ -380,6 +389,18 @@ extension TrainingStore {
             first.update(from: intent)
             for duplicate in rows.dropFirst() { modelContext.delete(duplicate) }
         } else { modelContext.insert(StoredExerciseSession(intent)) }
+    }
+
+    /// The lift's rest as a plan records it: whole seconds, from its own rest
+    /// time or else the lifter's default for its kind. A default is always
+    /// usable (`RestDefaults`), but a lift's own rest is stored as it was
+    /// written, and one that is not finite, rounds down to the zero a plan
+    /// rejects, or is past what the clock will count would trap or save a plan
+    /// the engine refuses. That is an invalid plan, not a rest.
+    private func currentRestSeconds(for exercise: Exercise) throws -> Int {
+        let rest = exercise.restTarget(using: try gymConfig().restDefaults)
+        guard RestDefaults.usableRange.contains(rest) else { throw PlanStoreError.invalidPlan }
+        return Int(rest)
     }
 
     /// Ignores only generation time: the snapshot may have been reviewed for
