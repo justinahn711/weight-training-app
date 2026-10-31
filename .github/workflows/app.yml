@@ -128,8 +128,11 @@ jobs:
     # alone runs ~9 minutes on this runner, after ~5 of build — and the job was
     # cancelled mid-TrainLayoutUITests with every earlier test green. A
     # timeout that cancels a passing suite reads as red and teaches nobody
-    # anything; 35 leaves room for the next few tests without hiding a hang.
-    timeout-minutes: 35
+    # anything. Then 35, until the suite reached 38 tests: on #348 all of them
+    # passed in 25 minutes and the job was cancelled at 35m06s, just after
+    # TEST SUCCEEDED. Green jobs now take 26-32 minutes, so 45 leaves room for
+    # the next few tests without hiding a hang.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
