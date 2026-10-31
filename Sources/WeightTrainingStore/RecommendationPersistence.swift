@@ -104,7 +104,16 @@ extension TrainingStore {
         _ proposed: ExercisePlan, workoutID: UUID, startedAt: Date,
         displayedRecommendation: ExerciseRecommendation?, automatically: Bool, now: Date
     ) throws -> ExercisePlan {
-        guard let exercise = try exercise(id: proposed.exercise.id), exercise == proposed.exercise else {
+        // The proposal's copy of the lift is as old as the plan it came from:
+        // Dismiss on a deload hands back the stored plan, and the sheet saves
+        // the plan it opened on. Whole-value `==` rejected both after a rename
+        // (#349). What a stale proposal must still be refused for is what
+        // `isPlanCompatible` compares: the apparatus and the rule it was
+        // written for. The proposal's copy is only checked, never saved: a new
+        // plan below is built from the stored lift, and a reused one is the
+        // previous plan exactly as stored, with the copy it was written for.
+        guard let exercise = try exercise(id: proposed.exercise.id),
+              exercise.isPlanCompatible(with: proposed.exercise) else {
             throw PlanStoreError.exerciseChanged
         }
         var intent = try exerciseSession(workoutID: workoutID, exerciseID: exercise.id)
@@ -131,11 +140,28 @@ extension TrainingStore {
         var accepted = ExercisePlan(exercise: exercise, sets: proposed.sets,
                                    restSeconds: proposed.restSeconds,
                                    techniqueRevision: proposed.techniqueRevision, isDeload: proposed.isDeload)
-        if let previous {
-            var comparable = accepted
-            comparable = ExercisePlan(id: previous.id, exercise: comparable.exercise, sets: comparable.sets,
-                                     restSeconds: comparable.restSeconds, techniqueRevision: comparable.techniqueRevision,
-                                     isDeload: comparable.isDeload)
+        // Repeating a plan keeps its identity, so the engine can count its
+        // workouts together. The plan's own copy of the lift is left out of
+        // the comparison as long as the lift is the same apparatus on the same
+        // rule: a rename, a muscles correction or a warmup ramp is not a new
+        // plan (#349). Everything else about the plan is still compared whole,
+        // `restSeconds` included, so a different rest is a different plan
+        // (#341).
+        //
+        // The previous plan is kept exactly as it was, with the copy of the
+        // lift it was written for, and not given a fresh copy. Plans are
+        // compared whole across workouts (`RecommendationEngine.assess`), so a
+        // refreshed copy under the old id would make every earlier workout
+        // read as a different plan and restart the count anyway. Nothing reads
+        // a name or a muscle from a plan's copy; the plan sheet reads only what
+        // `isPlanCompatible` compares. A plan the sheet saves with a change is a
+        // new plan, built from the stored lift above; one saved unchanged is
+        // the previous plan, as it was.
+        if let previous, previous.exercise.isPlanCompatible(with: exercise) {
+            let comparable = ExercisePlan(
+                id: previous.id, exercise: previous.exercise, sets: accepted.sets,
+                restSeconds: accepted.restSeconds, techniqueRevision: accepted.techniqueRevision,
+                isDeload: accepted.isDeload)
             if comparable == previous { accepted = previous }
         }
         if intent.recommendationTrace == nil {
