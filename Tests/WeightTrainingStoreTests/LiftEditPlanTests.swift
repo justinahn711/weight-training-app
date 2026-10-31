@@ -740,15 +740,18 @@ final class LiftEditPlanTests: XCTestCase {
         }
     }
 
-    /// A rest that is not a rest cannot be saved into a plan, and does not trap
-    /// turning it into whole seconds.
+    /// A rest that would trap turning it into whole seconds, or round down to
+    /// a rest below one second, cannot be saved into a plan. Nothing else is
+    /// refused (see the next test). 1e300 reaches the Store here as a REAL.
     func testARestTheLiftCannotHaveCannotBeSavedIntoAPlan() throws {
         let first = try firstWorkout(in: store, lift: bench())
         // Not NaN: the store keeps a NaN as NULL, so it reads back as no rest of its own.
-        for override in [0.4, .infinity, 100_000] as [TimeInterval] {
+        for override in [0.4, 0.999, -5, .infinity, 1e300] as [TimeInterval] {
             var current = try XCTUnwrap(store.exercise(id: first.exercise.id))
             current.restOverride = override
             try store.upsert(current)
+            XCTAssertEqual(try store.exercise(id: current.id)?.restOverride, override,
+                           "fixture: \(override) has to reach the Store as it is")
             XCTAssertThrowsError(try store.acceptExercisePlan(
                 ExercisePlan(exercise: current, sets: first.sets, restSeconds: 180),
                 workoutID: UUID(), startedAt: midday(1), now: midday(1)), "\(override)") {
@@ -756,6 +759,45 @@ final class LiftEditPlanTests: XCTestCase {
             }
         }
         XCTAssertEqual(try store.exerciseSessions().count, 1, "nothing was saved")
+    }
+
+    /// A lift's own rest over an hour is not refused. On main it activates and
+    /// saves, whole seconds truncated, and the clock caps its overrun whatever
+    /// the target is. The lift settings offer 1:00 to 5:00, but a restored file
+    /// can say more, and a set must not stop logging because of it.
+    func testALongOwnRestIsSavedAsItWasBeforeThisChange() throws {
+        let first = try firstWorkout(in: store, lift: bench())
+        let cases: [(TimeInterval, Int)] = [
+            (1, 1), (90.5, 90), (3600, 3600), (3600.5, 3600), (3601, 3601), (5000, 5000),
+            (7200, 7200), (100_000, 100_000),
+        ]
+        for (index, (override, seconds)) in cases.enumerated() {
+            var current = try XCTUnwrap(store.exercise(id: first.exercise.id))
+            current.restOverride = override
+            try store.upsert(current)
+            let saved = try store.acceptExercisePlan(
+                ExercisePlan(exercise: current, sets: first.sets),
+                workoutID: UUID(), startedAt: midday(index + 1), now: midday(index + 1))
+            XCTAssertEqual(saved.restSeconds, seconds, "\(override) saves as \(seconds)")
+        }
+    }
+
+    /// The route the lifter meets it by: Log Set activates the suggestion.
+    func testALongOwnRestStillActivates() throws {
+        let first = try firstWorkout(in: store, lift: bench())
+        let overrides: [TimeInterval] = [3601, 5000, 100_000]
+        for (index, override) in overrides.enumerated() {
+            var current = try XCTUnwrap(store.exercise(id: first.exercise.id))
+            current.restOverride = override
+            try store.upsert(current)
+            let workout = UUID()
+            let suggestion = try store.recommendation(
+                for: current, excluding: workout, now: midday(index + 1))
+            let plan = try XCTUnwrap(try store.activateExerciseRecommendation(
+                suggestion, workoutID: workout, startedAt: midday(index + 1), now: midday(index + 1)),
+                "\(override) activates")
+            XCTAssertEqual(plan.restSeconds, Int(override), "\(override)")
+        }
     }
 
     // MARK: - What the kept copy of the lift can reach
