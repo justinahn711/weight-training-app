@@ -13,8 +13,10 @@ final class RecommendationEvals: XCTestCase {
     /// is given the session about to be planned and the lift as it stood, and
     /// returns the lift as it now is. A plan keeps the copy it was activated
     /// with, as the app's do, so an old plan goes on describing the old lift.
-    /// Unlike the Store, the loop below keeps a repeated plan's identity across
-    /// an edit; until #349, the app starts a new plan after one.
+    /// Like the Store (#349), the loop below keeps a repeated plan's identity,
+    /// and its old copy of the lift, across an edit. It does not model rest:
+    /// its plans carry none, while the Store starts a new plan when a plan's
+    /// rest changes (#341).
     private func run(
         sessions: Int,
         edit: (Int, Exercise) -> Exercise = { $1 },
@@ -87,8 +89,12 @@ final class RecommendationEvals: XCTestCase {
     /// decision as it does for a lift nobody touched. Before, the first session
     /// after any of them came back "Equipment changed" with no target, and the
     /// lifter lost the weight they had earned. This holds plan identity across
-    /// each edit, which the Store doesn't yet: in the app a rename or ramp
-    /// switch still costs one session of evidence (#349).
+    /// each edit, and the Store does the same for a rename, a muscles
+    /// correction and a warmup ramp (#349), so for those three the season is
+    /// the app's as well as the engine's. The rest time of its own is the
+    /// exception: it is a different demand (#341), so in the app that edit
+    /// starts a new plan and costs one session of evidence. The Store side of
+    /// all four is `LiftEditPlanTests`.
     func testTidyingALiftMidSeasonDoesNotInterruptItsProgression() {
         let untouched = run(sessions: 44) { _, target in (target.reps, .seven) }
         let tidied = run(sessions: 44, edit: { index, lift in
